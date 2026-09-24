@@ -1,0 +1,11 @@
+<Project Sdk="WixToolset.Sdk/7.0.0">
+  <PropertyGroup>
+    <OutputType>Bundle</OutputType>
+    <OutputName>ConfGTS-Setup-0.15.0-x64</OutputName>
+    <MsiDir Condition="'$(MsiDir)'==''">$(MSBuildThisFileDirectory)..\..\artifacts\msi</MsiDir>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="WixToolset.BootstrapperApplications.wixext" Version="7.0.0" />
+    <BindPath Include="$(MsiDir)" Name="msi" />
+  </ItemGroup>
+</Project>
