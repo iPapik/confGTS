@@ -21,11 +21,9 @@
       </Directory>
     </StandardDirectory>
 
-    <StandardDirectory Id="ProgramMenuFolder">
+    <StandardDirectory Id="CommonProgramsFolder">
       <Directory Id="ProgramMenuDir" Name="ConfGTS" />
     </StandardDirectory>
-
-    <StandardDirectory Id="DesktopFolder" />
 
     <Feature Id="MainFeature" Title="ConfGTS" Level="1">
       <Files Directory="INSTALLFOLDER" Include="!(bindpath.publish)\**">
@@ -51,19 +49,21 @@
                      KeyPath="yes" />
     </Component>
 
-    <Component Id="DesktopShortcutComponent" Directory="DesktopFolder"
-               Guid="B87D3B22-5274-4630-879F-FD44242FC942">
-      <Shortcut Id="DesktopShortcut"
-                Name="ConfGTS"
-                Description="Корпоративная видеоконференцсвязь"
-                Target="[INSTALLFOLDER]ConfGTS.Client.exe"
-                WorkingDirectory="INSTALLFOLDER" />
-      <RegistryValue Root="HKLM"
-                     Key="Software\ГТС\ConfGTS"
-                     Name="DesktopShortcut"
-                     Type="integer"
-                     Value="1"
-                     KeyPath="yes" />
-    </Component>
+    <StandardDirectory Id="CommonDesktopFolder">
+      <Component Id="DesktopShortcutComponent"
+                 Guid="B87D3B22-5274-4630-879F-FD44242FC942">
+        <Shortcut Id="DesktopShortcut"
+                  Name="ConfGTS"
+                  Description="Корпоративная видеоконференцсвязь"
+                  Target="[INSTALLFOLDER]ConfGTS.Client.exe"
+                  WorkingDirectory="INSTALLFOLDER" />
+        <RegistryValue Root="HKLM"
+                       Key="Software\ГТС\ConfGTS"
+                       Name="DesktopShortcut"
+                       Type="integer"
+                       Value="1"
+                       KeyPath="yes" />
+      </Component>
+    </StandardDirectory>
   </Package>
 </Wix>
