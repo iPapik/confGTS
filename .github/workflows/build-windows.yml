@@ -1,0 +1,49 @@
+name: Build ConfGTS Windows installers
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Show SDK
+        shell: pwsh
+        run: dotnet --info
+
+      - name: Build MSI and EXE
+        shell: pwsh
+        run: .\build-installers.ps1
+
+      - name: Verify artifacts
+        shell: pwsh
+        run: |
+          $msi = 'artifacts\msi\ConfGTS-0.15.0-x64.msi'
+          $exe = 'artifacts\setup\ConfGTS-Setup-0.15.0-x64.exe'
+          if (!(Test-Path $msi)) { throw "MSI not found" }
+          if (!(Test-Path $exe)) { throw "EXE not found" }
+          Get-Item $msi, $exe | Format-Table Name, Length
+
+      - name: Upload installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: ConfGTS-0.15.0-installers
+          path: |
+            artifacts/msi/ConfGTS-0.15.0-x64.msi
+            artifacts/setup/ConfGTS-Setup-0.15.0-x64.exe
+          if-no-files-found: error
+          retention-days: 30
