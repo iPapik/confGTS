@@ -7,6 +7,6 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="Package.wxs" />
-    <BindPath Include="$(PublishDir)" Name="publish" />
+    <BindPath Include="$(PublishDir)" BindName="publish" />
   </ItemGroup>
 </Project>
