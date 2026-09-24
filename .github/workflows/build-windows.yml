@@ -11,7 +11,7 @@ permissions:
 jobs:
   build:
     runs-on: windows-latest
-    timeout-minutes: 45
+    timeout-minutes: 50
 
     steps:
       - uses: actions/checkout@v4
@@ -37,6 +37,34 @@ jobs:
           if (!(Test-Path $msi)) { throw "MSI not found" }
           if (!(Test-Path $exe)) { throw "EXE not found" }
           Get-Item $msi, $exe | Format-Table Name, Length
+
+      - name: Test MSI installation
+        shell: pwsh
+        run: |
+          $msi = (Resolve-Path 'artifacts\msi\ConfGTS-0.15.0-x64.msi').Path
+          $installedExe = Join-Path $env:ProgramFiles 'ГТС\ConfGTS\ConfGTS.Client.exe'
+
+          $p = Start-Process msiexec.exe -ArgumentList @('/i', "`"$msi`"", '/qn', '/norestart') -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "MSI install failed with exit code $($p.ExitCode)" }
+          if (!(Test-Path $installedExe)) { throw "MSI completed but ConfGTS.Client.exe was not installed" }
+
+          $p = Start-Process msiexec.exe -ArgumentList @('/x', "`"$msi`"", '/qn', '/norestart') -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "MSI uninstall failed with exit code $($p.ExitCode)" }
+          if (Test-Path $installedExe) { throw "MSI uninstall left ConfGTS.Client.exe behind" }
+
+      - name: Test EXE installation
+        shell: pwsh
+        run: |
+          $setup = (Resolve-Path 'artifacts\setup\ConfGTS-Setup-0.15.0-x64.exe').Path
+          $installedExe = Join-Path $env:ProgramFiles 'ГТС\ConfGTS\ConfGTS.Client.exe'
+
+          $p = Start-Process $setup -ArgumentList @('/quiet', '/norestart') -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "EXE install failed with exit code $($p.ExitCode)" }
+          if (!(Test-Path $installedExe)) { throw "EXE completed but ConfGTS.Client.exe was not installed" }
+
+          $p = Start-Process $setup -ArgumentList @('/uninstall', '/quiet', '/norestart') -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "EXE uninstall failed with exit code $($p.ExitCode)" }
+          if (Test-Path $installedExe) { throw "EXE uninstall left ConfGTS.Client.exe behind" }
 
       - name: Upload installers
         uses: actions/upload-artifact@v4
