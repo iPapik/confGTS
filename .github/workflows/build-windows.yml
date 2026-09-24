@@ -11,7 +11,7 @@ permissions:
 jobs:
   build:
     runs-on: windows-latest
-    timeout-minutes: 50
+    timeout-minutes: 55
 
     steps:
       - uses: actions/checkout@v4
@@ -29,38 +29,98 @@ jobs:
         shell: pwsh
         run: .\build-installers.ps1
 
-      - name: Verify artifacts
+      - name: Verify artifacts and app-local runtime
         shell: pwsh
         run: |
-          $msi = 'artifacts\msi\ConfGTS-0.15.0-x64.msi'
-          $exe = 'artifacts\setup\ConfGTS-Setup-0.15.0-x64.exe'
-          if (!(Test-Path $msi)) { throw "MSI not found" }
-          if (!(Test-Path $exe)) { throw "EXE not found" }
-          Get-Item $msi, $exe | Format-Table Name, Length
+          $msi = 'artifacts\msi\ConfGTS-0.15.1-x64.msi'
+          $setup = 'artifacts\setup\ConfGTS-Setup-0.15.1-x64.exe'
+          $client = 'artifacts\publish\ConfGTS.Client.exe'
+          foreach ($file in @($msi,$setup,$client)) { if (!(Test-Path $file)) { throw "Missing build artifact: $file" } }
+          foreach ($dll in @('vcruntime140.dll','vcruntime140_1.dll','msvcp140.dll')) {
+            $path = Join-Path 'artifacts\publish' $dll
+            if (!(Test-Path $path)) { throw "Missing app-local VC++ runtime: $dll" }
+          }
+          Get-Item $msi, $setup, $client | Format-Table Name, Length
 
-      - name: Test MSI installation
+      - name: Launch-test published WinUI client
         shell: pwsh
         run: |
-          $msi = (Resolve-Path 'artifacts\msi\ConfGTS-0.15.0-x64.msi').Path
+          function Assert-ConfGTSStarts([string]$exe, [string]$phase) {
+            Remove-Item "$env:LOCALAPPDATA\ConfGTS\logs\startup.log" -Force -ErrorAction SilentlyContinue
+            $p = Start-Process $exe -PassThru
+            Start-Sleep -Seconds 7
+            if ($p.HasExited) {
+              Write-Host "ConfGTS exited during $phase with code $($p.ExitCode)" -ForegroundColor Red
+              $log = "$env:LOCALAPPDATA\ConfGTS\logs\startup.log"
+              if (Test-Path $log) { Get-Content $log -Tail 100 }
+              Get-WinEvent -FilterHashtable @{LogName='Application'; StartTime=(Get-Date).AddMinutes(-5)} -ErrorAction SilentlyContinue |
+                Where-Object { $_.Message -match 'ConfGTS|WindowsAppRuntime|WinUI|Microsoft.UI.Xaml' } |
+                Select-Object -First 15 TimeCreated, Id, ProviderName, Message | Format-List
+              throw "ConfGTS failed to stay running during $phase."
+            }
+            Write-Host "ConfGTS stayed running during $phase (PID $($p.Id))." -ForegroundColor Green
+            Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 2
+          }
+          Assert-ConfGTSStarts (Resolve-Path 'artifacts\publish\ConfGTS.Client.exe').Path 'published client test'
+
+      - name: Test MSI install, shortcuts and launch
+        shell: pwsh
+        run: |
+          function Assert-ConfGTSStarts([string]$exe, [string]$phase) {
+            Remove-Item "$env:LOCALAPPDATA\ConfGTS\logs\startup.log" -Force -ErrorAction SilentlyContinue
+            $p = Start-Process $exe -PassThru
+            Start-Sleep -Seconds 7
+            if ($p.HasExited) {
+              $log = "$env:LOCALAPPDATA\ConfGTS\logs\startup.log"
+              if (Test-Path $log) { Get-Content $log -Tail 100 }
+              throw "ConfGTS exited during $phase with code $($p.ExitCode)"
+            }
+            Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 2
+          }
+
+          $msi = (Resolve-Path 'artifacts\msi\ConfGTS-0.15.1-x64.msi').Path
           $installedExe = Join-Path $env:ProgramFiles 'ГТС\ConfGTS\ConfGTS.Client.exe'
+          $startMenu = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\ConfGTS\ConfGTS.lnk'
+          $desktop = Join-Path ([Environment]::GetFolderPath('CommonDesktopDirectory')) 'ConfGTS.lnk'
 
           $p = Start-Process msiexec.exe -ArgumentList @('/i', "`"$msi`"", '/qn', '/norestart') -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw "MSI install failed with exit code $($p.ExitCode)" }
           if (!(Test-Path $installedExe)) { throw "MSI completed but ConfGTS.Client.exe was not installed" }
+          if (!(Test-Path $startMenu)) { throw "Start menu shortcut was not created: $startMenu" }
+          if (!(Test-Path $desktop)) { throw "Desktop shortcut was not created: $desktop" }
+          Assert-ConfGTSStarts $installedExe 'MSI-installed app test'
 
           $p = Start-Process msiexec.exe -ArgumentList @('/x', "`"$msi`"", '/qn', '/norestart') -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw "MSI uninstall failed with exit code $($p.ExitCode)" }
           if (Test-Path $installedExe) { throw "MSI uninstall left ConfGTS.Client.exe behind" }
+          if (Test-Path $startMenu) { throw "MSI uninstall left Start menu shortcut behind" }
+          if (Test-Path $desktop) { throw "MSI uninstall left Desktop shortcut behind" }
 
-      - name: Test EXE installation
+      - name: Test EXE install, shortcuts and launch
         shell: pwsh
         run: |
-          $setup = (Resolve-Path 'artifacts\setup\ConfGTS-Setup-0.15.0-x64.exe').Path
+          $setup = (Resolve-Path 'artifacts\setup\ConfGTS-Setup-0.15.1-x64.exe').Path
           $installedExe = Join-Path $env:ProgramFiles 'ГТС\ConfGTS\ConfGTS.Client.exe'
+          $startMenu = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\ConfGTS\ConfGTS.lnk'
+          $desktop = Join-Path ([Environment]::GetFolderPath('CommonDesktopDirectory')) 'ConfGTS.lnk'
 
           $p = Start-Process $setup -ArgumentList @('/quiet', '/norestart') -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw "EXE install failed with exit code $($p.ExitCode)" }
           if (!(Test-Path $installedExe)) { throw "EXE completed but ConfGTS.Client.exe was not installed" }
+          if (!(Test-Path $startMenu)) { throw "EXE did not create Start menu shortcut" }
+          if (!(Test-Path $desktop)) { throw "EXE did not create Desktop shortcut" }
+
+          $proc = Start-Process $installedExe -PassThru
+          Start-Sleep -Seconds 7
+          if ($proc.HasExited) {
+            $log = "$env:LOCALAPPDATA\ConfGTS\logs\startup.log"
+            if (Test-Path $log) { Get-Content $log -Tail 100 }
+            throw "EXE-installed ConfGTS exited immediately with code $($proc.ExitCode)"
+          }
+          Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+          Start-Sleep -Seconds 2
 
           $p = Start-Process $setup -ArgumentList @('/uninstall', '/quiet', '/norestart') -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw "EXE uninstall failed with exit code $($p.ExitCode)" }
@@ -69,7 +129,7 @@ jobs:
       - name: Generate SHA-256
         shell: pwsh
         run: |
-          $files = @('artifacts\msi\ConfGTS-0.15.0-x64.msi','artifacts\setup\ConfGTS-Setup-0.15.0-x64.exe')
+          $files = @('artifacts\msi\ConfGTS-0.15.1-x64.msi','artifacts\setup\ConfGTS-Setup-0.15.1-x64.exe')
           $lines = foreach ($file in $files) {
             $hash = Get-FileHash $file -Algorithm SHA256
             "$($hash.Hash.ToLower())  $([IO.Path]::GetFileName($file))"
@@ -77,13 +137,13 @@ jobs:
           $lines | Set-Content 'artifacts\SHA256SUMS.txt' -Encoding ascii
           Get-Content 'artifacts\SHA256SUMS.txt'
 
-      - name: Upload installers
+      - name: Upload tested installers
         uses: actions/upload-artifact@v4
         with:
-          name: ConfGTS-0.15.0-installers
+          name: ConfGTS-0.15.1-tested-installers
           path: |
-            artifacts/msi/ConfGTS-0.15.0-x64.msi
-            artifacts/setup/ConfGTS-Setup-0.15.0-x64.exe
+            artifacts/msi/ConfGTS-0.15.1-x64.msi
+            artifacts/setup/ConfGTS-Setup-0.15.1-x64.exe
             artifacts/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 30
@@ -95,8 +155,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release delete v0.15.0 --cleanup-tag --yes 2>$null
-          $msi = 'artifacts\msi\ConfGTS-0.15.0-x64.msi'
-          $exe = 'artifacts\setup\ConfGTS-Setup-0.15.0-x64.exe'
+          gh release delete v0.15.1 --cleanup-tag --yes 2>$null
+          if ($LASTEXITCODE -ne 0) { Write-Host 'No previous v0.15.1 release to delete.' }
+          $msi = 'artifacts\msi\ConfGTS-0.15.1-x64.msi'
+          $exe = 'artifacts\setup\ConfGTS-Setup-0.15.1-x64.exe'
           $sums = 'artifacts\SHA256SUMS.txt'
-          gh release create v0.15.0 $msi $exe $sums --target "${{ github.sha }}" --title 'ConfGTS 0.15.0' --notes 'Проверенные Windows x64 установщики. Перед публикацией GitHub Actions автоматически устанавливает и удаляет оба пакета.'
+          gh release create v0.15.1 $msi $exe $sums --target "${{ github.sha }}" --title 'ConfGTS 0.15.1' --notes 'Исправлены ярлыки и запуск WinUI 3. В пакет добавлен app-local VC++ Runtime. CI проверяет запуск программы после установки MSI и EXE.'
