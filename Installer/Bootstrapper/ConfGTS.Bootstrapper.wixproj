@@ -6,6 +6,6 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="WixToolset.BootstrapperApplications.wixext" Version="5.0.2" />
-    <BindPath Include="$(MsiDir)" Name="msi" />
+    <BindPath Include="$(MsiDir)" BindName="msi" />
   </ItemGroup>
 </Project>
