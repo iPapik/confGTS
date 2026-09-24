@@ -4,6 +4,7 @@
     <InstallerPlatform>x64</InstallerPlatform>
     <PublishDir Condition="'$(PublishDir)'==''">$(MSBuildThisFileDirectory)..\artifacts\publish</PublishDir>
     <EnableDefaultItems>false</EnableDefaultItems>
+    <SuppressIces>ICE03</SuppressIces>
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="Package.wxs" />
