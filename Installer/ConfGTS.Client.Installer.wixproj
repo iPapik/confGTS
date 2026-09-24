@@ -3,9 +3,10 @@
     <OutputName>ConfGTS-0.15.0-x64</OutputName>
     <InstallerPlatform>x64</InstallerPlatform>
     <PublishDir Condition="'$(PublishDir)'==''">$(MSBuildThisFileDirectory)..\artifacts\publish</PublishDir>
+    <EnableDefaultItems>false</EnableDefaultItems>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="Package.wxs" />
     <BindPath Include="$(PublishDir)" Name="publish" />
-    <Compile Remove="Bootstrapper\**\*.wxs" />
   </ItemGroup>
 </Project>
