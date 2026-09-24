@@ -1,0 +1,10 @@
+<Project Sdk="WixToolset.Sdk/7.0.0">
+  <PropertyGroup>
+    <OutputName>ConfGTS-0.15.0-x64</OutputName>
+    <InstallerPlatform>x64</InstallerPlatform>
+    <PublishDir Condition="'$(PublishDir)'==''">$(MSBuildThisFileDirectory)..\artifacts\publish</PublishDir>
+  </PropertyGroup>
+  <ItemGroup>
+    <BindPath Include="$(PublishDir)" Name="publish" />
+  </ItemGroup>
+</Project>
