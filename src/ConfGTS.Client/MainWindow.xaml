@@ -68,7 +68,7 @@
                         <TextBlock x:Name="LoginError" Foreground="#B42318" TextWrapping="Wrap" Visibility="Collapsed"/>
                     </StackPanel>
                 </Border>
-                <TextBlock Text="ConfGTS 0.15.1  |  © ГТС, 2026" HorizontalAlignment="Center"
+                <TextBlock Text="ConfGTS 0.15.2  |  © ГТС, 2026" HorizontalAlignment="Center"
                            VerticalAlignment="Bottom" Margin="0,0,0,28" Foreground="#73839A"/>
             </Grid>
         </Grid>
