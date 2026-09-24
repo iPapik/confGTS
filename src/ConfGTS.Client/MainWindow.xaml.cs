@@ -399,7 +399,7 @@ public sealed class MainWindow : Window
     private static Microsoft.UI.Xaml.Media.SolidColorBrush Brush(string hex) =>
         new(Color(hex));
 
-    private static Microsoft.UI.Color Color(string hex)
+    private static Windows.UI.Color Color(string hex)
     {
         var value = hex.TrimStart('#');
         byte a = 255;
