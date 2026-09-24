@@ -6,5 +6,6 @@
   </PropertyGroup>
   <ItemGroup>
     <BindPath Include="$(PublishDir)" Name="publish" />
+    <Compile Remove="Bootstrapper\**\*.wxs" />
   </ItemGroup>
 </Project>
