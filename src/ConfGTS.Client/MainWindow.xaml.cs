@@ -165,7 +165,6 @@ public sealed class MainWindow : Window
             Background = Brush("#00FFFFFF"),
             BorderThickness = new Thickness(0),
             CornerRadius = new CornerRadius(8),
-            ToolTipService = null,
             Content = new FontIcon { Glyph = "\uE890", FontSize = 16, Foreground = Brush("#5D7891") }
         };
         revealButton.Resources["ButtonBackground"] = Brush("#00FFFFFF");
