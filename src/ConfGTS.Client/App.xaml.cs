@@ -62,7 +62,7 @@ public partial class App : Application
         e.SetObserved();
     }
 
-    private static void CurrentDomain_UnhandledException(object sender, UnhandledExceptionEventArgs e)
+    private static void CurrentDomain_UnhandledException(object sender, System.UnhandledExceptionEventArgs e)
     {
         if (e.ExceptionObject is Exception ex)
             StartupDiagnostics.Log("AppDomain unhandled exception. IsTerminating=" + e.IsTerminating, ex);
