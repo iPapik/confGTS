@@ -353,8 +353,8 @@ public sealed class MainWindow : Window
     private static void StyleLoginTextBox(TextBox box)
     {
         box.FontSize = 16;
-        box.MinHeight = 52;
-        box.Padding = new Thickness(12, 8, 12, 8);
+        box.MinHeight = 44;
+        box.Padding = new Thickness(12, 5, 12, 5);
         box.Background = Brush("#FFFFFF");
         box.BorderBrush = Brush("#BFD5E3");
         box.BorderThickness = new Thickness(1);
@@ -371,8 +371,8 @@ public sealed class MainWindow : Window
     private static void StyleLoginPasswordBox(PasswordBox box)
     {
         box.FontSize = 16;
-        box.MinHeight = 52;
-        box.Padding = new Thickness(12, 8, 8, 8);
+        box.MinHeight = 44;
+        box.Padding = new Thickness(12, 5, 8, 5);
         box.Background = Brush("#FFFFFF");
         box.BorderBrush = Brush("#BFD5E3");
         box.BorderThickness = new Thickness(1);
