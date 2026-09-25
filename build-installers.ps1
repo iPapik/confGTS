@@ -16,7 +16,7 @@ if ($LASTEXITCODE -ne 0) { throw "MSI build failed" }
 
 $msi = Get-ChildItem $msiOut -Filter *.msi -Recurse | Select-Object -First 1
 if (-not $msi) { throw "MSI not found" }
-$finalMsi = Join-Path $msiOut "ConfGTS-0.16.1-x64.msi"
+$finalMsi = Join-Path $msiOut "ConfGTS-0.17.0-x64.msi"
 if ($msi.FullName -ne $finalMsi) { Copy-Item $msi.FullName $finalMsi -Force }
 
 dotnet build (Join-Path $root "Installer\Bootstrapper\ConfGTS.Bootstrapper.wixproj") -c Release -p:MsiDir="$msiOut" -p:OutputPath="$setupOut\"
@@ -24,7 +24,7 @@ if ($LASTEXITCODE -ne 0) { throw "EXE bootstrapper build failed" }
 
 $exe = Get-ChildItem $setupOut -Filter *.exe -Recurse | Select-Object -First 1
 if (-not $exe) { throw "EXE installer not found" }
-$finalExe = Join-Path $setupOut "ConfGTS-Setup-0.16.1-x64.exe"
+$finalExe = Join-Path $setupOut "ConfGTS-Setup-0.17.0-x64.exe"
 if ($exe.FullName -ne $finalExe) { Copy-Item $exe.FullName $finalExe -Force }
 
 Write-Host "MSI: $finalMsi" -ForegroundColor Green
