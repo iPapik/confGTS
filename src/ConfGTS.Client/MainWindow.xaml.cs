@@ -830,7 +830,7 @@ public sealed class MainWindow : Window
     private async Task ConfigureConferenceDocumentAsync(WebView2 web, string roomId)
     {
         var roomJson = JsonSerializer.Serialize(roomId);
-        var script = $"""
+        var script = $$"""
         (() => {
           const nativeStyle = document.createElement('style');
           nativeStyle.id = 'confgts-native-shell-style';
