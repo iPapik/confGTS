@@ -37,6 +37,10 @@ jobs:
           Select-String -Path '.\server\ldap.go' -Pattern '^type |^func |Search|DisplayName|mail|userPrincipalName|sAMAccountName|memberOf' -Context 2,12
           Write-Host '=== WEB FULL ==='
           Get-Content '.\server\web.go'
+          Write-Host '=== AUTH / LOGIN ==='
+          Get-ChildItem '.\server' -Filter *.go | ForEach-Object {
+            Select-String -Path $_.FullName -Pattern 'api/login|Login|Authenticate|ValidateLocal|LocalUser|LDAP|Password|vc_session|server-login' -Context 4,16
+          }
           Write-Host '=== STORE KNOWN USERS ==='
           Select-String -Path '.\server\store.go' -Pattern 'KnownUsers|KnownUser|Remember|currentUser|Rooms\(' -Context 4,20
           Write-Host '=== TYPES ==='
