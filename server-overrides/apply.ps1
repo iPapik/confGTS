@@ -2,7 +2,7 @@ $ErrorActionPreference = "Stop"
 
 $root = Split-Path -Parent $PSScriptRoot
 
-Write-Host "Applying ConfGTS Server 0.18.1 overlays..." -ForegroundColor Cyan
+Write-Host "Applying ConfGTS Server 0.18.2 overlays..." -ForegroundColor Cyan
 
 Copy-Item (Join-Path $PSScriptRoot "src\*") (Join-Path $root "src") -Recurse -Force
 Copy-Item (Join-Path $PSScriptRoot "server\*") (Join-Path $root "server") -Recurse -Force
@@ -24,8 +24,8 @@ Set-Content $storePath $store -Encoding UTF8 -NoNewline
 
 $mainPath = Join-Path $root "server\main.go"
 $main = Get-Content $mainPath -Raw -Encoding UTF8
-$main = $main.Replace('const Version = "0.16.0"', 'const Version = "0.18.1"')
-$main = $main.Replace('const Version = "0.16.1"', 'const Version = "0.18.1"')
+$main = $main.Replace('const Version = "0.16.0"', 'const Version = "0.18.2"')
+$main = $main.Replace('const Version = "0.16.1"', 'const Version = "0.18.2"')
 $main = $main.Replace('cfg.ListenAddr == ":8090" {', 'cfg.ListenAddr == ":8090" || cfg.ListenAddr == "0.0.0.0:8090" {')
 $main = $main.Replace('cfg.ListenAddr = "127.0.0.1:" + strconv.Itoa(n)', 'cfg.ListenAddr = "0.0.0.0:" + strconv.Itoa(n)')
 $main = $main.Replace('addr = "127.0.0.1:8090"', 'addr = "0.0.0.0:8090"')
@@ -112,13 +112,13 @@ $versionTargets = @(
 foreach ($target in $versionTargets) {
     if (Test-Path $target -PathType Leaf) {
         $text = Get-Content $target -Raw -Encoding UTF8
-        $text = $text.Replace("0.16.0", "0.18.1").Replace("0.16.1", "0.18.1").Replace("0.17.0", "0.18.1").Replace("0.18.0", "0.18.1")
+        $text = $text.Replace("0.16.0", "0.18.2").Replace("0.16.1", "0.18.2").Replace("0.17.0", "0.18.2").Replace("0.18.0", "0.18.2").Replace("0.18.1", "0.18.2").Replace("0.18.0", "0.18.2").Replace("0.18.1", "0.18.2")
         Set-Content $target $text -Encoding UTF8 -NoNewline
     } elseif (Test-Path $target -PathType Container) {
         Get-ChildItem $target -Recurse -File -Include *.go,*.cs,*.xaml,*.csproj,*.wxs,*.wixproj,*.ps1 | ForEach-Object {
             $text = Get-Content $_.FullName -Raw -Encoding UTF8
-            if ($text.Contains("0.16.0") -or $text.Contains("0.16.1") -or $text.Contains("0.17.0") -or $text.Contains("0.18.0")) {
-                $text = $text.Replace("0.16.0", "0.18.1").Replace("0.16.1", "0.18.1").Replace("0.17.0", "0.18.1")
+            if ($text.Contains("0.16.0") -or $text.Contains("0.16.1") -or $text.Contains("0.17.0") -or $text.Contains("0.18.0") -or $text.Contains("0.18.1")) {
+                $text = $text.Replace("0.16.0", "0.18.2").Replace("0.16.1", "0.18.2").Replace("0.17.0", "0.18.2")
                 Set-Content $_.FullName $text -Encoding UTF8 -NoNewline
             }
         }
@@ -156,7 +156,7 @@ $serverBundle = Join-Path $root "Installer\Server\Bootstrapper\Bundle.wxs"
 if (Test-Path $serverBundle) {
     $bundle = Get-Content $serverBundle -Raw -Encoding UTF8
     if (-not $bundle.Contains('IconSourceFile=')) {
-        $bundle = $bundle.Replace('          Version="0.18.1"', '          Version="0.18.1"' + [Environment]::NewLine + '          IconSourceFile="!(bindpath.assets)\ConfGTS.ico"')
+        $bundle = $bundle.Replace('          Version="0.18.2"', '          Version="0.18.2"' + [Environment]::NewLine + '          IconSourceFile="!(bindpath.assets)\ConfGTS.ico"')
     }
     Set-Content $serverBundle $bundle -Encoding UTF8 -NoNewline
 }
