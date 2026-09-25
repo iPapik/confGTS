@@ -1,3 +1,4 @@
+using System.Text.Json;
 using ConfGTS.Client.Services;
 using Microsoft.UI;
 using Microsoft.UI.Text;
@@ -7,6 +8,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Shapes;
+using Microsoft.Web.WebView2.Core;
 using Windows.Graphics;
 using Windows.System;
 using WinRT.Interop;
@@ -42,7 +44,12 @@ public sealed class MainWindow : Window
     private bool _passwordVisible;
     private bool _dashboardRefreshRunning;
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _dashboardTimer;
-    private MediaSettingsWindow? _mediaSettingsWindow;
+    private readonly Grid _mainContentHost = new();
+    private ScrollViewer? _dashboardMainScroll;
+    private MediaSettingsPanel? _mediaSettingsPanel;
+    private WebView2? _conferenceWebView;
+    private Grid? _conferenceHost;
+    private string _activeRoomId = "";
 
     public MainWindow()
     {
@@ -141,20 +148,15 @@ public sealed class MainWindow : Window
 
         panel.Children.Add(new TextBlock
         {
-            Text = "ConfGTS",
-            FontSize = 46,
+            Text = "Тепло наших сердец\nв ваших квартирах",
+            FontSize = 30,
             FontWeight = FontWeights.Bold,
             Foreground = Brush(Navy),
             HorizontalAlignment = HorizontalAlignment.Center,
-            Margin = new Thickness(0, 10, 0, 0)
-        });
-        panel.Children.Add(new TextBlock
-        {
-            Text = "Сервис видеоконференцсвязи",
-            FontSize = 18,
-            Foreground = Brush(Muted),
-            HorizontalAlignment = HorizontalAlignment.Center,
-            Margin = new Thickness(0, -5, 0, 16)
+            TextAlignment = TextAlignment.Center,
+            TextWrapping = TextWrapping.Wrap,
+            LineHeight = 38,
+            Margin = new Thickness(0, 14, 0, 16)
         });
 
         panel.Children.Add(Label("Логин"));
@@ -267,7 +269,7 @@ public sealed class MainWindow : Window
 
         panel.Children.Add(new TextBlock
         {
-            Text = "ConfGTS 0.17.0  |  © ГТС, 2026",
+            Text = "Версия 0.18.0 beta  |  © ГТС, 2026",
             FontSize = 11,
             Foreground = Brush("#8A9BAC"),
             HorizontalAlignment = HorizontalAlignment.Center,
@@ -306,9 +308,9 @@ public sealed class MainWindow : Window
         Grid.SetRow(sidebarScroll, 1);
 
         var sidebarContent = new StackPanel { Spacing = 12 };
-        sidebarContent.Children.Add(SidebarSectionHeader("\uE716", "Контакты"));
-        _contactsPanel.Spacing = 6;
-        sidebarContent.Children.Add(_contactsPanel);
+        sidebarContent.Children.Add(SidebarSectionHeader("\uE787", "Конференции"));
+        _conferenceSidebarPanel.Spacing = 6;
+        sidebarContent.Children.Add(_conferenceSidebarPanel);
 
         sidebarContent.Children.Add(new Border
         {
@@ -317,9 +319,9 @@ public sealed class MainWindow : Window
             Margin = new Thickness(0, 8, 0, 4)
         });
 
-        sidebarContent.Children.Add(SidebarSectionHeader("\uE787", "Конференции"));
-        _conferenceSidebarPanel.Spacing = 6;
-        sidebarContent.Children.Add(_conferenceSidebarPanel);
+        sidebarContent.Children.Add(SidebarSectionHeader("\uE716", "Контакты"));
+        _contactsPanel.Spacing = 6;
+        sidebarContent.Children.Add(_contactsPanel);
 
         sidebarScroll.Content = sidebarContent;
         sideGrid.Children.Add(sidebarScroll);
@@ -349,7 +351,7 @@ public sealed class MainWindow : Window
         {
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto
         };
-        Grid.SetColumn(mainScroll, 1);
+        _dashboardMainScroll = mainScroll;
 
         var main = new StackPanel
         {
@@ -361,7 +363,9 @@ public sealed class MainWindow : Window
         main.Children.Add(_mainConferencePanel);
 
         mainScroll.Content = main;
-        _dashboardView.Children.Add(mainScroll);
+        _mainContentHost.Children.Add(mainScroll);
+        Grid.SetColumn(_mainContentHost, 1);
+        _dashboardView.Children.Add(_mainContentHost);
 
         RenderLoadingDashboard();
     }
@@ -539,14 +543,18 @@ public sealed class MainWindow : Window
 
         foreach (var room in rooms)
         {
-            var border = new Border
+            var button = new Button
             {
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                HorizontalContentAlignment = HorizontalAlignment.Stretch,
+                Padding = new Thickness(10, 8, 10, 8),
                 Background = Brush("#F5FAFD"),
+                Foreground = Brush(Navy),
                 BorderBrush = Brush("#D8E6EF"),
                 BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(10),
-                Padding = new Thickness(10, 8, 10, 8)
+                CornerRadius = new CornerRadius(10)
             };
+            ApplyButtonVisuals(button, "#F5FAFD", "#E7F4FA", "#D9EDF5", Navy);
 
             var stack = new StackPanel { Spacing = 2 };
             stack.Children.Add(new TextBlock
@@ -565,8 +573,16 @@ public sealed class MainWindow : Window
                 TextTrimming = TextTrimming.CharacterEllipsis
             });
 
-            border.Child = stack;
-            _conferenceSidebarPanel.Children.Add(border);
+            button.Content = stack;
+            button.Click += async (_, _) =>
+            {
+                await CloseInlineSettingsAsync();
+                await LeaveConferenceAsync(false);
+                if (_dashboardMainScroll is not null)
+                    _dashboardMainScroll.Visibility = Visibility.Visible;
+                RenderMainConference(new[] { room });
+            };
+            _conferenceSidebarPanel.Children.Add(button);
         }
     }
 
@@ -615,6 +631,7 @@ public sealed class MainWindow : Window
         var grid = new Grid();
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         grid.ColumnDefinitions.Add(new ColumnDefinition());
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
         var icon = new Border
         {
@@ -678,8 +695,234 @@ public sealed class MainWindow : Window
         });
 
         grid.Children.Add(detail);
+
+        var join = PrimaryActionButton("Подключиться");
+        join.MinWidth = 170;
+        join.VerticalAlignment = VerticalAlignment.Center;
+        join.Margin = new Thickness(24, 0, 0, 0);
+        join.Click += async (_, _) => await OpenConferenceAsync(room);
+        Grid.SetColumn(join, 2);
+        grid.Children.Add(join);
+
         conferenceCard.Child = grid;
         _mainConferencePanel.Children.Add(conferenceCard);
+    }
+
+    private async Task OpenConferenceAsync(RoomInfo room)
+    {
+        await CloseInlineSettingsAsync();
+        await LeaveConferenceAsync(false);
+
+        if (_dashboardMainScroll is not null)
+            _dashboardMainScroll.Visibility = Visibility.Collapsed;
+
+        _activeRoomId = room.Id;
+
+        var host = new Grid
+        {
+            Background = Brush(Background),
+            Padding = new Thickness(20)
+        };
+        host.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        host.RowDefinitions.Add(new RowDefinition());
+
+        var header = new Grid { Margin = new Thickness(0, 0, 0, 12) };
+        header.ColumnDefinitions.Add(new ColumnDefinition());
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        var titlePanel = new StackPanel { Spacing = 2 };
+        titlePanel.Children.Add(new TextBlock
+        {
+            Text = room.Name,
+            FontSize = 24,
+            FontWeight = FontWeights.Bold,
+            Foreground = Brush(Navy)
+        });
+        var status = new TextBlock
+        {
+            Text = "Подключение к конференции…",
+            FontSize = 12,
+            Foreground = Brush(Muted)
+        };
+        titlePanel.Children.Add(status);
+        header.Children.Add(titlePanel);
+
+        var leave = new Button
+        {
+            Content = "Выйти из конференции",
+            MinHeight = 42,
+            Padding = new Thickness(16, 9, 16, 9),
+            Background = Brush("#FFF1F0"),
+            Foreground = Brush("#A72E2E"),
+            BorderBrush = Brush("#F3C7C4"),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(10)
+        };
+        ApplyButtonVisuals(leave, "#FFF1F0", "#FDE3E1", "#F9D2CF", "#A72E2E");
+        leave.Click += async (_, _) => await LeaveConferenceAsync(true);
+        Grid.SetColumn(leave, 1);
+        header.Children.Add(leave);
+        host.Children.Add(header);
+
+        var web = new WebView2
+        {
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            VerticalAlignment = VerticalAlignment.Stretch
+        };
+        Grid.SetRow(web, 1);
+        host.Children.Add(web);
+
+        _conferenceHost = host;
+        _conferenceWebView = web;
+        _mainContentHost.Children.Add(host);
+
+        try
+        {
+            await web.EnsureCoreWebView2Async();
+            if (web.CoreWebView2 is null)
+                throw new InvalidOperationException("WebView2 Runtime не инициализирован.");
+
+            web.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
+            web.CoreWebView2.PermissionRequested += ConferencePermissionRequested;
+            web.CoreWebView2.ServerCertificateErrorDetected += ConferenceCertificateErrorDetected;
+
+            var session = _api.GetSessionCookie();
+            if (session is null || string.IsNullOrWhiteSpace(session.Value))
+                throw new InvalidOperationException("Сессия авторизации отсутствует. Войдите в клиент повторно.");
+
+            var server = new Uri(_api.EffectiveBaseUrl);
+            var cookie = web.CoreWebView2.CookieManager.CreateCookie("vc_session", session.Value, server.Host, "/");
+            cookie.IsHttpOnly = true;
+            cookie.IsSecure = server.Scheme.Equals("https", StringComparison.OrdinalIgnoreCase);
+            web.CoreWebView2.CookieManager.AddOrUpdateCookie(cookie);
+
+            web.NavigationCompleted += async (_, args) =>
+            {
+                if (!args.IsSuccess)
+                {
+                    status.Text = "Не удалось открыть конференцию: " + args.WebErrorStatus;
+                    status.Foreground = Brush("#B54242");
+                    return;
+                }
+
+                try
+                {
+                    await ConfigureConferenceDocumentAsync(web, room.Id);
+                    status.Text = "Конференция открыта. Разрешите доступ к камере и микрофону, если Windows запросит разрешение.";
+                    status.Foreground = Brush("#278E55");
+                }
+                catch (Exception ex)
+                {
+                    status.Text = "Ошибка входа в конференцию: " + ex.Message;
+                    status.Foreground = Brush("#B54242");
+                }
+            };
+
+            web.Source = new Uri(_api.EffectiveBaseUrl.TrimEnd('/') + "/app");
+        }
+        catch (Exception ex)
+        {
+            status.Text = "Не удалось запустить конференцию: " + ex.Message;
+            status.Foreground = Brush("#B54242");
+        }
+    }
+
+    private async Task ConfigureConferenceDocumentAsync(WebView2 web, string roomId)
+    {
+        var roomJson = JsonSerializer.Serialize(roomId);
+        var script = $"""
+        (() => {
+          const nativeStyle = document.createElement('style');
+          nativeStyle.id = 'confgts-native-shell-style';
+          nativeStyle.textContent = `
+            .topbar, .client-left, .home-video, .hero { display:none !important; }
+            .client-shell { display:block !important; min-height:100vh !important; }
+            .client-main { padding:0 !important; width:100% !important; max-width:none !important; }
+            #conference { margin:0 !important; padding:0 !important; }
+            body { background:#EEF7FC !important; overflow:auto !important; }
+            .video-grid { min-height:420px !important; }
+          `;
+          document.getElementById(nativeStyle.id)?.remove();
+          document.head.appendChild(nativeStyle);
+
+          const roomId = {{roomJson}};
+          if (typeof selectRoom !== 'function' || typeof joinRoom !== 'function') {
+            throw new Error('Серверная WebRTC-страница не содержит функций конференции.');
+          }
+
+          selectRoom(roomId)
+            .then(() => joinRoom())
+            .catch(err => {
+              console.error('ConfGTS native conference join failed', err);
+              const box = document.createElement('div');
+              box.style.cssText = 'margin:20px;padding:16px;border-radius:12px;background:#fff1f0;color:#a72e2e';
+              box.textContent = 'Не удалось войти в конференцию: ' + (err?.message || err);
+              document.body.prepend(box);
+            });
+        })();
+        """;
+        await web.ExecuteScriptAsync(script);
+    }
+
+    private async Task LeaveConferenceAsync(bool showDashboard)
+    {
+        var web = _conferenceWebView;
+        var host = _conferenceHost;
+
+        _conferenceWebView = null;
+        _conferenceHost = null;
+        _activeRoomId = "";
+
+        if (web?.CoreWebView2 is not null)
+        {
+            try
+            {
+                await web.ExecuteScriptAsync("if (typeof leaveRoom === 'function') { leaveRoom(); }");
+            }
+            catch
+            {
+            }
+        }
+
+        if (host is not null)
+            _mainContentHost.Children.Remove(host);
+
+        if (showDashboard && _dashboardMainScroll is not null)
+        {
+            _dashboardMainScroll.Visibility = Visibility.Visible;
+            await RefreshDashboardAsync();
+        }
+    }
+
+    private void ConferencePermissionRequested(object? sender, CoreWebView2PermissionRequestedEventArgs e)
+    {
+        if (!IsConferenceOrigin(e.Uri))
+            return;
+
+        if (e.PermissionKind == CoreWebView2PermissionKind.Camera ||
+            e.PermissionKind == CoreWebView2PermissionKind.Microphone)
+        {
+            e.State = CoreWebView2PermissionState.Allow;
+            e.SavesInProfile = false;
+        }
+    }
+
+    private void ConferenceCertificateErrorDetected(object? sender, CoreWebView2ServerCertificateErrorDetectedEventArgs e)
+    {
+        if (IsConferenceOrigin(e.RequestUri))
+            e.Action = CoreWebView2ServerCertificateErrorAction.AlwaysAllow;
+    }
+
+    private bool IsConferenceOrigin(string? value)
+    {
+        if (!Uri.TryCreate(value, UriKind.Absolute, out var candidate) ||
+            !Uri.TryCreate(_api.EffectiveBaseUrl, UriKind.Absolute, out var expected))
+        {
+            return false;
+        }
+
+        return string.Equals(candidate.Host, expected.Host, StringComparison.OrdinalIgnoreCase) &&
+               candidate.Port == expected.Port;
     }
 
     private void StartDashboardTimer()
@@ -756,25 +999,52 @@ public sealed class MainWindow : Window
         }
     }
 
-    private void LogoutButton_Click(object sender, RoutedEventArgs e)
+    private async void LogoutButton_Click(object sender, RoutedEventArgs e)
     {
         StopDashboardTimer();
+        await CloseInlineSettingsAsync();
+        await LeaveConferenceAsync(false);
         _dashboardView.Visibility = Visibility.Collapsed;
         _loginView.Visibility = Visibility.Visible;
         _passwordBox.Password = "";
     }
 
-    private void MediaSettingsButton_Click(object sender, RoutedEventArgs e)
+    private async void MediaSettingsButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_mediaSettingsWindow is not null)
+        await ShowInlineSettingsAsync();
+    }
+
+    private async Task ShowInlineSettingsAsync()
+    {
+        await LeaveConferenceAsync(false);
+
+        if (_mediaSettingsPanel is not null)
+            return;
+
+        if (_dashboardMainScroll is not null)
+            _dashboardMainScroll.Visibility = Visibility.Collapsed;
+
+        _mediaSettingsPanel = new MediaSettingsPanel();
+        _mediaSettingsPanel.CloseRequested += async (_, _) => await CloseInlineSettingsAsync();
+        _mainContentHost.Children.Add(_mediaSettingsPanel);
+    }
+
+    private async Task CloseInlineSettingsAsync()
+    {
+        var panel = _mediaSettingsPanel;
+        if (panel is null)
         {
-            _mediaSettingsWindow.Activate();
+            if (_dashboardMainScroll is not null)
+                _dashboardMainScroll.Visibility = Visibility.Visible;
             return;
         }
 
-        _mediaSettingsWindow = new MediaSettingsWindow();
-        _mediaSettingsWindow.Closed += (_, _) => _mediaSettingsWindow = null;
-        _mediaSettingsWindow.Activate();
+        _mediaSettingsPanel = null;
+        await panel.ShutdownAsync();
+        _mainContentHost.Children.Remove(panel);
+
+        if (_dashboardMainScroll is not null)
+            _dashboardMainScroll.Visibility = Visibility.Visible;
     }
 
     private async void SettingsButton_Click(object sender, RoutedEventArgs e)
@@ -896,17 +1166,28 @@ public sealed class MainWindow : Window
         Margin = new Thickness(0, 3, 0, -4)
     };
 
-    private static TextBlock SidebarSectionHeader(string glyph, string text)
+    private static UIElement SidebarSectionHeader(string glyph, string text)
     {
-        var line = new TextBlock
+        var row = new StackPanel
         {
-            Text = glyph + "  " + text,
-            FontFamily = new FontFamily("Segoe Fluent Icons, Segoe UI"),
+            Orientation = Orientation.Horizontal,
+            Spacing = 8
+        };
+        row.Children.Add(new FontIcon
+        {
+            Glyph = glyph,
+            FontSize = 14,
+            Foreground = Brush(Navy)
+        });
+        row.Children.Add(new TextBlock
+        {
+            Text = text,
             FontSize = 14,
             FontWeight = FontWeights.SemiBold,
-            Foreground = Brush(Navy)
-        };
-        return line;
+            Foreground = Brush(Navy),
+            VerticalAlignment = VerticalAlignment.Center
+        });
+        return row;
     }
 
     private static Button SidebarButton(string glyph, string text)
@@ -930,9 +1211,10 @@ public sealed class MainWindow : Window
             Children =
             {
                 new FontIcon { Glyph = glyph, FontSize = 14, Foreground = Brush(Blue) },
-                new TextBlock { Text = text, VerticalAlignment = VerticalAlignment.Center }
+                new TextBlock { Text = text, Foreground = Brush(Navy), VerticalAlignment = VerticalAlignment.Center }
             }
         };
+        ApplyButtonVisuals(button, "#F3F9FC", "#E4F2F8", "#D6EAF3", Navy);
         return button;
     }
 
@@ -947,8 +1229,37 @@ public sealed class MainWindow : Window
             BorderThickness = new Thickness(0),
             Content = new FontIcon { Glyph = glyph, FontSize = 17, Foreground = Brush("#658098") }
         };
+        ApplyButtonVisuals(button, "#00FFFFFF", "#E8F4F9", "#DCEEF6", "#658098");
         ToolTipService.SetToolTip(button, tooltip);
         return button;
+    }
+
+    private static Button PrimaryActionButton(string text)
+    {
+        var button = new Button
+        {
+            Content = text,
+            MinHeight = 48,
+            Padding = new Thickness(22, 11, 22, 11),
+            Background = Brush(Blue),
+            Foreground = Brush("#FFFFFF"),
+            BorderThickness = new Thickness(0),
+            CornerRadius = new CornerRadius(11),
+            FontWeight = FontWeights.SemiBold,
+            FontSize = 15
+        };
+        ApplyButtonVisuals(button, Blue, Navy, "#0F6F98", "#FFFFFF");
+        return button;
+    }
+
+    private static void ApplyButtonVisuals(Button button, string background, string pointerOver, string pressed, string foreground)
+    {
+        button.Resources["ButtonBackground"] = Brush(background);
+        button.Resources["ButtonBackgroundPointerOver"] = Brush(pointerOver);
+        button.Resources["ButtonBackgroundPressed"] = Brush(pressed);
+        button.Resources["ButtonForeground"] = Brush(foreground);
+        button.Resources["ButtonForegroundPointerOver"] = Brush(foreground);
+        button.Resources["ButtonForegroundPressed"] = Brush(foreground);
     }
 
     private static Border Card(UIElement child) => new()
