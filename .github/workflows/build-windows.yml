@@ -1,8 +1,8 @@
-name: Build ConfGTS 0.18.0 client and server
+name: Build ConfGTS 0.18.1 client / 0.18.0 server
 
 on:
   push:
-    branches: [ main, 'beta-*' ]
+    branches: [ main, 'beta-*', 'fix/**' ]
   workflow_dispatch:
 
 permissions:
@@ -96,8 +96,8 @@ jobs:
         run: |
           $required = @(
             'artifacts\publish\ConfGTS.Client.exe',
-            'artifacts\msi\ConfGTS-0.18.0-x64.msi',
-            'artifacts\setup\ConfGTS-Setup-0.18.0-x64.exe',
+            'artifacts\msi\ConfGTS-0.18.1-x64.msi',
+            'artifacts\setup\ConfGTS-Setup-0.18.1-x64.exe',
             'artifacts\server-publish\ConfGTSServer.exe',
             'artifacts\server-publish\ConfGTS.Server.Settings.exe',
             'artifacts\server-msi\ConfGTS-Server-0.18.0-x64.msi',
@@ -131,7 +131,7 @@ jobs:
       - name: Test client MSI installation, shortcuts and startup
         shell: pwsh
         run: |
-          $msi = (Resolve-Path 'artifacts\msi\ConfGTS-0.18.0-x64.msi').Path
+          $msi = (Resolve-Path 'artifacts\msi\ConfGTS-0.18.1-x64.msi').Path
           $installedExe = Join-Path $env:ProgramFiles 'ГТС\ConfGTS\ConfGTS.Client.exe'
           $startMenu = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\ConfGTS\ConfGTS.lnk'
           $desktop = Join-Path ([Environment]::GetFolderPath('CommonDesktopDirectory')) 'ConfGTS.lnk'
@@ -161,7 +161,7 @@ jobs:
       - name: Test client EXE installation, shortcuts and startup
         shell: pwsh
         run: |
-          $setup = (Resolve-Path 'artifacts\setup\ConfGTS-Setup-0.18.0-x64.exe').Path
+          $setup = (Resolve-Path 'artifacts\setup\ConfGTS-Setup-0.18.1-x64.exe').Path
           $installedExe = Join-Path $env:ProgramFiles 'ГТС\ConfGTS\ConfGTS.Client.exe'
           $startMenu = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\ConfGTS\ConfGTS.lnk'
           $desktop = Join-Path ([Environment]::GetFolderPath('CommonDesktopDirectory')) 'ConfGTS.lnk'
@@ -332,8 +332,8 @@ jobs:
         shell: pwsh
         run: |
           $files = @(
-            'artifacts\msi\ConfGTS-0.18.0-x64.msi',
-            'artifacts\setup\ConfGTS-Setup-0.18.0-x64.exe',
+            'artifacts\msi\ConfGTS-0.18.1-x64.msi',
+            'artifacts\setup\ConfGTS-Setup-0.18.1-x64.exe',
             'artifacts\server-msi\ConfGTS-Server-0.18.0-x64.msi',
             'artifacts\server-setup\ConfGTS-Server-Setup-0.18.0-x64.exe',
             'artifacts\ConfGTS-Server-0.18.0-Source.zip'
@@ -348,24 +348,24 @@ jobs:
       - name: Upload tested packages
         uses: actions/upload-artifact@v4
         with:
-          name: ConfGTS-0.18.0-tested
+          name: ConfGTS-0.18.1-tested
           if-no-files-found: error
           retention-days: 30
           compression-level: 0
           path: |
-            artifacts/msi/ConfGTS-0.18.0-x64.msi
-            artifacts/setup/ConfGTS-Setup-0.18.0-x64.exe
+            artifacts/msi/ConfGTS-0.18.1-x64.msi
+            artifacts/setup/ConfGTS-Setup-0.18.1-x64.exe
             artifacts/server-msi/ConfGTS-Server-0.18.0-x64.msi
             artifacts/server-setup/ConfGTS-Server-Setup-0.18.0-x64.exe
             artifacts/ConfGTS-Server-0.18.0-Source.zip
             artifacts/SHA256SUMS.txt
 
       - name: Publish GitHub Release
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/fix/')
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release delete v0.18.0 --cleanup-tag --yes 2>$null
-          if ($LASTEXITCODE -ne 0) { Write-Host 'No previous v0.18.0 release to delete.' }
-          gh release create v0.18.0 'artifacts\msi\ConfGTS-0.18.0-x64.msi' 'artifacts\setup\ConfGTS-Setup-0.18.0-x64.exe' 'artifacts\server-msi\ConfGTS-Server-0.18.0-x64.msi' 'artifacts\server-setup\ConfGTS-Server-Setup-0.18.0-x64.exe' 'artifacts\ConfGTS-Server-0.18.0-Source.zip' 'artifacts\SHA256SUMS.txt' --target '${{ github.sha }}' --title 'ConfGTS 0.18.0' --notes 'Beta 0.18.0: исправлена кириллица и hover-кнопок, настройки устройств встроены в клиент, локальные пользователи без e-mail, добавлен вход в WebRTC-конференцию из WinUI-клиента.'
+          gh release delete v0.18.1 --cleanup-tag --yes 2>$null
+          if ($LASTEXITCODE -ne 0) { Write-Host 'No previous v0.18.1 release to delete.' }
+          gh release create v0.18.1 'artifacts\msi\ConfGTS-0.18.1-x64.msi' 'artifacts\setup\ConfGTS-Setup-0.18.1-x64.exe' 'artifacts\server-msi\ConfGTS-Server-0.18.0-x64.msi' 'artifacts\server-setup\ConfGTS-Server-Setup-0.18.0-x64.exe' 'artifacts\ConfGTS-Server-0.18.0-Source.zip' 'artifacts\SHA256SUMS.txt' --target '${{ github.sha }}' --title 'ConfGTS 0.18.1' --notes 'Beta 0.18.1: исправлена инициализация WebView2 для конференции и падение окна настроек устройств; сервер остается 0.18.0.'
