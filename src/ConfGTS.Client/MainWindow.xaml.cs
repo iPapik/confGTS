@@ -21,6 +21,7 @@ public sealed class MainWindow : Window
     private readonly TextBox _loginBox = new();
     private readonly PasswordBox _passwordBox = new();
     private readonly Button _loginButton = new();
+    private bool _passwordVisible;
     private readonly TextBlock _loginError = new();
     private readonly TextBlock _serverText = new();
     private readonly Ellipse _serverDot = new();
@@ -147,10 +148,39 @@ public sealed class MainWindow : Window
 
         panel.Children.Add(Label("Пароль"));
         _passwordBox.PlaceholderText = "Введите пароль";
-        _passwordBox.PasswordRevealMode = PasswordRevealMode.Peek;
+        _passwordBox.PasswordRevealMode = PasswordRevealMode.Hidden;
         StyleLoginPasswordBox(_passwordBox);
         _passwordBox.KeyDown += LoginField_KeyDown;
-        panel.Children.Add(_passwordBox);
+
+        var passwordHost = new Grid();
+        passwordHost.Children.Add(_passwordBox);
+        var revealButton = new Button
+        {
+            Width = 38,
+            Height = 36,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 4, 0),
+            Padding = new Thickness(0),
+            Background = Brush("#00FFFFFF"),
+            BorderThickness = new Thickness(0),
+            CornerRadius = new CornerRadius(8),
+            ToolTipService = null,
+            Content = new FontIcon { Glyph = "\uE890", FontSize = 16, Foreground = Brush("#5D7891") }
+        };
+        revealButton.Resources["ButtonBackground"] = Brush("#00FFFFFF");
+        revealButton.Resources["ButtonBackgroundPointerOver"] = Brush("#E8F4F9");
+        revealButton.Resources["ButtonBackgroundPressed"] = Brush("#DCEEF6");
+        revealButton.Click += (_, _) =>
+        {
+            _passwordVisible = !_passwordVisible;
+            _passwordBox.PasswordRevealMode = _passwordVisible
+                ? PasswordRevealMode.Visible
+                : PasswordRevealMode.Hidden;
+        };
+        ToolTipService.SetToolTip(revealButton, "Показать или скрыть пароль");
+        passwordHost.Children.Add(revealButton);
+        panel.Children.Add(passwordHost);
 
         _loginButton.Height = 55;
         _loginButton.HorizontalAlignment = HorizontalAlignment.Stretch;
@@ -353,7 +383,7 @@ public sealed class MainWindow : Window
     private static void StyleLoginTextBox(TextBox box)
     {
         box.FontSize = 16;
-        box.MinHeight = 44;
+        box.MinHeight = 42;
         box.Padding = new Thickness(12, 5, 12, 5);
         box.Background = Brush("#FFFFFF");
         box.BorderBrush = Brush("#BFD5E3");
@@ -372,7 +402,7 @@ public sealed class MainWindow : Window
     {
         box.FontSize = 16;
         box.MinHeight = 44;
-        box.Padding = new Thickness(12, 5, 8, 5);
+        box.Padding = new Thickness(12, 4, 48, 4);
         box.Background = Brush("#FFFFFF");
         box.BorderBrush = Brush("#BFD5E3");
         box.BorderThickness = new Thickness(1);
