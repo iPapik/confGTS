@@ -3,7 +3,7 @@
   <Package
       Name="ConfGTS"
       Manufacturer="СГМУП Городские тепловые сети"
-      Version="0.16.1"
+      Version="0.17.0"
       UpgradeCode="CC8C0A11-1DC6-44D3-BA24-F2B79EDBF2F6"
       Language="1049"
       Scope="perMachine">
