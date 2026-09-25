@@ -65,9 +65,13 @@ public sealed class MediaSettingsPanel : Grid
         Background = Brush(Bg);
         Children.Add(BuildUi());
 
-        Unloaded += async (_, _) => await ShutdownAsync();
-        _ = LoadDevicesAsync();
+        // Do not enumerate audio/video devices from the constructor. Some vendor
+        // drivers crash inside native COM/MediaFoundation code when enumeration
+        // starts before the panel has been attached to the visual tree.
+        Unloaded += (_, _) => _ = ShutdownSafelyAsync();
     }
+
+    public Task InitializeAsync() => LoadDevicesAsync();
 
     public async Task ShutdownAsync()
     {
@@ -81,6 +85,18 @@ public sealed class MediaSettingsPanel : Grid
         try { _audioEnumerator?.Dispose(); } catch { }
         _audioEnumerator = null;
         _settings.Save();
+    }
+
+    private async Task ShutdownSafelyAsync()
+    {
+        try
+        {
+            await ShutdownAsync();
+        }
+        catch (Exception ex)
+        {
+            StartupDiagnostics.Log("Media settings shutdown failed.", ex);
+        }
     }
 
     private UIElement BuildUi()
@@ -333,25 +349,33 @@ public sealed class MediaSettingsPanel : Grid
     {
         try
         {
-            var audioEnumerator = _audioEnumerator ??= new MMDeviceEnumerator();
+            StartupDiagnostics.Log("Media settings device enumeration started.");
 
-            var microphones = audioEnumerator
-                .EnumerateAudioEndPoints(DataFlow.Capture, DeviceState.Active)
-                .Select(d => new DeviceChoice(d.ID, d.FriendlyName))
+            // Use the Windows device-enumeration API here instead of constructing
+            // NAudio's MMDeviceEnumerator while the page is opening. A handful of
+            // OEM audio drivers can fail inside the native COM enumerator and take
+            // the whole unpackaged WinUI process down. NAudio is now created only
+            // when the user explicitly changes volume or starts an audio test.
+            var microphoneInfos = await DeviceInformation.FindAllAsync(DeviceClass.AudioCapture);
+            if (_closed) return;
+
+            var speakerInfos = await DeviceInformation.FindAllAsync(DeviceClass.AudioRender);
+            if (_closed) return;
+
+            var cameraInfos = await DeviceInformation.FindAllAsync(DeviceClass.VideoCapture);
+            if (_closed) return;
+
+            var microphones = microphoneInfos
+                .Select(d => new DeviceChoice(d.Id, d.Name))
                 .OrderBy(d => d.Name, StringComparer.CurrentCultureIgnoreCase)
                 .ToList();
 
-            var speakers = audioEnumerator
-                .EnumerateAudioEndPoints(DataFlow.Render, DeviceState.Active)
-                .Select(d => new DeviceChoice(d.ID, d.FriendlyName))
+            var speakers = speakerInfos
+                .Select(d => new DeviceChoice(d.Id, d.Name))
                 .OrderBy(d => d.Name, StringComparer.CurrentCultureIgnoreCase)
                 .ToList();
 
-            var cameras = await DeviceInformation.FindAllAsync(DeviceClass.VideoCapture);
-            if (_closed)
-                return;
-
-            var cameraChoices = cameras
+            var cameraChoices = cameraInfos
                 .Select(d => new DeviceChoice(d.Id, d.Name))
                 .OrderBy(d => d.Name, StringComparer.CurrentCultureIgnoreCase)
                 .ToList();
@@ -368,16 +392,24 @@ public sealed class MediaSettingsPanel : Grid
             _settings.SpeakerId = SelectedId(_speakerCombo);
             _settings.CameraId = SelectedId(_cameraCombo);
 
-            LoadMicrophoneVolume();
-            LoadSpeakerVolume();
+            // Do not touch endpoint COM objects or automatically start a camera
+            // while merely opening Settings. This is the critical crash fix.
+            _microphoneVolume.Value = Math.Clamp(_settings.MicrophoneVolume, 0, 100);
+            _speakerVolume.Value = Math.Clamp(_settings.SpeakerVolume, 0, 100);
+
+            _microphoneStatus.Text = microphones.Count == 0
+                ? "Микрофоны не найдены."
+                : "Устройство выбрано. Нажмите «Проверить микрофон» для теста.";
+            _speakerStatus.Text = speakers.Count == 0
+                ? "Динамики не найдены."
+                : "Устройство выбрано. Тест запускается только по кнопке.";
+            _cameraStatus.Text = cameraChoices.Count == 0
+                ? "Видеокамеры не найдены."
+                : "Камера выбрана. Предпросмотр запускается только по кнопке или после смены камеры.";
 
             _loading = false;
             _settings.Save();
-
-            if (cameraChoices.Count > 0)
-                await StartCameraPreviewAsync();
-            else
-                _cameraStatus.Text = "Видеокамеры не найдены.";
+            StartupDiagnostics.Log($"Media settings device enumeration completed. Mic={microphones.Count}; Speakers={speakers.Count}; Cameras={cameraChoices.Count}.");
         }
         catch (Exception ex)
         {
@@ -423,13 +455,26 @@ public sealed class MediaSettingsPanel : Grid
         try
         {
             if (string.IsNullOrWhiteSpace(id)) return;
-            var audioEnumerator = _audioEnumerator;
-            if (audioEnumerator is null) return;
+            var audioEnumerator = GetAudioEnumerator();
             var device = audioEnumerator.GetDevice(id);
             device.AudioEndpointVolume.MasterVolumeLevelScalar = (float)Math.Clamp(value / 100.0, 0, 1);
         }
-        catch
+        catch (Exception ex)
         {
+            StartupDiagnostics.Log("Failed to apply endpoint volume.", ex);
+        }
+    }
+
+    private MMDeviceEnumerator GetAudioEnumerator()
+    {
+        try
+        {
+            return _audioEnumerator ??= new MMDeviceEnumerator();
+        }
+        catch (Exception ex)
+        {
+            StartupDiagnostics.Log("Failed to initialize Windows audio COM enumerator.", ex);
+            throw new InvalidOperationException("Аудиоподсистема Windows недоступна.", ex);
         }
     }
 
@@ -446,9 +491,7 @@ public sealed class MediaSettingsPanel : Grid
 
         try
         {
-            var audioEnumerator = _audioEnumerator;
-            if (audioEnumerator is null)
-                throw new InvalidOperationException("Аудиоподсистема Windows недоступна.");
+            var audioEnumerator = GetAudioEnumerator();
 
             _microphoneDevice = audioEnumerator.GetDevice(id);
             _microphoneCapture = new WasapiCapture(_microphoneDevice);
@@ -539,9 +582,7 @@ public sealed class MediaSettingsPanel : Grid
 
         try
         {
-            var audioEnumerator = _audioEnumerator;
-            if (audioEnumerator is null)
-                throw new InvalidOperationException("Аудиоподсистема Windows недоступна.");
+            var audioEnumerator = GetAudioEnumerator();
 
             _speakerDevice = audioEnumerator.GetDevice(id);
             _speakerOutput = new WasapiOut(_speakerDevice, AudioClientShareMode.Shared, true, 80);

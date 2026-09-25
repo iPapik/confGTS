@@ -269,7 +269,7 @@ public sealed class MainWindow : Window
 
         panel.Children.Add(new TextBlock
         {
-            Text = "Версия 0.18.0 beta  |  © ГТС, 2026",
+            Text = "Версия 0.18.1 beta  |  © ГТС, 2026",
             FontSize = 11,
             Foreground = Brush("#8A9BAC"),
             HorizontalAlignment = HorizontalAlignment.Center,
@@ -1078,6 +1078,10 @@ public sealed class MainWindow : Window
             _dashboardMainScroll.Visibility = Visibility.Collapsed;
 
         _mainContentHost.Children.Add(panel);
+
+        // Initialize hardware only after the panel is attached to the visual tree.
+        // Initialization is defensive and does not auto-open camera/audio endpoints.
+        await panel.InitializeAsync();
     }
 
     private async Task CloseInlineSettingsAsync()

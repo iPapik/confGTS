@@ -3,6 +3,8 @@ $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $project = Join-Path $root "src\ConfGTS.Client\ConfGTS.Client.csproj"
 $out = Join-Path $root "artifacts\publish"
 
+& (Join-Path $root "prepare-assets.ps1")
+
 if (Test-Path $out) { Remove-Item $out -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $out | Out-Null
 
