@@ -269,7 +269,7 @@ public sealed class MainWindow : Window
 
         panel.Children.Add(new TextBlock
         {
-            Text = "Версия 0.18.1 beta  |  © ГТС, 2026",
+            Text = "Версия 0.18.2 beta  |  © ГТС, 2026",
             FontSize = 11,
             Foreground = Brush("#8A9BAC"),
             HorizontalAlignment = HorizontalAlignment.Center,
@@ -1051,14 +1051,22 @@ public sealed class MainWindow : Window
 
     private async Task ShowInlineSettingsAsync()
     {
-        await LeaveConferenceAsync(false);
+        StartupDiagnostics.Log("Opening media settings.");
 
         if (_mediaSettingsPanel is not null)
             return;
 
-        // Create the panel before hiding the dashboard. Some audio drivers can throw
-        // while COM/NAudio is being initialized; the caller handles that without
-        // terminating the whole WinUI process.
+        // Leaving a conference is best-effort here. Settings must still open even
+        // if a stale WebView2 instance throws while it is being torn down.
+        try
+        {
+            await LeaveConferenceAsync(false);
+        }
+        catch (Exception ex)
+        {
+            StartupDiagnostics.Log("Conference cleanup failed while opening settings; continuing.", ex);
+        }
+
         var panel = new MediaSettingsPanel();
         panel.CloseRequested += async (_, _) =>
         {
@@ -1079,9 +1087,10 @@ public sealed class MainWindow : Window
 
         _mainContentHost.Children.Add(panel);
 
-        // Initialize hardware only after the panel is attached to the visual tree.
-        // Initialization is defensive and does not auto-open camera/audio endpoints.
+        // This initialization is UI-only. Hardware enumeration happens only after
+        // the user explicitly presses "Обновить устройства" inside the panel.
         await panel.InitializeAsync();
+        StartupDiagnostics.Log("Media settings opened successfully.");
     }
 
     private async Task CloseInlineSettingsAsync()

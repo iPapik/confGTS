@@ -71,7 +71,20 @@ public sealed class MediaSettingsPanel : Grid
         Unloaded += (_, _) => _ = ShutdownSafelyAsync();
     }
 
-    public Task InitializeAsync() => LoadDevicesAsync();
+    public Task InitializeAsync()
+    {
+        // Opening the settings page must never touch camera/audio drivers.
+        // Device enumeration is deliberately started only when the user presses
+        // "Обновить устройства". This keeps the page itself safe even on PCs
+        // with problematic OEM media drivers.
+        _microphoneVolume.Value = Math.Clamp(_settings.MicrophoneVolume, 0, 100);
+        _speakerVolume.Value = Math.Clamp(_settings.SpeakerVolume, 0, 100);
+        _microphoneStatus.Text = "Нажмите «Обновить устройства», чтобы получить список микрофонов.";
+        _speakerStatus.Text = "Нажмите «Обновить устройства», чтобы получить список динамиков.";
+        _cameraStatus.Text = "Нажмите «Обновить устройства», чтобы получить список камер.";
+        StartupDiagnostics.Log("Media settings panel opened without hardware initialization.");
+        return Task.CompletedTask;
+    }
 
     public async Task ShutdownAsync()
     {
@@ -187,12 +200,52 @@ public sealed class MediaSettingsPanel : Grid
         });
         grid.Children.Add(title);
 
+        var actions = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 8,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(18, 0, 0, 0)
+        };
+
+        var refresh = SecondaryButton("↻ Обновить устройства");
+        refresh.Click += async (_, _) =>
+        {
+            if (_closed || !refresh.IsEnabled)
+                return;
+
+            refresh.IsEnabled = false;
+            _microphoneStatus.Text = "Поиск микрофонов…";
+            _speakerStatus.Text = "Поиск динамиков…";
+            _cameraStatus.Text = "Поиск камер…";
+
+            try
+            {
+                await LoadDevicesAsync();
+            }
+            catch (Exception ex)
+            {
+                // LoadDevicesAsync is already defensive, but keep this outer
+                // boundary too so an unexpected managed error cannot escape the
+                // WinUI click handler and terminate the client.
+                StartupDiagnostics.Log("Unexpected device refresh failure.", ex);
+                _microphoneStatus.Text = "Не удалось получить список устройств.";
+                _speakerStatus.Text = "Не удалось получить список устройств.";
+                _cameraStatus.Text = "Не удалось получить список устройств.";
+            }
+            finally
+            {
+                refresh.IsEnabled = true;
+            }
+        };
+        actions.Children.Add(refresh);
+
         var back = SecondaryButton("← К конференциям");
-        back.VerticalAlignment = VerticalAlignment.Center;
-        back.Margin = new Thickness(18, 0, 0, 0);
         back.Click += (_, _) => CloseRequested?.Invoke(this, EventArgs.Empty);
-        Grid.SetColumn(back, 2);
-        grid.Children.Add(back);
+        actions.Children.Add(back);
+
+        Grid.SetColumn(actions, 2);
+        grid.Children.Add(actions);
 
         return grid;
     }
@@ -223,7 +276,9 @@ public sealed class MediaSettingsPanel : Grid
         {
             if (_loading) return;
             _settings.MicrophoneVolume = _microphoneVolume.Value;
-            ApplyEndpointVolume(_settings.MicrophoneId, _microphoneVolume.Value);
+            // Keep this as an application preference. Do not change the Windows
+            // endpoint volume from the settings page; touching the endpoint COM
+            // object here was another crash vector on some audio drivers.
             _settings.Save();
         };
         panel.Children.Add(_microphoneVolume);
@@ -277,7 +332,6 @@ public sealed class MediaSettingsPanel : Grid
         {
             if (_loading) return;
             _settings.SpeakerVolume = _speakerVolume.Value;
-            ApplyEndpointVolume(_settings.SpeakerId, _speakerVolume.Value);
             _settings.Save();
         };
         panel.Children.Add(_speakerVolume);
@@ -302,16 +356,19 @@ public sealed class MediaSettingsPanel : Grid
 
         var controls = new StackPanel { Spacing = 11 };
         controls.Children.Add(SectionTitle("Видеокамера"));
-        controls.Children.Add(Hint("Выберите камеру. Предпросмотр справа запускается автоматически."));
+        controls.Children.Add(Hint("Выберите камеру. Предпросмотр запускается только по кнопке, чтобы открытие настроек оставалось безопасным."));
 
         controls.Children.Add(Label("Устройство"));
         StyleCombo(_cameraCombo);
-        _cameraCombo.SelectionChanged += async (_, _) =>
+        _cameraCombo.SelectionChanged += (_, _) =>
         {
             if (_loading) return;
             _settings.CameraId = SelectedId(_cameraCombo);
             _settings.Save();
-            await StartCameraPreviewAsync();
+            _cameraStatus.Text = string.IsNullOrWhiteSpace(_settings.CameraId)
+                ? "Камера не выбрана."
+                : "Камера выбрана. Нажмите «Перезапустить предпросмотр», чтобы проверить её.";
+            _cameraStatus.Foreground = Brush(Muted);
         };
         controls.Children.Add(_cameraCombo);
 
