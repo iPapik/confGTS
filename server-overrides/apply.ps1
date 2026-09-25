@@ -29,6 +29,24 @@ $main = $main.Replace('const Version = "0.16.1"', 'const Version = "0.17.0"')
 $main = $main.Replace('cfg.ListenAddr == ":8090" {', 'cfg.ListenAddr == ":8090" || cfg.ListenAddr == "0.0.0.0:8090" {')
 $main = $main.Replace('cfg.ListenAddr = "127.0.0.1:" + strconv.Itoa(n)', 'cfg.ListenAddr = "0.0.0.0:" + strconv.Itoa(n)')
 $main = $main.Replace('addr = "127.0.0.1:8090"', 'addr = "0.0.0.0:8090"')
+$httpsAnchor = "`tcfg := store.Config()"
+$httpsBlock = @'
+	cfg := store.Config()
+	if cfg.HTTPS.Enabled {
+		cfgWithCert, certErr := ensureHTTPSCertificate(cfg)
+		if certErr != nil {
+			return certErr
+		}
+		cfg = cfgWithCert
+		_ = store.SaveConfig(cfg)
+	}
+'@
+$httpsBlock = $httpsBlock -replace "\r\n", "\n"
+if ($main.Contains($httpsAnchor)) {
+    $main = $main.Replace($httpsAnchor, $httpsBlock.TrimEnd("`r","`n"))
+} else {
+    Write-Host "HTTPS certificate startup anchor not found; continuing." -ForegroundColor Yellow
+}
 Set-Content $mainPath $main -Encoding UTF8 -NoNewline
 
 $adminPath = Join-Path $root "server\admin.go"
