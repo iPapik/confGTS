@@ -4,6 +4,8 @@ using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Input;
+using Windows.System;
 using Microsoft.UI.Xaml.Shapes;
 using Windows.Graphics;
 using WinRT.Interop;
@@ -139,20 +141,29 @@ public sealed class MainWindow : Window
 
         panel.Children.Add(Label("Логин"));
         _loginBox.PlaceholderText = "Доменная учетная запись";
-        _loginBox.FontSize = 17;
-        _loginBox.MinHeight = 50;
+        StyleLoginTextBox(_loginBox);
+        _loginBox.KeyDown += LoginField_KeyDown;
         panel.Children.Add(_loginBox);
 
         panel.Children.Add(Label("Пароль"));
         _passwordBox.PlaceholderText = "Введите пароль";
-        _passwordBox.FontSize = 17;
-        _passwordBox.MinHeight = 50;
+        _passwordBox.PasswordRevealMode = PasswordRevealMode.Peek;
+        StyleLoginPasswordBox(_passwordBox);
+        _passwordBox.KeyDown += LoginField_KeyDown;
         panel.Children.Add(_passwordBox);
 
         _loginButton.Height = 55;
         _loginButton.HorizontalAlignment = HorizontalAlignment.Stretch;
-        _loginButton.Background = Brush("#167FAD");
+        _loginButton.Background = Brush("#168CB8");
         _loginButton.Foreground = Brush("#FFFFFF");
+        _loginButton.BorderThickness = new Thickness(0);
+        _loginButton.CornerRadius = new CornerRadius(10);
+        _loginButton.Resources["ButtonBackground"] = Brush("#168CB8");
+        _loginButton.Resources["ButtonBackgroundPointerOver"] = Brush("#0B2F5B");
+        _loginButton.Resources["ButtonBackgroundPressed"] = Brush("#0F6F98");
+        _loginButton.Resources["ButtonForeground"] = Brush("#FFFFFF");
+        _loginButton.Resources["ButtonForegroundPointerOver"] = Brush("#FFFFFF");
+        _loginButton.Resources["ButtonForegroundPressed"] = Brush("#FFFFFF");
         _loginButton.Content = new TextBlock
         {
             Text = "Войти",
@@ -211,7 +222,7 @@ public sealed class MainWindow : Window
 
         panel.Children.Add(new TextBlock
         {
-            Text = "ConfGTS 0.16.0  |  © ГТС, 2026",
+            Text = "ConfGTS 0.16.1  |  © ГТС, 2026",
             FontSize = 11,
             Foreground = Brush("#8A9BAC"),
             HorizontalAlignment = HorizontalAlignment.Center,
@@ -339,6 +350,42 @@ public sealed class MainWindow : Window
         _dashboardView.Children.Add(scroll);
     }
 
+    private static void StyleLoginTextBox(TextBox box)
+    {
+        box.FontSize = 16;
+        box.MinHeight = 52;
+        box.Padding = new Thickness(12, 8, 12, 8);
+        box.Background = Brush("#FFFFFF");
+        box.BorderBrush = Brush("#BFD5E3");
+        box.BorderThickness = new Thickness(1);
+        box.CornerRadius = new CornerRadius(10);
+        box.VerticalContentAlignment = VerticalAlignment.Center;
+        box.Resources["TextControlBackground"] = Brush("#FFFFFF");
+        box.Resources["TextControlBackgroundPointerOver"] = Brush("#FFFFFF");
+        box.Resources["TextControlBackgroundFocused"] = Brush("#FFFFFF");
+        box.Resources["TextControlBorderBrush"] = Brush("#BFD5E3");
+        box.Resources["TextControlBorderBrushPointerOver"] = Brush("#168CB8");
+        box.Resources["TextControlBorderBrushFocused"] = Brush("#168CB8");
+    }
+
+    private static void StyleLoginPasswordBox(PasswordBox box)
+    {
+        box.FontSize = 16;
+        box.MinHeight = 52;
+        box.Padding = new Thickness(12, 8, 8, 8);
+        box.Background = Brush("#FFFFFF");
+        box.BorderBrush = Brush("#BFD5E3");
+        box.BorderThickness = new Thickness(1);
+        box.CornerRadius = new CornerRadius(10);
+        box.VerticalContentAlignment = VerticalAlignment.Center;
+        box.Resources["TextControlBackground"] = Brush("#FFFFFF");
+        box.Resources["TextControlBackgroundPointerOver"] = Brush("#FFFFFF");
+        box.Resources["TextControlBackgroundFocused"] = Brush("#FFFFFF");
+        box.Resources["TextControlBorderBrush"] = Brush("#BFD5E3");
+        box.Resources["TextControlBorderBrushPointerOver"] = Brush("#168CB8");
+        box.Resources["TextControlBorderBrushFocused"] = Brush("#168CB8");
+    }
+
     private static TextBlock Label(string text) => new()
     {
         Text = text,
@@ -416,7 +463,9 @@ public sealed class MainWindow : Window
         try
         {
             var ok = await _api.HealthAsync();
-            _serverText.Text = ok ? "Сервер доступен" : "Сервер недоступен";
+            _serverText.Text = ok
+                ? $"Сервер доступен · {_api.EffectiveBaseUrl.Replace("http://", "").Replace("https://", "")}"
+                : "Сервер недоступен";
             _serverDot.Fill = Brush(ok ? "#31B657" : "#D14343");
         }
         catch
@@ -426,8 +475,18 @@ public sealed class MainWindow : Window
         }
     }
 
-    private async void LoginButton_Click(object sender, RoutedEventArgs e)
+    private async void LoginButton_Click(object sender, RoutedEventArgs e) => await PerformLoginAsync();
+
+    private async void LoginField_KeyDown(object sender, KeyRoutedEventArgs e)
     {
+        if (e.Key != VirtualKey.Enter) return;
+        e.Handled = true;
+        await PerformLoginAsync();
+    }
+
+    private async Task PerformLoginAsync()
+    {
+        if (!_loginButton.IsEnabled) return;
         _loginError.Visibility = Visibility.Collapsed;
         _loginButton.IsEnabled = false;
         try
