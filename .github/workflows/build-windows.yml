@@ -237,6 +237,32 @@ jobs:
             $udp.Dispose()
           }
 
+          $configPath = "$env:ProgramData\ConfGTS\config.json"
+          $cfg = Get-Content $configPath -Raw | ConvertFrom-Json
+          $cfg.public_url = "https://$env:COMPUTERNAME`:8090"
+          $cfg.https.enabled = $true
+          $cfg.https.cert_file = ""
+          $cfg.https.key_file = ""
+          $cfg | ConvertTo-Json -Depth 20 | Set-Content $configPath -Encoding utf8
+          Restart-Service ConfGTSServer -Force
+
+          $httpsReady = $false
+          for ($i = 0; $i -lt 30; $i++) {
+            try {
+              $httpsHealth = Invoke-RestMethod -Uri "https://$env:COMPUTERNAME`:8090/health" -SkipCertificateCheck -TimeoutSec 2
+              if ($httpsHealth.ok -eq $true) { $httpsReady = $true; break }
+            } catch {}
+            Start-Sleep -Seconds 1
+          }
+          if (!$httpsReady) { throw "ConfGTS HTTPS health endpoint did not become ready." }
+          $cfgAfter = Get-Content $configPath -Raw | ConvertFrom-Json
+          if ([string]::IsNullOrWhiteSpace($cfgAfter.https.cert_file) -or !(Test-Path $cfgAfter.https.cert_file)) {
+            throw "Automatic HTTPS certificate was not generated."
+          }
+          if ([string]::IsNullOrWhiteSpace($cfgAfter.https.key_file) -or !(Test-Path $cfgAfter.https.key_file)) {
+            throw "Automatic HTTPS private key was not generated."
+          }
+
           $settingsLog = "$env:LOCALAPPDATA\ConfGTS\server-settings.log"
           Remove-Item $settingsLog -Force -ErrorAction SilentlyContinue
           $settings = Start-Process $settingsExe -PassThru
