@@ -48,6 +48,18 @@ jobs:
         shell: pwsh
         run: .\server-overrides\apply.ps1
 
+      - name: Validate 0.18.0 server UI changes
+        shell: pwsh
+        run: |
+          $admin = Get-Content '.\server\admin.go' -Raw -Encoding UTF8
+          if ($admin.Contains('<div class=field><label>E-mail</label><input name=email type=email></div>')) {
+            throw "Local-user E-mail field is still present in server admin UI."
+          }
+          if ($admin.Contains('CreateLocalUser(r.FormValue("username"), r.FormValue("display_name"), r.FormValue("email")')) {
+            throw "Local-user creation still requires an E-mail form value."
+          }
+          Write-Host 'Local-user creation no longer requires E-mail.' -ForegroundColor Green
+
       - name: Format and test server source
         shell: pwsh
         run: |
