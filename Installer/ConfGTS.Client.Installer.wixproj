@@ -1,6 +1,6 @@
 <Project Sdk="WixToolset.Sdk/5.0.2">
   <PropertyGroup>
-    <OutputName>ConfGTS-0.17.0-x64</OutputName>
+    <OutputName>ConfGTS-0.18.0-x64</OutputName>
     <InstallerPlatform>x64</InstallerPlatform>
     <PublishDir Condition="'$(PublishDir)'==''">$(MSBuildThisFileDirectory)..\artifacts\publish</PublishDir>
     <EnableDefaultItems>false</EnableDefaultItems>

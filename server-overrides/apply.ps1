@@ -2,7 +2,7 @@ $ErrorActionPreference = "Stop"
 
 $root = Split-Path -Parent $PSScriptRoot
 
-Write-Host "Applying ConfGTS Server 0.17.0 overlays..." -ForegroundColor Cyan
+Write-Host "Applying ConfGTS Server 0.18.0 overlays..." -ForegroundColor Cyan
 
 Copy-Item (Join-Path $PSScriptRoot "src\*") (Join-Path $root "src") -Recurse -Force
 Copy-Item (Join-Path $PSScriptRoot "server\*") (Join-Path $root "server") -Recurse -Force
@@ -24,8 +24,8 @@ Set-Content $storePath $store -Encoding UTF8 -NoNewline
 
 $mainPath = Join-Path $root "server\main.go"
 $main = Get-Content $mainPath -Raw -Encoding UTF8
-$main = $main.Replace('const Version = "0.16.0"', 'const Version = "0.17.0"')
-$main = $main.Replace('const Version = "0.16.1"', 'const Version = "0.17.0"')
+$main = $main.Replace('const Version = "0.16.0"', 'const Version = "0.18.0"')
+$main = $main.Replace('const Version = "0.16.1"', 'const Version = "0.18.0"')
 $main = $main.Replace('cfg.ListenAddr == ":8090" {', 'cfg.ListenAddr == ":8090" || cfg.ListenAddr == "0.0.0.0:8090" {')
 $main = $main.Replace('cfg.ListenAddr = "127.0.0.1:" + strconv.Itoa(n)', 'cfg.ListenAddr = "0.0.0.0:" + strconv.Itoa(n)')
 $main = $main.Replace('addr = "127.0.0.1:8090"', 'addr = "0.0.0.0:8090"')
@@ -54,6 +54,15 @@ Set-Content $mainPath $main -Encoding UTF8 -NoNewline
 $adminPath = Join-Path $root "server\admin.go"
 $admin = Get-Content $adminPath -Raw -Encoding UTF8
 $admin = $admin.Replace('c.ListenAddr = "127.0.0.1:8090"', 'c.ListenAddr = "0.0.0.0:8090"')
+
+# Local users in ConfGTS do not require e-mail. Keep the storage/API call
+# compatible by passing an empty string and remove the field from the form.
+$admin = $admin.Replace(
+    'a.store.CreateLocalUser(r.FormValue("username"), r.FormValue("display_name"), r.FormValue("email"), r.FormValue("password"), u.Username)',
+    'a.store.CreateLocalUser(r.FormValue("username"), r.FormValue("display_name"), "", r.FormValue("password"), u.Username)')
+$admin = $admin.Replace(
+    '<div class=field><label>E-mail</label><input name=email type=email></div>',
+    '')
 Set-Content $adminPath $admin -Encoding UTF8 -NoNewline
 
 $uiPath = Join-Path $root "server\ui.go"
@@ -103,13 +112,13 @@ $versionTargets = @(
 foreach ($target in $versionTargets) {
     if (Test-Path $target -PathType Leaf) {
         $text = Get-Content $target -Raw -Encoding UTF8
-        $text = $text.Replace("0.16.0", "0.17.0").Replace("0.16.1", "0.17.0")
+        $text = $text.Replace("0.16.0", "0.18.0").Replace("0.16.1", "0.18.0").Replace("0.17.0", "0.18.0")
         Set-Content $target $text -Encoding UTF8 -NoNewline
     } elseif (Test-Path $target -PathType Container) {
         Get-ChildItem $target -Recurse -File -Include *.go,*.cs,*.xaml,*.csproj,*.wxs,*.wixproj,*.ps1 | ForEach-Object {
             $text = Get-Content $_.FullName -Raw -Encoding UTF8
-            if ($text.Contains("0.16.0") -or $text.Contains("0.16.1")) {
-                $text = $text.Replace("0.16.0", "0.17.0").Replace("0.16.1", "0.17.0")
+            if ($text.Contains("0.16.0") -or $text.Contains("0.16.1") -or $text.Contains("0.17.0")) {
+                $text = $text.Replace("0.16.0", "0.18.0").Replace("0.16.1", "0.18.0").Replace("0.17.0", "0.18.0")
                 Set-Content $_.FullName $text -Encoding UTF8 -NoNewline
             }
         }

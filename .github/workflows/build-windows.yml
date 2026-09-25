@@ -1,8 +1,8 @@
-name: Build ConfGTS 0.17.0 client and server
+name: Build ConfGTS 0.18.0 client and server
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, 'beta-*' ]
   workflow_dispatch:
 
 permissions:
@@ -44,9 +44,21 @@ jobs:
           [IO.File]::WriteAllBytes($zip, [Convert]::FromBase64String($builder.ToString()))
           Expand-Archive $zip -DestinationPath '.' -Force
 
-      - name: Apply ConfGTS Server 0.17.0 overlays
+      - name: Apply ConfGTS Server 0.18.0 overlays
         shell: pwsh
         run: .\server-overrides\apply.ps1
+
+      - name: Validate 0.18.0 server UI changes
+        shell: pwsh
+        run: |
+          $admin = Get-Content '.\server\admin.go' -Raw -Encoding UTF8
+          if ($admin.Contains('<div class=field><label>E-mail</label><input name=email type=email></div>')) {
+            throw "Local-user E-mail field is still present in server admin UI."
+          }
+          if ($admin.Contains('CreateLocalUser(r.FormValue("username"), r.FormValue("display_name"), r.FormValue("email")')) {
+            throw "Local-user creation still requires an E-mail form value."
+          }
+          Write-Host 'Local-user creation no longer requires E-mail.' -ForegroundColor Green
 
       - name: Format and test server source
         shell: pwsh
@@ -58,7 +70,7 @@ jobs:
       - name: Package server source
         shell: pwsh
         run: |
-          $stage = Join-Path $env:RUNNER_TEMP 'ConfGTS-Server-0.17.0-Source'
+          $stage = Join-Path $env:RUNNER_TEMP 'ConfGTS-Server-0.18.0-Source'
           Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Force -Path $stage | Out-Null
           Copy-Item '.\go.mod' $stage -Force
@@ -69,7 +81,7 @@ jobs:
           Copy-Item '.\Installer\Server' (Join-Path $stage 'Installer\Server') -Recurse -Force
           Copy-Item '.\build-server.ps1' $stage -Force
           New-Item -ItemType Directory -Force -Path '.\artifacts' | Out-Null
-          Compress-Archive -Path "$stage\*" -DestinationPath '.\artifacts\ConfGTS-Server-0.17.0-Source.zip' -Force
+          Compress-Archive -Path "$stage\*" -DestinationPath '.\artifacts\ConfGTS-Server-0.18.0-Source.zip' -Force
 
       - name: Build client MSI and EXE
         shell: pwsh
@@ -84,13 +96,13 @@ jobs:
         run: |
           $required = @(
             'artifacts\publish\ConfGTS.Client.exe',
-            'artifacts\msi\ConfGTS-0.17.0-x64.msi',
-            'artifacts\setup\ConfGTS-Setup-0.17.0-x64.exe',
+            'artifacts\msi\ConfGTS-0.18.0-x64.msi',
+            'artifacts\setup\ConfGTS-Setup-0.18.0-x64.exe',
             'artifacts\server-publish\ConfGTSServer.exe',
             'artifacts\server-publish\ConfGTS.Server.Settings.exe',
-            'artifacts\server-msi\ConfGTS-Server-0.17.0-x64.msi',
-            'artifacts\server-setup\ConfGTS-Server-Setup-0.17.0-x64.exe',
-            'artifacts\ConfGTS-Server-0.17.0-Source.zip'
+            'artifacts\server-msi\ConfGTS-Server-0.18.0-x64.msi',
+            'artifacts\server-setup\ConfGTS-Server-Setup-0.18.0-x64.exe',
+            'artifacts\ConfGTS-Server-0.18.0-Source.zip'
           )
           foreach ($file in $required) {
             if (!(Test-Path $file)) { throw "Missing artifact: $file" }
@@ -119,7 +131,7 @@ jobs:
       - name: Test client MSI installation, shortcuts and startup
         shell: pwsh
         run: |
-          $msi = (Resolve-Path 'artifacts\msi\ConfGTS-0.17.0-x64.msi').Path
+          $msi = (Resolve-Path 'artifacts\msi\ConfGTS-0.18.0-x64.msi').Path
           $installedExe = Join-Path $env:ProgramFiles 'ГТС\ConfGTS\ConfGTS.Client.exe'
           $startMenu = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\ConfGTS\ConfGTS.lnk'
           $desktop = Join-Path ([Environment]::GetFolderPath('CommonDesktopDirectory')) 'ConfGTS.lnk'
@@ -149,7 +161,7 @@ jobs:
       - name: Test client EXE installation, shortcuts and startup
         shell: pwsh
         run: |
-          $setup = (Resolve-Path 'artifacts\setup\ConfGTS-Setup-0.17.0-x64.exe').Path
+          $setup = (Resolve-Path 'artifacts\setup\ConfGTS-Setup-0.18.0-x64.exe').Path
           $installedExe = Join-Path $env:ProgramFiles 'ГТС\ConfGTS\ConfGTS.Client.exe'
           $startMenu = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\ConfGTS\ConfGTS.lnk'
           $desktop = Join-Path ([Environment]::GetFolderPath('CommonDesktopDirectory')) 'ConfGTS.lnk'
@@ -191,7 +203,7 @@ jobs:
             throw "ConfGTS Server health endpoint did not become ready: $Uri"
           }
 
-          $msi = (Resolve-Path 'artifacts\server-msi\ConfGTS-Server-0.17.0-x64.msi').Path
+          $msi = (Resolve-Path 'artifacts\server-msi\ConfGTS-Server-0.18.0-x64.msi').Path
           $serverDir = Join-Path $env:ProgramFiles 'ГТС\ConfGTS Server'
           $serverExe = Join-Path $serverDir 'ConfGTSServer.exe'
           $settingsExe = Join-Path $serverDir 'ConfGTS.Server.Settings.exe'
@@ -212,7 +224,7 @@ jobs:
           if ($svc.Status -ne 'Running') { Start-Service 'ConfGTSServer' }
 
           $health = Wait-Server 'http://127.0.0.1:8090/health'
-          if ($health.version -ne '0.17.0') { throw "Unexpected server version: $($health.version)" }
+          if ($health.version -ne '0.18.0') { throw "Unexpected server version: $($health.version)" }
 
           $nameHealth = Wait-Server ("http://{0}:8090/health" -f $env:COMPUTERNAME)
           if ($nameHealth.ok -ne $true) { throw "Server is not reachable by Windows computer name." }
@@ -292,7 +304,7 @@ jobs:
             throw "ConfGTS Server health endpoint did not become ready: $Uri"
           }
 
-          $setup = (Resolve-Path 'artifacts\server-setup\ConfGTS-Server-Setup-0.17.0-x64.exe').Path
+          $setup = (Resolve-Path 'artifacts\server-setup\ConfGTS-Server-Setup-0.18.0-x64.exe').Path
           $serverDir = Join-Path $env:ProgramFiles 'ГТС\ConfGTS Server'
           $serverExe = Join-Path $serverDir 'ConfGTSServer.exe'
           $settingsExe = Join-Path $serverDir 'ConfGTS.Server.Settings.exe'
@@ -305,7 +317,7 @@ jobs:
           }
 
           $health = Wait-Server 'http://127.0.0.1:8090/health'
-          if ($health.version -ne '0.17.0') { throw "Unexpected server version: $($health.version)" }
+          if ($health.version -ne '0.18.0') { throw "Unexpected server version: $($health.version)" }
           [void](Wait-Server ("http://{0}:8090/health" -f $env:COMPUTERNAME))
 
           $web = Invoke-WebRequest -Uri 'http://127.0.0.1:8090/server-login' -UseBasicParsing -TimeoutSec 5
@@ -320,11 +332,11 @@ jobs:
         shell: pwsh
         run: |
           $files = @(
-            'artifacts\msi\ConfGTS-0.17.0-x64.msi',
-            'artifacts\setup\ConfGTS-Setup-0.17.0-x64.exe',
-            'artifacts\server-msi\ConfGTS-Server-0.17.0-x64.msi',
-            'artifacts\server-setup\ConfGTS-Server-Setup-0.17.0-x64.exe',
-            'artifacts\ConfGTS-Server-0.17.0-Source.zip'
+            'artifacts\msi\ConfGTS-0.18.0-x64.msi',
+            'artifacts\setup\ConfGTS-Setup-0.18.0-x64.exe',
+            'artifacts\server-msi\ConfGTS-Server-0.18.0-x64.msi',
+            'artifacts\server-setup\ConfGTS-Server-Setup-0.18.0-x64.exe',
+            'artifacts\ConfGTS-Server-0.18.0-Source.zip'
           )
           $lines = foreach ($file in $files) {
             $hash = Get-FileHash $file -Algorithm SHA256
@@ -336,16 +348,16 @@ jobs:
       - name: Upload tested packages
         uses: actions/upload-artifact@v4
         with:
-          name: ConfGTS-0.17.0-tested
+          name: ConfGTS-0.18.0-tested
           if-no-files-found: error
           retention-days: 30
           compression-level: 0
           path: |
-            artifacts/msi/ConfGTS-0.17.0-x64.msi
-            artifacts/setup/ConfGTS-Setup-0.17.0-x64.exe
-            artifacts/server-msi/ConfGTS-Server-0.17.0-x64.msi
-            artifacts/server-setup/ConfGTS-Server-Setup-0.17.0-x64.exe
-            artifacts/ConfGTS-Server-0.17.0-Source.zip
+            artifacts/msi/ConfGTS-0.18.0-x64.msi
+            artifacts/setup/ConfGTS-Setup-0.18.0-x64.exe
+            artifacts/server-msi/ConfGTS-Server-0.18.0-x64.msi
+            artifacts/server-setup/ConfGTS-Server-Setup-0.18.0-x64.exe
+            artifacts/ConfGTS-Server-0.18.0-Source.zip
             artifacts/SHA256SUMS.txt
 
       - name: Publish GitHub Release
@@ -354,6 +366,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release delete v0.17.0 --cleanup-tag --yes 2>$null
-          if ($LASTEXITCODE -ne 0) { Write-Host 'No previous v0.17.0 release to delete.' }
-          gh release create v0.17.0 'artifacts\msi\ConfGTS-0.17.0-x64.msi' 'artifacts\setup\ConfGTS-Setup-0.17.0-x64.exe' 'artifacts\server-msi\ConfGTS-Server-0.17.0-x64.msi' 'artifacts\server-setup\ConfGTS-Server-Setup-0.17.0-x64.exe' 'artifacts\ConfGTS-Server-0.17.0-Source.zip' 'artifacts\SHA256SUMS.txt' --target '${{ github.sha }}' --title 'ConfGTS 0.17.0' --notes 'Новая главная, контакты, конференции, настройки мультимедиа и исправленный HTTPS.'
+          gh release delete v0.18.0 --cleanup-tag --yes 2>$null
+          if ($LASTEXITCODE -ne 0) { Write-Host 'No previous v0.18.0 release to delete.' }
+          gh release create v0.18.0 'artifacts\msi\ConfGTS-0.18.0-x64.msi' 'artifacts\setup\ConfGTS-Setup-0.18.0-x64.exe' 'artifacts\server-msi\ConfGTS-Server-0.18.0-x64.msi' 'artifacts\server-setup\ConfGTS-Server-Setup-0.18.0-x64.exe' 'artifacts\ConfGTS-Server-0.18.0-Source.zip' 'artifacts\SHA256SUMS.txt' --target '${{ github.sha }}' --title 'ConfGTS 0.18.0' --notes 'Beta 0.18.0: исправлена кириллица и hover-кнопок, настройки устройств встроены в клиент, локальные пользователи без e-mail, добавлен вход в WebRTC-конференцию из WinUI-клиента.'

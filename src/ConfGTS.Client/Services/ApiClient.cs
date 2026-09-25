@@ -17,6 +17,7 @@ public sealed class ApiClient
     private const string DiscoveryMagic = "CONFGTS_DISCOVER_V1";
     private static readonly object TrustGate = new();
 
+    private readonly CookieContainer _cookies = new();
     private readonly HttpClient _http;
     private string _configuredBaseUrl;
     private string _effectiveBaseUrl;
@@ -26,6 +27,7 @@ public sealed class ApiClient
         var handler = new HttpClientHandler
         {
             UseCookies = true,
+            CookieContainer = _cookies,
             ServerCertificateCustomValidationCallback = ValidateServerCertificate
         };
         _http = new HttpClient(handler)
@@ -49,6 +51,19 @@ public sealed class ApiClient
     }
 
     public string EffectiveBaseUrl => _effectiveBaseUrl;
+
+    public Cookie? GetSessionCookie()
+    {
+        try
+        {
+            var uri = new Uri(_effectiveBaseUrl);
+            return _cookies.GetCookies(uri)["vc_session"];
+        }
+        catch
+        {
+            return null;
+        }
+    }
 
     private Uri UriFor(string path) =>
         new(new Uri(_effectiveBaseUrl.TrimEnd('/') + "/"), path.TrimStart('/'));
