@@ -1,7 +1,10 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Net.NetworkInformation;
+using System.Net.Security;
 using System.Net.Sockets;
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Text.Json;
 
@@ -12,17 +15,24 @@ public sealed class ApiClient
     private const int DefaultPort = 8090;
     private const int DiscoveryPort = 8091;
     private const string DiscoveryMagic = "CONFGTS_DISCOVER_V1";
+    private static readonly object TrustGate = new();
 
-    private readonly HttpClient _http = new(new HttpClientHandler { UseCookies = true })
-    {
-        Timeout = TimeSpan.FromSeconds(8)
-    };
-
+    private readonly HttpClient _http;
     private string _configuredBaseUrl;
     private string _effectiveBaseUrl;
 
     public ApiClient()
     {
+        var handler = new HttpClientHandler
+        {
+            UseCookies = true,
+            ServerCertificateCustomValidationCallback = ValidateServerCertificate
+        };
+        _http = new HttpClient(handler)
+        {
+            Timeout = TimeSpan.FromSeconds(8)
+        };
+
         _configuredBaseUrl = LoadSavedServer();
         _effectiveBaseUrl = _configuredBaseUrl;
     }
@@ -57,7 +67,7 @@ public sealed class ApiClient
             string.IsNullOrWhiteSpace(uri.Host))
         {
             throw new InvalidOperationException(
-                "Допустимы имя компьютера, DNS/FQDN или IP-адрес, например srv-vks, srv-vks.teplo.local:8090.");
+                "Допустимы имя компьютера, DNS/FQDN или IP-адрес, например confgts, srv-vks.teplo.local:8090.");
         }
 
         var builder = new UriBuilder(uri);
@@ -70,23 +80,24 @@ public sealed class ApiClient
         return builder.Uri.GetLeftPart(UriPartial.Authority).TrimEnd('/');
     }
 
-    public async Task<bool> HealthAsync(CancellationToken ct = default)
-    {
-        return await EnsureEffectiveEndpointAsync(ct);
-    }
+    public async Task<bool> HealthAsync(CancellationToken ct = default) =>
+        await EnsureEffectiveEndpointAsync(ct);
 
     public async Task LoginAsync(string login, string password, CancellationToken ct = default)
     {
         if (!await EnsureEffectiveEndpointAsync(ct))
+        {
             throw new InvalidOperationException(
-                "Сервер недоступен. Проверьте имя/IP, порт и сетевое подключение.");
+                "Сервер недоступен. Проверьте имя/IP, протокол, порт и сетевое подключение.");
+        }
 
         using var response = await _http.PostAsJsonAsync(
             UriFor("/api/login"),
             new { username = login, password },
             ct);
 
-        if (response.IsSuccessStatusCode) return;
+        if (response.IsSuccessStatusCode)
+            return;
 
         var detail = await response.Content.ReadAsStringAsync(ct);
         throw new InvalidOperationException(string.IsNullOrWhiteSpace(detail)
@@ -120,6 +131,43 @@ public sealed class ApiClient
         return [];
     }
 
+    public async Task<IReadOnlyList<ContactInfo>> ContactsAsync(CancellationToken ct = default)
+    {
+        if (!await EnsureEffectiveEndpointAsync(ct))
+            return [];
+
+        using var response = await _http.GetAsync(UriFor("/api/contacts"), ct);
+        response.EnsureSuccessStatusCode();
+
+        var json = await response.Content.ReadAsStringAsync(ct);
+        using var doc = JsonDocument.Parse(json);
+        var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+
+        if (doc.RootElement.ValueKind == JsonValueKind.Object &&
+            doc.RootElement.TryGetProperty("contacts", out var contacts) &&
+            contacts.ValueKind == JsonValueKind.Array)
+        {
+            return JsonSerializer.Deserialize<List<ContactInfo>>(contacts.GetRawText(), options) ?? [];
+        }
+
+        return [];
+    }
+
+    public void ForgetAllCertificateTrust()
+    {
+        lock (TrustGate)
+        {
+            try
+            {
+                if (File.Exists(TrustPath))
+                    File.Delete(TrustPath);
+            }
+            catch
+            {
+            }
+        }
+    }
+
     private async Task<bool> EnsureEffectiveEndpointAsync(CancellationToken ct)
     {
         if (await ProbeAsync(_effectiveBaseUrl, ct))
@@ -134,8 +182,6 @@ public sealed class ApiClient
 
         var configuredUri = new Uri(_configuredBaseUrl);
 
-        // A short server name such as "srv-vks" is automatically expanded
-        // with the current AD/DNS suffix (for example teplo.local).
         if (!IPAddress.TryParse(configuredUri.Host, out _) && !configuredUri.Host.Contains('.'))
         {
             var suffix = IPGlobalProperties.GetIPGlobalProperties().DomainName?.Trim('.');
@@ -150,9 +196,6 @@ public sealed class ApiClient
             }
         }
 
-        // If DNS has no record yet, ConfGTS Server 0.16.1 can answer a
-        // local-network discovery request by logical server name.  The
-        // client then talks to the source IPv4 address of that response.
         var discovered = await DiscoverAsync(configuredUri.Host, ct);
         if (!string.IsNullOrWhiteSpace(discovered) && await ProbeAsync(discovered, ct))
         {
@@ -212,13 +255,18 @@ public sealed class ApiClient
                 var root = doc.RootElement;
                 if (!root.TryGetProperty("protocol", out var protocol) ||
                     protocol.GetString() != "CONFGTS_V1")
+                {
                     continue;
+                }
 
                 var port = root.TryGetProperty("port", out var p) && p.TryGetInt32(out var n)
-                    ? n : DefaultPort;
+                    ? n
+                    : DefaultPort;
+
                 var scheme = root.TryGetProperty("scheme", out var s) &&
                              s.GetString()?.Equals("https", StringComparison.OrdinalIgnoreCase) == true
-                    ? "https" : "http";
+                    ? "https"
+                    : "http";
 
                 return $"{scheme}://{packet.RemoteEndPoint.Address}:{port}";
             }
@@ -226,25 +274,75 @@ public sealed class ApiClient
         catch
         {
         }
+
         return null;
+    }
+
+    private static bool ValidateServerCertificate(
+        HttpRequestMessage request,
+        X509Certificate2? certificate,
+        X509Chain? chain,
+        SslPolicyErrors errors)
+    {
+        if (errors == SslPolicyErrors.None)
+            return true;
+
+        if (certificate is null || request.RequestUri is null)
+            return false;
+
+        if ((errors & SslPolicyErrors.RemoteCertificateNameMismatch) != 0 ||
+            (errors & SslPolicyErrors.RemoteCertificateNotAvailable) != 0)
+        {
+            return false;
+        }
+
+        if ((errors & ~SslPolicyErrors.RemoteCertificateChainErrors) != 0)
+            return false;
+
+        if (!string.Equals(certificate.Subject, certificate.Issuer, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        var now = DateTime.Now;
+        if (now < certificate.NotBefore || now > certificate.NotAfter)
+            return false;
+
+        var fingerprint = Convert.ToHexString(SHA256.HashData(certificate.RawData));
+        var host = request.RequestUri.Host.ToLowerInvariant();
+
+        lock (TrustGate)
+        {
+            var trust = LoadTrust();
+            if (trust.TryGetValue(host, out var saved))
+                return string.Equals(saved, fingerprint, StringComparison.OrdinalIgnoreCase);
+
+            trust[host] = fingerprint;
+            SaveTrust(trust);
+            return true;
+        }
     }
 
     private static string ReplaceHost(Uri uri, string host)
     {
-        var b = new UriBuilder(uri) { Host = host };
-        return b.Uri.GetLeftPart(UriPartial.Authority).TrimEnd('/');
+        var builder = new UriBuilder(uri) { Host = host };
+        return builder.Uri.GetLeftPart(UriPartial.Authority).TrimEnd('/');
     }
 
     private static string SettingsPath =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
             "ConfGTS", "client-native.json");
 
+    private static string TrustPath =>
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+            "ConfGTS", "https-trust.json");
+
     private static string LoadSavedServer()
     {
         const string fallback = "http://confgts:8090";
         try
         {
-            if (!File.Exists(SettingsPath)) return fallback;
+            if (!File.Exists(SettingsPath))
+                return fallback;
+
             using var doc = JsonDocument.Parse(File.ReadAllText(SettingsPath));
             if (doc.RootElement.TryGetProperty("server_url", out var value))
             {
@@ -256,6 +354,7 @@ public sealed class ApiClient
         catch
         {
         }
+
         return fallback;
     }
 
@@ -270,7 +369,8 @@ public sealed class ApiClient
             {
                 try
                 {
-                    data = JsonSerializer.Deserialize<Dictionary<string, object?>>(File.ReadAllText(SettingsPath))
+                    data = JsonSerializer.Deserialize<Dictionary<string, object?>>(
+                               File.ReadAllText(SettingsPath))
                            ?? new(StringComparer.OrdinalIgnoreCase);
                 }
                 catch
@@ -279,10 +379,37 @@ public sealed class ApiClient
             }
 
             data["server_url"] = server;
-            File.WriteAllText(SettingsPath, JsonSerializer.Serialize(data, new JsonSerializerOptions
-            {
-                WriteIndented = true
-            }));
+            File.WriteAllText(SettingsPath,
+                JsonSerializer.Serialize(data, new JsonSerializerOptions { WriteIndented = true }));
+        }
+        catch
+        {
+        }
+    }
+
+    private static Dictionary<string, string> LoadTrust()
+    {
+        try
+        {
+            if (!File.Exists(TrustPath))
+                return new(StringComparer.OrdinalIgnoreCase);
+
+            return JsonSerializer.Deserialize<Dictionary<string, string>>(File.ReadAllText(TrustPath))
+                   ?? new(StringComparer.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return new(StringComparer.OrdinalIgnoreCase);
+        }
+    }
+
+    private static void SaveTrust(Dictionary<string, string> trust)
+    {
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(TrustPath)!);
+            File.WriteAllText(TrustPath,
+                JsonSerializer.Serialize(trust, new JsonSerializerOptions { WriteIndented = true }));
         }
         catch
         {
@@ -294,4 +421,16 @@ public sealed class RoomInfo
 {
     public string Id { get; set; } = "";
     public string Name { get; set; } = "";
+    public string Description { get; set; } = "";
+    public bool Enabled { get; set; } = true;
+}
+
+public sealed class ContactInfo
+{
+    public string Username { get; set; } = "";
+    public string DisplayName { get; set; } = "";
+    public string Email { get; set; } = "";
+
+    public string EffectiveName =>
+        string.IsNullOrWhiteSpace(DisplayName) ? Username : DisplayName;
 }
