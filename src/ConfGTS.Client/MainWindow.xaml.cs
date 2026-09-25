@@ -778,9 +778,30 @@ public sealed class MainWindow : Window
 
         try
         {
-            await web.EnsureCoreWebView2Async();
+            // Never let WebView2 use its default user-data folder next to the EXE.
+            // ConfGTS is installed under Program Files, which is not writable by a
+            // standard user and can make EnsureCoreWebView2Async fail or return
+            // without an initialized CoreWebView2 instance.
+            var webViewDataFolder = System.IO.Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "ConfGTS",
+                "WebView2");
+            Directory.CreateDirectory(webViewDataFolder);
+
+            var webViewEnvironment = await CoreWebView2Environment.CreateWithOptionsAsync(
+                browserExecutableFolder: null,
+                userDataFolder: webViewDataFolder,
+                options: null);
+
+            StartupDiagnostics.Log(
+                "WebView2 environment created. Runtime=" +
+                webViewEnvironment.BrowserVersionString +
+                "; UserDataFolder=" + webViewDataFolder);
+
+            await web.EnsureCoreWebView2Async(webViewEnvironment);
             if (web.CoreWebView2 is null)
-                throw new InvalidOperationException("WebView2 Runtime не инициализирован.");
+                throw new InvalidOperationException(
+                    "WebView2 не удалось инициализировать. Проверьте установку Microsoft Edge WebView2 Runtime.");
 
             web.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
             web.CoreWebView2.PermissionRequested += ConferencePermissionRequested;
@@ -1011,7 +1032,21 @@ public sealed class MainWindow : Window
 
     private async void MediaSettingsButton_Click(object sender, RoutedEventArgs e)
     {
-        await ShowInlineSettingsAsync();
+        try
+        {
+            await ShowInlineSettingsAsync();
+        }
+        catch (Exception ex)
+        {
+            StartupDiagnostics.Log("Failed to open media settings.", ex);
+
+            _mediaSettingsPanel = null;
+            if (_dashboardMainScroll is not null)
+                _dashboardMainScroll.Visibility = Visibility.Visible;
+
+            _dashboardServerText.Text = "Не удалось открыть настройки устройств: " + ex.Message;
+            _dashboardServerText.Foreground = Brush("#B54242");
+        }
     }
 
     private async Task ShowInlineSettingsAsync()
@@ -1021,12 +1056,28 @@ public sealed class MainWindow : Window
         if (_mediaSettingsPanel is not null)
             return;
 
+        // Create the panel before hiding the dashboard. Some audio drivers can throw
+        // while COM/NAudio is being initialized; the caller handles that without
+        // terminating the whole WinUI process.
+        var panel = new MediaSettingsPanel();
+        panel.CloseRequested += async (_, _) =>
+        {
+            try
+            {
+                await CloseInlineSettingsAsync();
+            }
+            catch (Exception ex)
+            {
+                StartupDiagnostics.Log("Failed to close media settings.", ex);
+            }
+        };
+
+        _mediaSettingsPanel = panel;
+
         if (_dashboardMainScroll is not null)
             _dashboardMainScroll.Visibility = Visibility.Collapsed;
 
-        _mediaSettingsPanel = new MediaSettingsPanel();
-        _mediaSettingsPanel.CloseRequested += async (_, _) => await CloseInlineSettingsAsync();
-        _mainContentHost.Children.Add(_mediaSettingsPanel);
+        _mainContentHost.Children.Add(panel);
     }
 
     private async Task CloseInlineSettingsAsync()
