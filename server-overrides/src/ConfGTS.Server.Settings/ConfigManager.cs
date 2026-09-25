@@ -20,6 +20,7 @@ internal static class ConfigManager
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "ConfGTS");
 
     public static string ConfigPath => Path.Combine(DataDirectory, "config.json");
+    public static string ServerNamePath => Path.Combine(DataDirectory, "server-name.txt");
 
     public static NetworkSettings Load()
     {
@@ -57,6 +58,11 @@ internal static class ConfigManager
             }
 
             var savedName = node["server_name"]?.GetValue<string>()?.Trim();
+            if (File.Exists(ServerNamePath))
+            {
+                var separateName = File.ReadAllText(ServerNamePath).Trim();
+                if (!string.IsNullOrWhiteSpace(separateName)) savedName = separateName;
+            }
             if (!string.IsNullOrWhiteSpace(savedName)) name = savedName;
 
             var pu = node["public_url"]?.GetValue<string>()?.Trim();
@@ -97,6 +103,7 @@ internal static class ConfigManager
         root["listen_addr"] = $"{settings.BindAddress}:{settings.Port}";
         root["server_name"] = settings.ServerName;
         root["public_url"] = settings.PublicUrl;
+        File.WriteAllText(ServerNamePath, settings.ServerName);
 
         var https = root["https"] as JsonObject ?? new JsonObject();
         https["enabled"] = settings.Scheme.Equals("https", StringComparison.OrdinalIgnoreCase);
