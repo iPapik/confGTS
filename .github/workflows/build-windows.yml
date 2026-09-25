@@ -116,8 +116,8 @@ jobs:
           $desktop = Join-Path ([Environment]::GetFolderPath('CommonDesktopDirectory')) 'ConfGTS.lnk'
           $startupLog = "$env:LOCALAPPDATA\ConfGTS\logs\startup.log"
 
-          & msiexec.exe /i $msi /qn /norestart
-          if ($LASTEXITCODE -ne 0) { throw "Client MSI install failed: $LASTEXITCODE" }
+          $install = Start-Process msiexec.exe -ArgumentList @('/i', "`"$msi`"", '/qn', '/norestart') -Wait -PassThru
+          if ($install.ExitCode -ne 0) { throw "Client MSI install failed: $($install.ExitCode)" }
           foreach ($path in @($installedExe,$startMenu,$desktop)) {
             if (!(Test-Path $path)) { throw "Client MSI expected path missing: $path" }
           }
@@ -134,8 +134,8 @@ jobs:
           Stop-Process -Id $app.Id -Force -ErrorAction SilentlyContinue
           Start-Sleep -Seconds 2
 
-          & msiexec.exe /x $msi /qn /norestart
-          if ($LASTEXITCODE -ne 0) { throw "Client MSI uninstall failed: $LASTEXITCODE" }
+          $remove = Start-Process msiexec.exe -ArgumentList @('/x', "`"$msi`"", '/qn', '/norestart') -Wait -PassThru
+          if ($remove.ExitCode -ne 0) { throw "Client MSI uninstall failed: $($remove.ExitCode)" }
 
       - name: Test client EXE installation, shortcuts and startup
         shell: pwsh
@@ -191,8 +191,8 @@ jobs:
           $menuWeb = Join-Path $menuDir 'ConfGTS Server Web.lnk'
 
           Remove-Item "$env:ProgramData\ConfGTS" -Recurse -Force -ErrorAction SilentlyContinue
-          & msiexec.exe /i $msi /qn /norestart
-          if ($LASTEXITCODE -ne 0) { throw "Server MSI install failed: $LASTEXITCODE" }
+          $install = Start-Process msiexec.exe -ArgumentList @('/i', "`"$msi`"", '/qn', '/norestart') -Wait -PassThru
+          if ($install.ExitCode -ne 0) { throw "Server MSI install failed: $($install.ExitCode)" }
 
           foreach ($path in @($serverExe,$settingsExe,$desktop,$menuSettings,$menuWeb)) {
             if (!(Test-Path $path)) { throw "Server MSI expected path missing: $path" }
@@ -214,8 +214,8 @@ jobs:
           if ($settings.HasExited) { throw "Standalone ConfGTS Server Settings exited immediately." }
           Stop-Process -Id $settings.Id -Force -ErrorAction SilentlyContinue
 
-          & msiexec.exe /x $msi /qn /norestart
-          if ($LASTEXITCODE -ne 0) { throw "Server MSI uninstall failed: $LASTEXITCODE" }
+          $remove = Start-Process msiexec.exe -ArgumentList @('/x', "`"$msi`"", '/qn', '/norestart') -Wait -PassThru
+          if ($remove.ExitCode -ne 0) { throw "Server MSI uninstall failed: $($remove.ExitCode)" }
           Start-Sleep -Seconds 2
           if (Get-Service 'ConfGTSServer' -ErrorAction SilentlyContinue) {
             throw "Server service remained after MSI uninstall."
