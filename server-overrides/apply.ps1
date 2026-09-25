@@ -42,7 +42,7 @@ $httpsBlock = @'
 	}
 	addr := strings.TrimSpace(cfg.ListenAddr)
 '@
-$httpsBlock = $httpsBlock -replace "\r\n", "\n"
+$httpsBlock = $httpsBlock -replace "`r`n", "`n"
 $httpsRegex = [regex]::new($httpsPattern)
 if ($httpsRegex.IsMatch($main)) {
     $main = $httpsRegex.Replace($main, $httpsBlock.TrimEnd("`r","`n"), 1)
