@@ -98,7 +98,7 @@ public sealed class ApiClient
     public async Task<bool> HealthAsync(CancellationToken ct = default) =>
         await EnsureEffectiveEndpointAsync(ct);
 
-    public async Task LoginAsync(string login, string password, CancellationToken ct = default)
+    public async Task LoginAsync(string login, string password, string authType = "auto", CancellationToken ct = default)
     {
         if (!await EnsureEffectiveEndpointAsync(ct))
         {
@@ -108,7 +108,12 @@ public sealed class ApiClient
 
         using var response = await _http.PostAsJsonAsync(
             UriFor("/api/login"),
-            new { username = login, password },
+            new
+            {
+                username = login,
+                password,
+                auth_type = string.IsNullOrWhiteSpace(authType) ? "auto" : authType.Trim().ToLowerInvariant()
+            },
             ct);
 
         if (response.IsSuccessStatusCode)
