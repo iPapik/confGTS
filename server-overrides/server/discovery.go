@@ -110,6 +110,9 @@ func discoveryNames(cfg discoveryConfig) []string {
 
 func matchesDiscoveryName(requested string, names []string) bool {
 	r := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(requested)), ".")
+	if r == "confgts" || r == "confgts-server" {
+		return true
+	}
 	for _, n := range names {
 		n = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(n)), ".")
 		if r == n {
