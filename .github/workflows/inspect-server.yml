@@ -35,5 +35,9 @@ jobs:
           }
           Write-Host '=== LDAP / CONTACT SYMBOLS ==='
           Select-String -Path '.\server\ldap.go' -Pattern '^type |^func |Search|DisplayName|mail|userPrincipalName|sAMAccountName|memberOf' -Context 2,12
+          Write-Host '=== WEB FULL ==='
+          Get-Content '.\server\web.go'
+          Write-Host '=== STORE KNOWN USERS ==='
+          Select-String -Path '.\server\store.go' -Pattern 'KnownUsers|KnownUser|Remember|currentUser|Rooms\(' -Context 4,20
           Write-Host '=== TYPES ==='
           Get-Content '.\server\types.go'
