@@ -5,6 +5,8 @@ namespace ConfGTS.Server.Settings;
 
 public partial class App : Application
 {
+    private Window? _window;
+
     public App()
     {
         try
@@ -25,8 +27,8 @@ public partial class App : Application
         try
         {
             Diagnostics.Log("Starting settings window");
-            var window = new SettingsWindow();
-            window.Activate();
+            _window = new SettingsWindow();
+            _window.Activate();
             Diagnostics.Log("Settings window activated");
         }
         catch (Exception ex)
