@@ -78,6 +78,11 @@ func loadDiscoveryConfig() discoveryConfig {
 	if b, err := os.ReadFile(path); err == nil {
 		_ = json.Unmarshal(b, &cfg)
 	}
+	if b, err := os.ReadFile(filepath.Join(dataDir(), "server-name.txt")); err == nil {
+		if name := strings.TrimSpace(string(b)); name != "" {
+			cfg.ServerName = name
+		}
+	}
 	return cfg
 }
 
