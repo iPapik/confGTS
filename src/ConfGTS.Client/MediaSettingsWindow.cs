@@ -18,7 +18,7 @@ using WinRT.Interop;
 
 namespace ConfGTS.Client;
 
-public sealed class MediaSettingsWindow : Window
+public sealed class MediaSettingsPanel : Grid
 {
     private const string Navy = "#0B2F5B";
     private const string Blue = "#168CB8";
@@ -55,22 +55,27 @@ public sealed class MediaSettingsWindow : Window
     private bool _loading = true;
     private bool _closed;
 
-    public MediaSettingsWindow()
+    public event EventHandler? CloseRequested;
+
+    public MediaSettingsPanel()
     {
-        Title = "ConfGTS — настройки устройств";
-        SetWindowSize(1120, 780);
-        Content = BuildUi();
+        Background = Brush(Bg);
+        Children.Add(BuildUi());
 
-        Closed += async (_, _) =>
-        {
-            _closed = true;
-            StopMicrophoneTest();
-            StopSpeakerTest();
-            await StopCameraPreviewAsync();
-            _settings.Save();
-        };
-
+        Unloaded += async (_, _) => await ShutdownAsync();
         _ = LoadDevicesAsync();
+    }
+
+    public async Task ShutdownAsync()
+    {
+        if (_closed)
+            return;
+
+        _closed = true;
+        StopMicrophoneTest();
+        StopSpeakerTest();
+        await StopCameraPreviewAsync();
+        _settings.Save();
     }
 
     private UIElement BuildUi()
@@ -123,6 +128,7 @@ public sealed class MediaSettingsWindow : Window
         var grid = new Grid();
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         grid.ColumnDefinitions.Add(new ColumnDefinition());
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
         var mark = new Border
         {
@@ -159,6 +165,14 @@ public sealed class MediaSettingsWindow : Window
             Foreground = Brush(Muted)
         });
         grid.Children.Add(title);
+
+        var back = SecondaryButton("← К конференциям");
+        back.VerticalAlignment = VerticalAlignment.Center;
+        back.Margin = new Thickness(18, 0, 0, 0);
+        back.Click += (_, _) => CloseRequested?.Invoke(this, EventArgs.Empty);
+        Grid.SetColumn(back, 2);
+        grid.Children.Add(back);
+
         return grid;
     }
 
@@ -734,8 +748,15 @@ public sealed class MediaSettingsWindow : Window
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(9)
         };
+        button.Resources["ButtonBackground"] = Brush("#E8F4F9");
         button.Resources["ButtonBackgroundPointerOver"] = Brush("#D9EDF5");
+        button.Resources["ButtonBackgroundPressed"] = Brush("#CBE5F1");
+        button.Resources["ButtonForeground"] = Brush(Navy);
         button.Resources["ButtonForegroundPointerOver"] = Brush(Navy);
+        button.Resources["ButtonForegroundPressed"] = Brush(Navy);
+        button.Resources["ButtonBorderBrush"] = Brush(Line);
+        button.Resources["ButtonBorderBrushPointerOver"] = Brush("#AFCFDE");
+        button.Resources["ButtonBorderBrushPressed"] = Brush("#94BECE");
         return button;
     }
 
@@ -749,13 +770,6 @@ public sealed class MediaSettingsWindow : Window
         brush.GradientStops.Add(new GradientStop { Color = Color(Blue), Offset = 0 });
         brush.GradientStops.Add(new GradientStop { Color = Color(Cyan), Offset = 1 });
         return brush;
-    }
-
-    private void SetWindowSize(int width, int height)
-    {
-        var hwnd = WindowNative.GetWindowHandle(this);
-        var id = Win32Interop.GetWindowIdFromWindow(hwnd);
-        AppWindow.GetFromWindowId(id)?.Resize(new SizeInt32(width, height));
     }
 
     private static SolidColorBrush Brush(string hex) => new(Color(hex));
