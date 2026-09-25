@@ -22,7 +22,6 @@ public sealed class MainWindow : Window
     private readonly TextBlock _loginError = new();
     private readonly TextBlock _serverText = new();
     private readonly Ellipse _serverDot = new();
-    private readonly TextBlock _welcomeName = new();
     private readonly StackPanel _roomsPanel = new();
     private readonly TextBlock _roomsEmptyText = new();
 
@@ -212,7 +211,7 @@ public sealed class MainWindow : Window
 
         panel.Children.Add(new TextBlock
         {
-            Text = "ConfGTS 0.15.2  |  © ГТС, 2026",
+            Text = "ConfGTS 0.16.0  |  © ГТС, 2026",
             FontSize = 11,
             Foreground = Brush("#8A9BAC"),
             HorizontalAlignment = HorizontalAlignment.Center,
@@ -276,31 +275,21 @@ public sealed class MainWindow : Window
         Grid.SetColumn(scroll, 1);
         var main = new StackPanel { Padding = new Thickness(30), Spacing = 18 };
 
-        var hero = new Border
+        var pageHeader = new StackPanel { Spacing = 2, Margin = new Thickness(0, 0, 0, 2) };
+        pageHeader.Children.Add(new TextBlock
         {
-            Background = Brush("#DCEFF8"),
-            BorderBrush = Brush("#C9DDE9"),
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(22),
-            Padding = new Thickness(32)
-        };
-        var heroText = new StackPanel();
-        heroText.Children.Add(new TextBlock { Text = "Добро пожаловать,", FontSize = 26, Foreground = Brush("#52637A") });
-        _welcomeName.Text = "Пользователь!";
-        _welcomeName.FontSize = 48;
-        _welcomeName.FontWeight = Microsoft.UI.Text.FontWeights.Bold;
-        _welcomeName.Foreground = Brush("#092B56");
-        heroText.Children.Add(_welcomeName);
-        heroText.Children.Add(new TextBlock
-        {
-            Text = "Проводите встречи, общайтесь и работайте вместе с ConfGTS",
-            FontSize = 19,
-            Foreground = Brush("#52637A"),
-            TextWrapping = TextWrapping.Wrap,
-            Margin = new Thickness(0, 8, 0, 0)
+            Text = "Главная",
+            FontSize = 28,
+            FontWeight = Microsoft.UI.Text.FontWeights.Bold,
+            Foreground = Brush("#092B56")
         });
-        hero.Child = heroText;
-        main.Children.Add(hero);
+        pageHeader.Children.Add(new TextBlock
+        {
+            Text = "Конференции и быстрые действия ConfGTS",
+            FontSize = 14,
+            Foreground = Brush("#73839A")
+        });
+        main.Children.Add(pageHeader);
 
         var actions = new Grid { ColumnSpacing = 14 };
         actions.ColumnDefinitions.Add(new ColumnDefinition());
@@ -444,9 +433,6 @@ public sealed class MainWindow : Window
         try
         {
             await _api.LoginAsync(_loginBox.Text.Trim(), _passwordBox.Password);
-            _welcomeName.Text = string.IsNullOrWhiteSpace(_loginBox.Text)
-                ? "Пользователь!"
-                : _loginBox.Text.Trim() + "!";
             _loginView.Visibility = Visibility.Collapsed;
             _dashboardView.Visibility = Visibility.Visible;
             await LoadRoomsAsync();
@@ -464,7 +450,6 @@ public sealed class MainWindow : Window
 
     private void GuestButton_Click(object sender, RoutedEventArgs e)
     {
-        _welcomeName.Text = "Гость!";
         _loginView.Visibility = Visibility.Collapsed;
         _dashboardView.Visibility = Visibility.Visible;
         _roomsPanel.Children.Clear();
@@ -522,8 +507,8 @@ public sealed class MainWindow : Window
         var box = new TextBox
         {
             Text = _api.BaseUrl,
-            Header = "Адрес сервера",
-            PlaceholderText = "https://confgts.company.local"
+            Header = "Имя сервера или адрес",
+            PlaceholderText = "confgts.teplo.local:8090"
         };
 
         var dialog = new ContentDialog
@@ -538,10 +523,15 @@ public sealed class MainWindow : Window
 
         if (await dialog.ShowAsync() == ContentDialogResult.Primary)
         {
-            if (Uri.TryCreate(box.Text.Trim(), UriKind.Absolute, out _))
+            try
             {
                 _api.BaseUrl = box.Text.Trim();
                 await CheckServerAsync();
+            }
+            catch (Exception ex)
+            {
+                _loginError.Text = "Некорректный адрес сервера: " + ex.Message;
+                _loginError.Visibility = Visibility.Visible;
             }
         }
     }
