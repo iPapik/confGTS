@@ -29,7 +29,7 @@ public sealed class MediaSettingsPanel : Grid
     private const string Bg = "#EEF7FC";
 
     private readonly MediaDeviceSettings _settings = MediaDeviceSettings.Load();
-    private readonly MMDeviceEnumerator _audioEnumerator = new();
+    private MMDeviceEnumerator? _audioEnumerator;
 
     private readonly ComboBox _microphoneCombo = new();
     private readonly Slider _microphoneVolume = new();
@@ -63,7 +63,7 @@ public sealed class MediaSettingsPanel : Grid
         Children.Add(BuildUi());
 
         Unloaded += async (_, _) => await ShutdownAsync();
-        _ = LoadDevicesAsync();
+        _ = InitializeAndLoadDevicesAsync();
     }
 
     public async Task ShutdownAsync()
@@ -75,6 +75,8 @@ public sealed class MediaSettingsPanel : Grid
         StopMicrophoneTest();
         StopSpeakerTest();
         await StopCameraPreviewAsync();
+        try { _audioEnumerator?.Dispose(); } catch { }
+        _audioEnumerator = null;
         _settings.Save();
     }
 
@@ -324,17 +326,37 @@ public sealed class MediaSettingsPanel : Grid
         return grid;
     }
 
+    private async Task InitializeAndLoadDevicesAsync()
+    {
+        try
+        {
+            _audioEnumerator = new MMDeviceEnumerator();
+            await LoadDevicesAsync();
+        }
+        catch (Exception ex)
+        {
+            _loading = false;
+            _microphoneStatus.Text = "Аудиоустройства недоступны: " + ex.Message;
+            _microphoneStatus.Foreground = Brush("#B54242");
+            _speakerStatus.Text = "Аудиоустройства недоступны: " + ex.Message;
+            _speakerStatus.Foreground = Brush("#B54242");
+            _cameraStatus.Text = "Ошибка инициализации устройств: " + ex.Message;
+            _cameraStatus.Foreground = Brush("#B54242");
+        }
+    }
+
     private async Task LoadDevicesAsync()
     {
         try
         {
-            var microphones = _audioEnumerator
+            var audioEnumerator = _audioEnumerator ?? throw new InvalidOperationException("Аудиосистема не инициализирована.");
+            var microphones = audioEnumerator
                 .EnumerateAudioEndPoints(DataFlow.Capture, DeviceState.Active)
                 .Select(d => new DeviceChoice(d.ID, d.FriendlyName))
                 .OrderBy(d => d.Name, StringComparer.CurrentCultureIgnoreCase)
                 .ToList();
 
-            var speakers = _audioEnumerator
+            var speakers = audioEnumerator
                 .EnumerateAudioEndPoints(DataFlow.Render, DeviceState.Active)
                 .Select(d => new DeviceChoice(d.ID, d.FriendlyName))
                 .OrderBy(d => d.Name, StringComparer.CurrentCultureIgnoreCase)
@@ -391,7 +413,7 @@ public sealed class MediaSettingsPanel : Grid
         try
         {
             if (string.IsNullOrWhiteSpace(id)) return fallback;
-            var device = _audioEnumerator.GetDevice(id);
+            var device = (_audioEnumerator ?? throw new InvalidOperationException("Аудиосистема не инициализирована.")).GetDevice(id);
             return Math.Clamp(device.AudioEndpointVolume.MasterVolumeLevelScalar * 100.0, 0, 100);
         }
         catch
@@ -405,7 +427,7 @@ public sealed class MediaSettingsPanel : Grid
         try
         {
             if (string.IsNullOrWhiteSpace(id)) return;
-            var device = _audioEnumerator.GetDevice(id);
+            var device = (_audioEnumerator ?? throw new InvalidOperationException("Аудиосистема не инициализирована.")).GetDevice(id);
             device.AudioEndpointVolume.MasterVolumeLevelScalar = (float)Math.Clamp(value / 100.0, 0, 1);
         }
         catch
@@ -426,7 +448,7 @@ public sealed class MediaSettingsPanel : Grid
 
         try
         {
-            _microphoneDevice = _audioEnumerator.GetDevice(id);
+            _microphoneDevice = (_audioEnumerator ?? throw new InvalidOperationException("Аудиосистема не инициализирована.")).GetDevice(id);
             _microphoneCapture = new WasapiCapture(_microphoneDevice);
             _microphoneCapture.DataAvailable += MicrophoneDataAvailable;
             _microphoneCapture.RecordingStopped += (_, e) =>
@@ -515,7 +537,7 @@ public sealed class MediaSettingsPanel : Grid
 
         try
         {
-            _speakerDevice = _audioEnumerator.GetDevice(id);
+            _speakerDevice = (_audioEnumerator ?? throw new InvalidOperationException("Аудиосистема не инициализирована.")).GetDevice(id);
             _speakerOutput = new WasapiOut(_speakerDevice, AudioClientShareMode.Shared, true, 80);
 
             var signal = new SignalGenerator(44100, 1)
