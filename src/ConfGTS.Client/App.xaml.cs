@@ -35,6 +35,22 @@ public partial class App : Application
             MainWindowInstance = new MainWindow();
             MainWindowInstance.Activate();
             StartupDiagnostics.Log("Main window activated.");
+
+            if (Environment.GetCommandLineArgs().Any(
+                    x => string.Equals(x, "--self-test-settings", StringComparison.OrdinalIgnoreCase)))
+            {
+                MainWindowInstance.DispatcherQueue.TryEnqueue(async () =>
+                {
+                    try
+                    {
+                        await MainWindowInstance.RunSettingsSmokeTestAsync();
+                    }
+                    catch (Exception ex)
+                    {
+                        StartupDiagnostics.Log("Settings smoke test failed.", ex);
+                    }
+                });
+            }
         }
         catch (Exception ex)
         {

@@ -65,6 +65,64 @@ $admin = $admin.Replace(
     '')
 Set-Content $adminPath $admin -Encoding UTF8 -NoNewline
 
+# Client 0.18.3 can explicitly choose local ConfGTS authentication or
+# LDAP/Active Directory. Older clients remain compatible because the default
+# "auto" mode preserves the existing local-first behaviour.
+$webPath = Join-Path $root "server\web.go"
+$web = Get-Content $webPath -Raw -Encoding UTF8
+if (-not $web.Contains('AuthType string `json:"auth_type"`')) {
+    $web = $web.Replace(
+        'Password string `json:"password"`',
+        'Password string `json:"password"`' + [Environment]::NewLine + "`t`tAuthType string ``json:`"auth_type`"``")
+}
+
+$apiAuthPattern = '(?ms)\tlocalOK := false\r?\n\tif a\.store\.HasLocalUser\(username\) \{.*?\r?\n\t\}\r?\n\tif err != nil \|\|'
+$apiAuthReplacement = @'
+	localOK := false
+	authType := strings.ToLower(strings.TrimSpace(in.AuthType))
+	if authType == "" {
+		authType = "auto"
+	}
+	switch authType {
+	case "local":
+		if !a.store.HasLocalUser(username) {
+			err = fmt.Errorf("local ConfGTS user not found")
+		} else if lu, ok := a.store.AuthenticateLocal(username, in.Password); ok {
+			u, localOK = lu, true
+		} else {
+			err = fmt.Errorf("invalid local credentials")
+		}
+	case "domain":
+		if a.store.Config().LDAP.Enabled {
+			u, err = ldapAuthenticate(a.store.Config().LDAP, username, in.Password)
+		} else {
+			err = fmt.Errorf("LDAP / Active Directory is not configured")
+		}
+	default:
+		if a.store.HasLocalUser(username) {
+			if lu, ok := a.store.AuthenticateLocal(username, in.Password); ok {
+				u, localOK = lu, true
+			} else {
+				err = fmt.Errorf("invalid local credentials")
+			}
+		} else if dev := os.Getenv("CONFGTS_DEV_USER"); dev != "" && normUser(dev) == username {
+			u, localOK = User{Username: username, DisplayName: username + " (DEV)"}, true
+		} else if a.store.Config().LDAP.Enabled {
+			u, err = ldapAuthenticate(a.store.Config().LDAP, username, in.Password)
+		} else {
+			err = fmt.Errorf("LDAP / Active Directory is not configured")
+		}
+	}
+	if err != nil ||
+'@
+$apiAuthRegex = [regex]::new($apiAuthPattern)
+if ($apiAuthRegex.IsMatch($web)) {
+    $web = $apiAuthRegex.Replace($web, $apiAuthReplacement.TrimEnd("`r","`n"), 1)
+} elseif (-not $web.Contains('authType := strings.ToLower(strings.TrimSpace(in.AuthType))')) {
+    throw "ConfGTS API login authentication block was not found."
+}
+Set-Content $webPath $web -Encoding UTF8 -NoNewline
+
 $uiPath = Join-Path $root "server\ui.go"
 $ui = Get-Content $uiPath -Raw -Encoding UTF8
 $replacements = [ordered]@{

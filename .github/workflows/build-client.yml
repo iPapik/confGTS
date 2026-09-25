@@ -1,0 +1,142 @@
+name: Build ConfGTS Client 0.18.3
+
+on:
+  push:
+    branches: [ main, 'beta-*', 'fix/client-*' ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: confgts-client-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  client:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Build client MSI and EXE
+        shell: pwsh
+        run: .\build-installers.ps1
+
+      - name: Verify client artifacts
+        shell: pwsh
+        run: |
+          $required = @(
+            'artifacts\publish\ConfGTS.Client.exe',
+            'artifacts\msi\ConfGTS-0.18.3-x64.msi',
+            'artifacts\setup\ConfGTS-Setup-0.18.3-x64.exe'
+          )
+          foreach ($file in $required) { if (!(Test-Path $file)) { throw "Missing artifact: $file" } }
+          foreach ($dll in @('vcruntime140.dll','vcruntime140_1.dll','msvcp140.dll')) {
+            if (!(Test-Path (Join-Path 'artifacts\publish' $dll))) { throw "Client app-local runtime missing: $dll" }
+          }
+          if (Test-Path 'artifacts\publish\NAudio.dll') { throw 'NAudio.dll must not be present in the crash-safe client build.' }
+          Get-Item $required | Select-Object Name,Length | Format-Table -AutoSize
+
+      - name: Settings navigation smoke test
+        shell: pwsh
+        run: |
+          $startupLog = "$env:LOCALAPPDATA\ConfGTS\logs\startup.log"
+          Remove-Item $startupLog -Force -ErrorAction SilentlyContinue
+          $exe = (Resolve-Path 'artifacts\publish\ConfGTS.Client.exe').Path
+          $p = Start-Process $exe -ArgumentList '--self-test-settings' -PassThru
+          Start-Sleep -Seconds 10
+          $log = if (Test-Path $startupLog) { Get-Content $startupLog -Raw } else { '' }
+          if ($p.HasExited -or $log -notmatch 'Settings smoke test completed\.' -or $log -notmatch 'Safe MediaSettingsPanel constructor completed\.' -or $log -match 'Fatal error|Settings smoke test failed|XAML parsing failed') {
+            if (Test-Path $startupLog) { Get-Content $startupLog -Tail 160 }
+            Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+            throw 'Published client failed the settings navigation smoke test.'
+          }
+          Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+
+      - name: Test client MSI installation and settings
+        shell: pwsh
+        run: |
+          $msi = (Resolve-Path 'artifacts\msi\ConfGTS-0.18.3-x64.msi').Path
+          $installedExe = Join-Path $env:ProgramFiles 'ГТС\ConfGTS\ConfGTS.Client.exe'
+          $startMenu = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\ConfGTS\ConfGTS.lnk'
+          $desktop = Join-Path ([Environment]::GetFolderPath('CommonDesktopDirectory')) 'ConfGTS.lnk'
+          $startupLog = "$env:LOCALAPPDATA\ConfGTS\logs\startup.log"
+          $install = Start-Process msiexec.exe -ArgumentList @('/i', ('"' + $msi + '"'), '/qn', '/norestart') -Wait -PassThru
+          if ($install.ExitCode -ne 0) { throw "Client MSI install failed: $($install.ExitCode)" }
+          foreach ($path in @($installedExe,$startMenu,$desktop)) { if (!(Test-Path $path)) { throw "Missing installed path: $path" } }
+          Remove-Item $startupLog -Force -ErrorAction SilentlyContinue
+          $app = Start-Process $installedExe -ArgumentList '--self-test-settings' -PassThru
+          Start-Sleep -Seconds 10
+          $log = if (Test-Path $startupLog) { Get-Content $startupLog -Raw } else { '' }
+          if ($app.HasExited -or $log -notmatch 'Settings smoke test completed\.') {
+            if (Test-Path $startupLog) { Get-Content $startupLog -Tail 160 }
+            Stop-Process -Id $app.Id -Force -ErrorAction SilentlyContinue
+            throw 'MSI-installed client failed the settings smoke test.'
+          }
+          Stop-Process -Id $app.Id -Force -ErrorAction SilentlyContinue
+          Start-Sleep -Seconds 2
+          $remove = Start-Process msiexec.exe -ArgumentList @('/x', ('"' + $msi + '"'), '/qn', '/norestart') -Wait -PassThru
+          if ($remove.ExitCode -ne 0) { throw "Client MSI uninstall failed: $($remove.ExitCode)" }
+
+      - name: Test client EXE installation and settings
+        shell: pwsh
+        run: |
+          $setup = (Resolve-Path 'artifacts\setup\ConfGTS-Setup-0.18.3-x64.exe').Path
+          $installedExe = Join-Path $env:ProgramFiles 'ГТС\ConfGTS\ConfGTS.Client.exe'
+          $startupLog = "$env:LOCALAPPDATA\ConfGTS\logs\startup.log"
+          $p = Start-Process $setup -ArgumentList @('/quiet','/norestart') -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "Client EXE install failed: $($p.ExitCode)" }
+          if (!(Test-Path $installedExe)) { throw "Client EXE missing after install: $installedExe" }
+          Remove-Item $startupLog -Force -ErrorAction SilentlyContinue
+          $app = Start-Process $installedExe -ArgumentList '--self-test-settings' -PassThru
+          Start-Sleep -Seconds 10
+          $log = if (Test-Path $startupLog) { Get-Content $startupLog -Raw } else { '' }
+          if ($app.HasExited -or $log -notmatch 'Settings smoke test completed\.') {
+            if (Test-Path $startupLog) { Get-Content $startupLog -Tail 160 }
+            Stop-Process -Id $app.Id -Force -ErrorAction SilentlyContinue
+            throw 'EXE-installed client failed the settings smoke test.'
+          }
+          Stop-Process -Id $app.Id -Force -ErrorAction SilentlyContinue
+          Start-Sleep -Seconds 2
+          $p = Start-Process $setup -ArgumentList @('/uninstall','/quiet','/norestart') -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "Client EXE uninstall failed: $($p.ExitCode)" }
+
+      - name: Generate SHA-256
+        shell: pwsh
+        run: |
+          $files = @('artifacts\msi\ConfGTS-0.18.3-x64.msi','artifacts\setup\ConfGTS-Setup-0.18.3-x64.exe')
+          $lines = foreach ($file in $files) {
+            $hash = Get-FileHash $file -Algorithm SHA256
+            "$($hash.Hash.ToLower())  $([IO.Path]::GetFileName($file))"
+          }
+          $lines | Set-Content 'artifacts\SHA256SUMS-client.txt' -Encoding ascii
+          Get-Content 'artifacts\SHA256SUMS-client.txt'
+
+      - name: Upload tested client packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: ConfGTS-Client-0.18.3-tested
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+          path: |
+            artifacts/msi/ConfGTS-0.18.3-x64.msi
+            artifacts/setup/ConfGTS-Setup-0.18.3-x64.exe
+            artifacts/SHA256SUMS-client.txt
+
+      - name: Publish client GitHub Release
+        if: github.ref == 'refs/heads/main'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete v0.18.3 --cleanup-tag --yes 2>$null
+          if ($LASTEXITCODE -ne 0) { Write-Host 'No previous v0.18.3 release to delete.' }
+          gh release create v0.18.3 'artifacts\msi\ConfGTS-0.18.3-x64.msi' 'artifacts\setup\ConfGTS-Setup-0.18.3-x64.exe' 'artifacts\SHA256SUMS-client.txt' --target '${{ github.sha }}' --title 'ConfGTS Client 0.18.3' --notes 'Клиентская сборка 0.18.3. Полностью заменена страница «Настройки устройств»: из билда удалён NAudio, страница не загружает COM/MediaCapture или драйверы и проходит отдельный smoke-тест навигации после установки MSI и EXE. На экране входа добавлен выбор локальной учетной записи ConfGTS или доменной учетной записи Active Directory.'

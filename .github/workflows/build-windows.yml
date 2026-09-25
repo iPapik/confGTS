@@ -1,8 +1,6 @@
-name: Build ConfGTS 0.18.2 client and server
+name: Build full ConfGTS client and server (manual)
 
 on:
-  push:
-    branches: [ main, 'beta-*' ]
   workflow_dispatch:
 
 permissions:

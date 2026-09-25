@@ -30,6 +30,7 @@ public sealed class MainWindow : Window
     private readonly Grid _loginView = new();
     private readonly Grid _dashboardView = new();
     private readonly TextBox _loginBox = new();
+    private readonly ComboBox _authModeBox = new();
     private readonly PasswordBox _passwordBox = new();
     private readonly Button _loginButton = new();
     private readonly TextBlock _loginError = new();
@@ -159,8 +160,34 @@ public sealed class MainWindow : Window
             Margin = new Thickness(0, 14, 0, 16)
         });
 
+        panel.Children.Add(Label("Тип учетной записи"));
+        _authModeBox.ItemsSource = new[]
+        {
+            "Автоматически",
+            "Локальная учетная запись ConfGTS",
+            "Доменная учетная запись (Active Directory)"
+        };
+        _authModeBox.SelectedIndex = 0;
+        _authModeBox.MinHeight = 46;
+        _authModeBox.HorizontalAlignment = HorizontalAlignment.Stretch;
+        _authModeBox.Background = Brush("#FFFFFF");
+        _authModeBox.BorderBrush = Brush(Line);
+        _authModeBox.BorderThickness = new Thickness(1);
+        _authModeBox.CornerRadius = new CornerRadius(10);
+        _authModeBox.SelectionChanged += (_, _) => UpdateLoginModeUi();
+        panel.Children.Add(_authModeBox);
+
+        panel.Children.Add(new TextBlock
+        {
+            Text = "Локальные учетные записи создаются администратором ConfGTS на сервере и не требуют учетной записи домена.",
+            FontSize = 11,
+            Foreground = Brush(Muted),
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, -2, 0, 2)
+        });
+
         panel.Children.Add(Label("Логин"));
-        _loginBox.PlaceholderText = "Доменная учетная запись";
+        _loginBox.PlaceholderText = "Доменный или локальный логин";
         _loginBox.IsSpellCheckEnabled = false;
         _loginBox.IsTextPredictionEnabled = false;
         StyleLoginTextBox(_loginBox);
@@ -269,7 +296,7 @@ public sealed class MainWindow : Window
 
         panel.Children.Add(new TextBlock
         {
-            Text = "Версия 0.18.2 beta  |  © ГТС, 2026",
+            Text = "Версия 0.18.3 beta  |  © ГТС, 2026",
             FontSize = 11,
             Foreground = Brush("#8A9BAC"),
             HorizontalAlignment = HorizontalAlignment.Center,
@@ -1000,7 +1027,9 @@ public sealed class MainWindow : Window
 
         try
         {
-            await _api.LoginAsync(_loginBox.Text.Trim(), _passwordBox.Password);
+            var authType = SelectedAuthType();
+            StartupDiagnostics.Log("Login requested. Auth type: " + authType);
+            await _api.LoginAsync(_loginBox.Text.Trim(), _passwordBox.Password, authType);
 
             _loginView.Visibility = Visibility.Collapsed;
             _dashboardView.Visibility = Visibility.Visible;
@@ -1018,6 +1047,32 @@ public sealed class MainWindow : Window
         {
             _loginButton.IsEnabled = true;
         }
+    }
+
+    private string SelectedAuthType() => _authModeBox.SelectedIndex switch
+    {
+        1 => "local",
+        2 => "domain",
+        _ => "auto"
+    };
+
+    private void UpdateLoginModeUi()
+    {
+        _loginBox.PlaceholderText = SelectedAuthType() switch
+        {
+            "local" => "Локальный логин ConfGTS",
+            "domain" => "Доменный логин (например ivanov)",
+            _ => "Доменный или локальный логин"
+        };
+    }
+
+    internal async Task RunSettingsSmokeTestAsync()
+    {
+        StartupDiagnostics.Log("Settings smoke test requested.");
+        _loginView.Visibility = Visibility.Collapsed;
+        _dashboardView.Visibility = Visibility.Visible;
+        await ShowInlineSettingsAsync();
+        StartupDiagnostics.Log("Settings smoke test completed.");
     }
 
     private async void LogoutButton_Click(object sender, RoutedEventArgs e)
