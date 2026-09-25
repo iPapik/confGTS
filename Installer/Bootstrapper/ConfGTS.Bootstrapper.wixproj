@@ -1,7 +1,7 @@
 <Project Sdk="WixToolset.Sdk/5.0.2">
   <PropertyGroup>
     <OutputType>Bundle</OutputType>
-    <OutputName>ConfGTS-Setup-0.16.1-x64</OutputName>
+    <OutputName>ConfGTS-Setup-0.17.0-x64</OutputName>
     <MsiDir Condition="'$(MsiDir)'==''">$(MSBuildThisFileDirectory)..\..\artifacts\msi</MsiDir>
   </PropertyGroup>
   <ItemGroup>
