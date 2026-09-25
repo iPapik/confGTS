@@ -15,6 +15,8 @@ public partial class App : Application
             StartupDiagnostics.Log("App constructor started.");
             InitializeComponent();
             UnhandledException += App_UnhandledException;
+            AppDomain.CurrentDomain.UnhandledException += CurrentDomain_UnhandledException;
+            TaskScheduler.UnobservedTaskException += TaskScheduler_UnobservedTaskException;
             StartupDiagnostics.Log("App resources initialized.");
         }
         catch (Exception ex)
@@ -44,7 +46,28 @@ public partial class App : Application
 
     private static void App_UnhandledException(object sender, Microsoft.UI.Xaml.UnhandledExceptionEventArgs e)
     {
-        StartupDiagnostics.Log("Unhandled WinUI exception.", e.Exception);
+        StartupDiagnostics.Log("Unhandled WinUI exception (recovered).", e.Exception);
+
+        // WinUI terminates the process by default when this flag is not set.
+        // Device/settings UI can surface layout/dispatcher exceptions after the
+        // original click handler has already returned, so the surrounding
+        // try/catch in MainWindow cannot catch those. Keep the client alive and
+        // record the full exception instead.
+        e.Handled = true;
+    }
+
+    private static void TaskScheduler_UnobservedTaskException(object? sender, UnobservedTaskExceptionEventArgs e)
+    {
+        StartupDiagnostics.Log("Unobserved task exception (observed).", e.Exception);
+        e.SetObserved();
+    }
+
+    private static void CurrentDomain_UnhandledException(object sender, UnhandledExceptionEventArgs e)
+    {
+        if (e.ExceptionObject is Exception ex)
+            StartupDiagnostics.Log("AppDomain unhandled exception. IsTerminating=" + e.IsTerminating, ex);
+        else
+            StartupDiagnostics.Log("AppDomain unhandled non-Exception object. IsTerminating=" + e.IsTerminating);
     }
 
     private static void ShowFatalError(Exception ex)
