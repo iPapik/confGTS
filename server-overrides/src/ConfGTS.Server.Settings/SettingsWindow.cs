@@ -98,7 +98,7 @@ public sealed class SettingsWindow : Window
 
         var footer = new TextBlock
         {
-            Text = "ConfGTS Server Settings 0.16.1  |  Городские тепловые сети",
+            Text = "ConfGTS Server Settings 0.17.0  |  Городские тепловые сети",
             Foreground = Brush("#8194A7"),
             FontSize = 12,
             HorizontalAlignment = HorizontalAlignment.Center,
@@ -136,6 +136,7 @@ public sealed class SettingsWindow : Window
         _schemeBox.MinHeight = 48;
         _schemeBox.SelectionChanged += (_, _) => UpdatePublicUrl();
         panel.Children.Add(_schemeBox);
+        panel.Children.Add(Hint("При выборе HTTPS ConfGTS автоматически создаст серверный сертификат с DNS-именем и локальными IPv4-адресами, если собственный сертификат ещё не настроен."));
 
         panel.Children.Add(Label("Адрес для клиентов"));
         _publicUrl.FontSize = 16;
@@ -203,7 +204,7 @@ public sealed class SettingsWindow : Window
         buttons.Children.Add(open);
         panel.Children.Add(buttons);
 
-        panel.Children.Add(Hint("Если DNS-имя не разрешается на клиентском ПК, создайте A-запись в корпоративном DNS либо используйте фактическое имя компьютера сервера. Клиент 0.16.1 также умеет находить ConfGTS по указанному логическому имени через локальное UDP-обнаружение."));
+        panel.Children.Add(Hint("Для работы по имени во всех подсетях рекомендуется A-запись в корпоративном DNS. Клиент 0.17.0 также умеет находить ConfGTS в своей локальной сети по логическому имени. Для автоматически созданного HTTPS-сертификата клиент использует доверие по отпечатку при первом подключении."));
         return panel;
     }
 
