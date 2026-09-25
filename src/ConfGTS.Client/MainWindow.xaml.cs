@@ -782,7 +782,7 @@ public sealed class MainWindow : Window
             // ConfGTS is installed under Program Files, which is not writable by a
             // standard user and can make EnsureCoreWebView2Async fail or return
             // without an initialized CoreWebView2 instance.
-            var webViewDataFolder = Path.Combine(
+            var webViewDataFolder = System.IO.Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "ConfGTS",
                 "WebView2");
