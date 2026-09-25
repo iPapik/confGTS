@@ -9,6 +9,7 @@ using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Shapes;
 using Microsoft.Web.WebView2.Core;
+using System.Runtime.InteropServices;
 using Windows.Graphics;
 using Windows.System;
 using WinRT.Interop;
@@ -778,7 +779,8 @@ public sealed class MainWindow : Window
 
         try
         {
-            await web.EnsureCoreWebView2Async();
+            var env = await CreateWebView2EnvironmentAsync();
+            await web.EnsureCoreWebView2Async(env);
             if (web.CoreWebView2 is null)
                 throw new InvalidOperationException("WebView2 Runtime не инициализирован.");
 
@@ -822,9 +824,59 @@ public sealed class MainWindow : Window
         }
         catch (Exception ex)
         {
-            status.Text = "Не удалось запустить конференцию: " + ex.Message;
+            StartupDiagnostics.Log("Conference WebView2 startup failed.", ex);
+            status.Text = "Не удалось запустить конференцию: " + FriendlyWebView2Error(ex);
             status.Foreground = Brush("#B54242");
         }
+    }
+
+    private static async Task<CoreWebView2Environment> CreateWebView2EnvironmentAsync()
+    {
+        try
+        {
+            var version = CoreWebView2Environment.GetAvailableBrowserVersionString();
+            StartupDiagnostics.Log("WebView2 Runtime detected: " + version);
+        }
+        catch (Exception ex)
+        {
+            StartupDiagnostics.Log("WebView2 Runtime discovery failed.", ex);
+        }
+
+        var userData = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "ConfGTS",
+            "WebView2");
+        Directory.CreateDirectory(userData);
+
+        try
+        {
+            return await CoreWebView2Environment.CreateAsync(null, userData);
+        }
+        catch (Exception ex) when (IsMissingWebView2Runtime(ex))
+        {
+            throw new InvalidOperationException(
+                "Microsoft Edge WebView2 Runtime не установлен или поврежден. " +
+                "Установите WebView2 Runtime и перезапустите ConfGTS.", ex);
+        }
+    }
+
+    private static bool IsMissingWebView2Runtime(Exception ex)
+    {
+        const int HResultFileNotFound = unchecked((int)0x80070002);
+        const int HResultPathNotFound = unchecked((int)0x80070003);
+        return ex is FileNotFoundException ||
+               ex is DllNotFoundException ||
+               ex.HResult == HResultFileNotFound ||
+               ex.HResult == HResultPathNotFound ||
+               ex.Message.Contains("WebView2", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string FriendlyWebView2Error(Exception ex)
+    {
+        if (IsMissingWebView2Runtime(ex))
+            return "Microsoft Edge WebView2 Runtime не найден. Переустановите клиент ConfGTS или установите WebView2 Runtime.";
+
+        return ex.Message;
     }
 
     private async Task ConfigureConferenceDocumentAsync(WebView2 web, string roomId)
@@ -1011,7 +1063,15 @@ public sealed class MainWindow : Window
 
     private async void MediaSettingsButton_Click(object sender, RoutedEventArgs e)
     {
-        await ShowInlineSettingsAsync();
+        try
+        {
+            await ShowInlineSettingsAsync();
+        }
+        catch (Exception ex)
+        {
+            StartupDiagnostics.Log("Media settings failed to open.", ex);
+            await ShowErrorDialogAsync("Настройки устройств", "Не удалось открыть настройки устройств: " + ex.Message);
+        }
     }
 
     private async Task ShowInlineSettingsAsync()
@@ -1024,9 +1084,19 @@ public sealed class MainWindow : Window
         if (_dashboardMainScroll is not null)
             _dashboardMainScroll.Visibility = Visibility.Collapsed;
 
-        _mediaSettingsPanel = new MediaSettingsPanel();
-        _mediaSettingsPanel.CloseRequested += async (_, _) => await CloseInlineSettingsAsync();
-        _mainContentHost.Children.Add(_mediaSettingsPanel);
+        try
+        {
+            _mediaSettingsPanel = new MediaSettingsPanel();
+            _mediaSettingsPanel.CloseRequested += async (_, _) => await CloseInlineSettingsAsync();
+            _mainContentHost.Children.Add(_mediaSettingsPanel);
+        }
+        catch
+        {
+            _mediaSettingsPanel = null;
+            if (_dashboardMainScroll is not null)
+                _dashboardMainScroll.Visibility = Visibility.Visible;
+            throw;
+        }
     }
 
     private async Task CloseInlineSettingsAsync()
@@ -1045,6 +1115,28 @@ public sealed class MainWindow : Window
 
         if (_dashboardMainScroll is not null)
             _dashboardMainScroll.Visibility = Visibility.Visible;
+    }
+
+    private async Task ShowErrorDialogAsync(string title, string message)
+    {
+        try
+        {
+            var dialog = new ContentDialog
+            {
+                XamlRoot = (Content as FrameworkElement)?.XamlRoot,
+                Title = title,
+                Content = new TextBlock
+                {
+                    Text = message,
+                    TextWrapping = TextWrapping.Wrap
+                },
+                CloseButtonText = "Закрыть"
+            };
+            await dialog.ShowAsync();
+        }
+        catch
+        {
+        }
     }
 
     private async void SettingsButton_Click(object sender, RoutedEventArgs e)
