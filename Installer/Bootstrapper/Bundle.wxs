@@ -3,7 +3,7 @@
      xmlns:bal="http://wixtoolset.org/schemas/v4/wxs/bal">
   <Bundle Name="ConfGTS"
           Manufacturer="СГМУП Городские тепловые сети"
-          Version="0.17.0"
+          Version="0.18.0"
           UpgradeCode="9C5D2F51-7B95-4D1E-9842-83450C9315E7">
     <BootstrapperApplication>
       <bal:WixStandardBootstrapperApplication
@@ -14,7 +14,7 @@
           SuppressOptionsUI="yes" />
     </BootstrapperApplication>
     <Chain>
-      <MsiPackage SourceFile="!(bindpath.msi)\ConfGTS-0.17.0-x64.msi" Vital="yes" />
+      <MsiPackage SourceFile="!(bindpath.msi)\ConfGTS-0.18.0-x64.msi" Vital="yes" />
     </Chain>
   </Bundle>
 </Wix>
