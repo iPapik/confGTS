@@ -58,6 +58,16 @@ foreach ($entry in $replacements.GetEnumerator()) {
 }
 Set-Content $uiPath $ui -Encoding UTF8 -NoNewline
 
+# Apply the same palette to server admin pages that contain a few
+# hard-coded legacy orange/grey values outside ui.go.
+Get-ChildItem (Join-Path $root "server") -Filter *.go -File | ForEach-Object {
+    $text = Get-Content $_.FullName -Raw -Encoding UTF8
+    foreach ($entry in $replacements.GetEnumerator()) {
+        $text = $text.Replace($entry.Key, $entry.Value)
+    }
+    Set-Content $_.FullName $text -Encoding UTF8 -NoNewline
+}
+
 $versionTargets = @(
     (Join-Path $root "server"),
     (Join-Path $root "Installer\Server"),
