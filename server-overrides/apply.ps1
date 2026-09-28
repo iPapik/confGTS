@@ -25,22 +25,26 @@ if ($patchedStore -ne $store) {
 # metadata for the conference session. Client-side MediaRecorder normally calls
 # /api/recordings/finalize, but this server-side guard prevents an unfinished
 # archive entry after a crash, power loss, or abrupt client termination.
-$sessionEndPattern = '(?m)^(\t)lr\.Session = nil\r?\n\1lr\.Recorder = ""'
-$sessionEndReplacement = @'
-	for i := range s.state.Recordings {
-		if s.state.Recordings[i].SessionID == id && s.state.Recordings[i].FinishedAt == nil {
-			s.state.Recordings[i].FinishedAt = &now
-		}
-	}
-	lr.Session = nil
-	lr.Recorder = ""
-'@
+$sessionEndPattern = '(?s)(func \(s \*Store\) endIfEmptyLocked\(roomID string, lr \*LiveRoom\) \{.*?)(\r?\n\tlr\.Session = nil\r?\n\tlr\.Recorder = "")'
 $sessionEndRegex = [regex]::new($sessionEndPattern)
 $sessionEndMatches = $sessionEndRegex.Matches($store)
 if ($sessionEndMatches.Count -ne 1) {
-    throw "Expected exactly one ConfGTS room-session end anchor, found $($sessionEndMatches.Count)."
+    throw "Expected exactly one ConfGTS endIfEmptyLocked recording anchor, found $($sessionEndMatches.Count)."
 }
-$store = $sessionEndRegex.Replace($store, $sessionEndReplacement.TrimEnd("`r","`n"), 1)
+$store = $sessionEndRegex.Replace(
+    $store,
+    {
+        param($m)
+        $m.Groups[1].Value +
+        [Environment]::NewLine +
+        "`tfor i := range s.state.Recordings {" + [Environment]::NewLine +
+        "`t`tif s.state.Recordings[i].SessionID == id && s.state.Recordings[i].FinishedAt == nil {" + [Environment]::NewLine +
+        "`t`t`ts.state.Recordings[i].FinishedAt = &now" + [Environment]::NewLine +
+        "`t`t}" + [Environment]::NewLine +
+        "`t}" +
+        $m.Groups[2].Value
+    },
+    1)
 
 Set-Content $storePath $store -Encoding UTF8 -NoNewline
 
