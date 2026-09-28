@@ -86,6 +86,9 @@ jobs:
           if ($web -notmatch 'time\.Since\(\*existing\.FinishedAt\) <= 30\*time\.Second') {
             throw "Final recording-chunk grace period after admin stop is missing."
           }
+          if ($web -notmatch 'CanUploadEndedSessionRecording' -or $store -notmatch 'func \(s \*Store\) CanUploadEndedSessionRecording') {
+            throw "Immediate-admin-stop final-chunk authorization is missing."
+          }
           Write-Host 'Automatic recording lifecycle is present.' -ForegroundColor Green
 
       - name: Format and test server source
