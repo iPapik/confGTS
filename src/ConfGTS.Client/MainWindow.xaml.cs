@@ -289,7 +289,7 @@ public sealed class MainWindow : Window
 
         panel.Children.Add(new TextBlock
         {
-            Text = "Версия 0.18.6 beta  |  © ГТС, 2026",
+            Text = "Версия 0.18.7 beta  |  © ГТС, 2026",
             FontSize = 11,
             Foreground = Brush("#8A9BAC"),
             HorizontalAlignment = HorizontalAlignment.Center,
