@@ -842,8 +842,8 @@ public sealed class MainWindow : Window
           document.getElementById(nativeStyle.id)?.remove();
           document.head.appendChild(nativeStyle);
 
-          const roomId = {{roomJson}};
-          const nativePrefs = {{mediaJson}};
+          const roomId = {{{roomJson}}};
+          const nativePrefs = {{{mediaJson}}};
           const emptyStream = () => new MediaStream();
 
           const findBrowserDevice = async (kind, wantedName) => {
