@@ -269,7 +269,7 @@ public sealed class MainWindow : Window
 
         panel.Children.Add(new TextBlock
         {
-            Text = "Версия 0.18.5 beta  |  © ГТС, 2026",
+            Text = "Версия 0.18.6 beta  |  © ГТС, 2026",
             FontSize = 11,
             Foreground = Brush("#8A9BAC"),
             HorizontalAlignment = HorizontalAlignment.Center,
@@ -698,9 +698,7 @@ public sealed class MainWindow : Window
         host.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         host.RowDefinitions.Add(new RowDefinition());
 
-        var header = new Grid { Margin = new Thickness(0, 0, 0, 12) };
-        header.ColumnDefinitions.Add(new ColumnDefinition());
-        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var header = new Grid { Margin = new Thickness(0, 0, 0, 8) };
 
         var titlePanel = new StackPanel { Spacing = 2 };
         titlePanel.Children.Add(new TextBlock
@@ -712,28 +710,13 @@ public sealed class MainWindow : Window
         });
         var status = new TextBlock
         {
-            Text = "Подключение к конференции…",
+            Text = "",
             FontSize = 12,
-            Foreground = Brush(Muted)
+            Foreground = Brush("#B54242"),
+            Visibility = Visibility.Collapsed
         };
         titlePanel.Children.Add(status);
         header.Children.Add(titlePanel);
-
-        var leave = new Button
-        {
-            Content = "Выйти из конференции",
-            MinHeight = 42,
-            Padding = new Thickness(16, 9, 16, 9),
-            Background = Brush("#FFF1F0"),
-            Foreground = Brush("#A72E2E"),
-            BorderBrush = Brush("#F3C7C4"),
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(10)
-        };
-        ApplyButtonVisuals(leave, "#FFF1F0", "#FDE3E1", "#F9D2CF", "#A72E2E");
-        leave.Click += async (_, _) => await LeaveConferenceAsync(true);
-        Grid.SetColumn(leave, 1);
-        header.Children.Add(leave);
         host.Children.Add(header);
 
         var web = new WebView2
@@ -754,16 +737,31 @@ public sealed class MainWindow : Window
             // ConfGTS is installed under Program Files, which is not writable by a
             // standard user and can make EnsureCoreWebView2Async fail or return
             // without an initialized CoreWebView2 instance.
+            var server = new Uri(_api.EffectiveBaseUrl);
             var webViewDataFolder = System.IO.Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "ConfGTS",
-                "WebView2");
+                "WebView2",
+                server.Host.Replace(':', '_') + "_" + server.Port);
             Directory.CreateDirectory(webViewDataFolder);
+
+            CoreWebView2EnvironmentOptions? webViewOptions = null;
+            if (server.Scheme.Equals("http", StringComparison.OrdinalIgnoreCase))
+            {
+                var origin = server.GetLeftPart(UriPartial.Authority);
+                webViewOptions = new CoreWebView2EnvironmentOptions
+                {
+                    AdditionalBrowserArguments =
+                        "--unsafely-treat-insecure-origin-as-secure=" + origin +
+                        " --autoplay-policy=no-user-gesture-required"
+                };
+                StartupDiagnostics.Log("Conference WebView will trust configured HTTP origin for media APIs: " + origin);
+            }
 
             var webViewEnvironment = await CoreWebView2Environment.CreateWithOptionsAsync(
                 browserExecutableFolder: null,
                 userDataFolder: webViewDataFolder,
-                options: null);
+                options: webViewOptions);
 
             StartupDiagnostics.Log(
                 "WebView2 environment created. Runtime=" +
@@ -778,12 +776,12 @@ public sealed class MainWindow : Window
             web.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
             web.CoreWebView2.PermissionRequested += ConferencePermissionRequested;
             web.CoreWebView2.ServerCertificateErrorDetected += ConferenceCertificateErrorDetected;
+            web.CoreWebView2.WebMessageReceived += ConferenceWebMessageReceived;
 
             var session = _api.GetSessionCookie();
             if (session is null || string.IsNullOrWhiteSpace(session.Value))
                 throw new InvalidOperationException("Сессия авторизации отсутствует. Войдите в клиент повторно.");
 
-            var server = new Uri(_api.EffectiveBaseUrl);
             var cookie = web.CoreWebView2.CookieManager.CreateCookie("vc_session", session.Value, server.Host, "/");
             cookie.IsHttpOnly = true;
             cookie.IsSecure = server.Scheme.Equals("https", StringComparison.OrdinalIgnoreCase);
@@ -795,19 +793,21 @@ public sealed class MainWindow : Window
                 {
                     status.Text = "Не удалось открыть конференцию: " + args.WebErrorStatus;
                     status.Foreground = Brush("#B54242");
+                    status.Visibility = Visibility.Visible;
                     return;
                 }
 
                 try
                 {
                     await ConfigureConferenceDocumentAsync(web, room.Id);
-                    status.Text = "Конференция открыта. Подключение работает даже без камеры, микрофона или динамиков.";
-                    status.Foreground = Brush("#278E55");
+                    status.Text = "";
+                    status.Visibility = Visibility.Collapsed;
                 }
                 catch (Exception ex)
                 {
                     status.Text = "Ошибка входа в конференцию: " + ex.Message;
                     status.Foreground = Brush("#B54242");
+                    status.Visibility = Visibility.Visible;
                 }
             };
 
@@ -817,6 +817,7 @@ public sealed class MainWindow : Window
         {
             status.Text = "Не удалось запустить конференцию: " + ex.Message;
             status.Foreground = Brush("#B54242");
+            status.Visibility = Visibility.Visible;
         }
     }
 
@@ -1055,6 +1056,20 @@ public sealed class MainWindow : Window
             _dashboardMainScroll.Visibility = Visibility.Visible;
             await RefreshDashboardAsync();
             StartDashboardTimer();
+        }
+    }
+
+    private async void ConferenceWebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
+    {
+        try
+        {
+            var message = e.TryGetWebMessageAsString();
+            if (string.Equals(message, "leave-conference", StringComparison.Ordinal))
+                await LeaveConferenceAsync(true);
+        }
+        catch (Exception ex)
+        {
+            StartupDiagnostics.Log("Conference WebView message handling failed.", ex);
         }
     }
 
