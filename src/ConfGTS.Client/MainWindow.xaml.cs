@@ -842,8 +842,8 @@ public sealed class MainWindow : Window
           document.getElementById(nativeStyle.id)?.remove();
           document.head.appendChild(nativeStyle);
 
-          const roomId = {{{roomJson}}};
-          const nativePrefs = {{{mediaJson}}};
+          const roomId = __CONFGTS_ROOM_JSON__;
+          const nativePrefs = __CONFGTS_MEDIA_JSON__;
           const emptyStream = () => new MediaStream();
 
           const findBrowserDevice = async (kind, wantedName) => {
@@ -990,6 +990,9 @@ public sealed class MainWindow : Window
             });
         })();
         """;
+        script = script
+            .Replace("__CONFGTS_ROOM_JSON__", roomJson, StringComparison.Ordinal)
+            .Replace("__CONFGTS_MEDIA_JSON__", mediaJson, StringComparison.Ordinal);
         await web.ExecuteScriptAsync(script);
     }
 
