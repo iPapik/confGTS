@@ -314,6 +314,50 @@ if ($leaveRoomRegex.IsMatch($ui)) {
     throw 'ConfGTS leaveRoom recording-flush patch was not applied.'
 }
 
+
+# Store.Join normalizes domain usernames; normalize the browser-side username too
+# so the first participant actually starts the automatic recorder.
+$updateStateOld = @'
+function updateStateUI(){if(!roomState)return;let ps=roomState.participants||[];$('#participants').innerHTML=participantHTML(ps);$('#previewParticipants').innerHTML=participantHTML(ps);let isRec=roomState.recorder===ME.username.toLowerCase();$('#recState').innerHTML=isRec?'<span class="pill rec"><span class="rec-dot"></span>Автозапись с этого ПК</span>':'<span class="pill"><span class="rec-dot"></span>Автозапись конференции</span>';if(isRec&&!recorder)startRecording();if(!isRec&&recorder)stopRecording();}
+'@
+$updateStateNew = @'
+function updateStateUI(){if(!roomState)return;let ps=roomState.participants||[];$('#participants').innerHTML=participantHTML(ps);$('#previewParticipants').innerHTML=participantHTML(ps);let norm=u=>{u=String(u||'').trim().toLowerCase();if(u.includes('\\'))u=u.split('\\').pop();if(u.endsWith('@teplo.local'))u=u.slice(0,-'@teplo.local'.length);return u};let isRec=norm(roomState.recorder)===norm(ME.username);$('#recState').innerHTML=isRec?'<span class="pill rec"><span class="rec-dot"></span>Автозапись с этого ПК</span>':'<span class="pill"><span class="rec-dot"></span>Автозапись конференции</span>';if(isRec&&!recorder)startRecording();if(!isRec&&recorder)stopRecording();}
+'@
+if ($ui.Contains($updateStateOld.Trim())) {
+    $ui = $ui.Replace($updateStateOld.Trim(), $updateStateNew.Trim())
+} elseif (-not $ui.Contains('norm(roomState.recorder)===norm(ME.username)')) {
+    throw 'Recorder username normalization patch was not applied.'
+}
+
+# Recording must also work when this PC has no microphone. In that case the
+# server still receives the conference video/screen composition without audio.
+$startRecordingPattern = '(?s)async function startRecording\(\)\{.*?\}\r?\nfunction drawRecording'
+$startRecordingReplacement = @'
+async function startRecording(){if(recorder||!roomState?.session)return;if(typeof MediaRecorder==='undefined'){console.warn('ConfGTS: MediaRecorder unavailable');return}captureId='cap_'+Date.now()+'_'+Math.random().toString(16).slice(2);recordPart=0;recorderCanvas=document.createElement('canvas');recorderCanvas.width=1280;recorderCanvas.height=720;recorderCtx=recorderCanvas.getContext('2d');audioCtx=null;audioDest=null;audioSeen=new WeakSet();let cs=recorderCanvas.captureStream(15);try{let AC=window.AudioContext||window.webkitAudioContext;if(AC){audioCtx=new AC();audioDest=audioCtx.createMediaStreamDestination();document.querySelectorAll('.video-tile video').forEach(v=>{if(v.srcObject)addAudioStream(v.srcObject)});audioDest.stream.getAudioTracks().forEach(t=>cs.addTrack(t))}}catch(e){console.warn('ConfGTS recording audio mix unavailable',e);audioCtx=null;audioDest=null}let mime=MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus')?'video/webm;codecs=vp8,opus':'video/webm';try{recorder=new MediaRecorder(cs,{mimeType:mime,videoBitsPerSecond:1800000})}catch(e){console.error('ConfGTS recorder start failed',e);recorder=null;return}drawRecording();recorder.ondataavailable=e=>{if(e.data&&e.data.size>0){let part=recordPart++;recordQueue=recordQueue.then(()=>uploadChunk(e.data,part)).catch(console.warn)}};recorder.onstop=()=>{recordQueue=recordQueue.then(()=>api('/api/recordings/finalize',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({capture_id:captureId})})).catch(()=>{});if(audioCtx)audioCtx.close();audioCtx=null;audioDest=null;recorder=null};recorder.start(5000)}
+function drawRecording
+'@
+$startRecordingRegex = [regex]::new($startRecordingPattern)
+if ($startRecordingRegex.IsMatch($ui)) {
+    $ui = $startRecordingRegex.Replace($ui, $startRecordingReplacement.Trim(), 1)
+} elseif (-not $ui.Contains('ConfGTS recording audio mix unavailable')) {
+    throw 'ConfGTS startRecording patch was not applied.'
+}
+
+# A server-side Stop must end the active conference on every connected client.
+$stateLoopPattern = '(?s)async function heartbeat\(\)\{.*?\}\r?\nasync function refreshRoomState\(\)\{.*?\}\r?\nfunction participantHTML'
+$stateLoopReplacement = @'
+async function handleConferenceStopped(){stopLoops(false);await stopRecording();for(let [k,p] of peers){try{p.close()}catch{}}peers.clear();document.querySelectorAll('.video-tile').forEach(x=>x.remove());roomState=null;$('#conference').style.display='none';$('#joinBtn').style.display='inline-flex';$('#leaveBtn').style.display='none';if(window.chrome?.webview){window.chrome.webview.postMessage('leave-conference')}else{await loadRooms()}}
+async function heartbeat(){if(!currentRoom||!roomState)return;try{let s=await api('/api/rooms/'+currentRoom+'/heartbeat',{method:'POST'});if(!s.session){await handleConferenceStopped();return}roomState=s;updateStateUI();await reconcilePeers()}catch(e){console.warn(e)}}
+async function refreshRoomState(){if(!currentRoom)return;try{let s=await api('/api/rooms/'+currentRoom+'/state');if(roomState){if(!s.session){await handleConferenceStopped();return}roomState=s;updateStateUI();await reconcilePeers()}else{let st={};st[currentRoom]={active:!!s.session,participants:(s.participants||[]).length};renderRooms(st);$('#previewParticipants').innerHTML=participantHTML(s.participants||[])}}catch(e){console.warn(e)}}
+function participantHTML
+'@
+$stateLoopRegex = [regex]::new($stateLoopPattern)
+if ($stateLoopRegex.IsMatch($ui)) {
+    $ui = $stateLoopRegex.Replace($ui, $stateLoopReplacement.Trim(), 1)
+} elseif (-not $ui.Contains("window.chrome?.webview.postMessage('leave-conference')")) {
+    throw 'Server stop client-disconnect patch was not applied.'
+}
+
 # Reduce chunk duration so an unexpected process loss can only lose a small tail.
 $ui = $ui.Replace('recorder.start(15000)', 'recorder.start(5000)')
 
@@ -338,12 +382,12 @@ $versionTargets = @(
 foreach ($target in $versionTargets) {
     if (Test-Path $target -PathType Leaf) {
         $text = Get-Content $target -Raw -Encoding UTF8
-        $text = $text.Replace("0.16.0", "0.18.8").Replace("0.16.1", "0.18.8").Replace("0.17.0", "0.18.8").Replace("0.18.0", "0.18.8").Replace("0.18.1", "0.18.8").Replace("0.18.0", "0.18.8").Replace("0.18.1", "0.18.8")
+        $text = $text.Replace("0.16.0", "0.18.8").Replace("0.16.1", "0.18.8").Replace("0.17.0", "0.18.8").Replace("0.18.7", "0.18.8").Replace("0.18.0", "0.18.8").Replace("0.18.1", "0.18.8").Replace("0.18.0", "0.18.8").Replace("0.18.1", "0.18.8")
         Set-Content $target $text -Encoding UTF8 -NoNewline
     } elseif (Test-Path $target -PathType Container) {
         Get-ChildItem $target -Recurse -File -Include *.go,*.cs,*.xaml,*.csproj,*.wxs,*.wixproj,*.ps1 | ForEach-Object {
             $text = Get-Content $_.FullName -Raw -Encoding UTF8
-            if ($text.Contains("0.16.0") -or $text.Contains("0.16.1") -or $text.Contains("0.17.0") -or $text.Contains("0.18.0") -or $text.Contains("0.18.1")) {
+            if ($text.Contains("0.16.0") -or $text.Contains("0.16.1") -or $text.Contains("0.17.0") -or $text.Contains("0.18.0") -or $text.Contains("0.18.1") -or $text.Contains("0.18.7")) {
                 $text = $text.Replace("0.16.0", "0.18.8").Replace("0.16.1", "0.18.8").Replace("0.17.0", "0.18.8")
                 Set-Content $_.FullName $text -Encoding UTF8 -NoNewline
             }
