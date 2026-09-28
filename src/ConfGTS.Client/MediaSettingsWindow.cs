@@ -30,7 +30,6 @@ public sealed class MediaSettingsPanel : Grid
     private readonly TextBlock _microphoneStatus = new();
     private readonly TextBlock _speakerStatus = new();
     private readonly TextBlock _cameraStatus = new();
-    private readonly TextBlock _status = new();
     private readonly Button _refreshButton = new();
 
     private List<DeviceChoice> _microphoneDevices = [];
@@ -317,8 +316,6 @@ public sealed class MediaSettingsPanel : Grid
 
         _loading = true;
         _refreshButton.IsEnabled = false;
-        _status.Text = "Поиск устройств…";
-        _status.Foreground = Brush(Muted);
 
         try
         {
@@ -365,8 +362,6 @@ public sealed class MediaSettingsPanel : Grid
                 : $"Найдено камер: {_cameraDevices.Count}.";
 
             SyncSelectedValues();
-            _status.Text = "Устройства обновлены. Выбранные устройства отображаются в полях и сохраняются автоматически.";
-            _status.Foreground = Brush("#278E55");
         }
         catch (Exception ex)
         {
@@ -374,8 +369,6 @@ public sealed class MediaSettingsPanel : Grid
             EnsureEmptyPlaceholder(_microphone, "Микрофон не найден");
             EnsureEmptyPlaceholder(_speaker, "Динамики / наушники не найдены");
             EnsureEmptyPlaceholder(_camera, "Камера не найдена");
-            _status.Text = "Не удалось получить часть устройств. Это не мешает входу в конференцию.";
-            _status.Foreground = Brush("#B25C28");
         }
         finally
         {
