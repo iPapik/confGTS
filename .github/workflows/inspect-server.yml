@@ -56,15 +56,41 @@ jobs:
           }
           Write-Host 'Conference can join without local media and room selection is race-safe.' -ForegroundColor Green
 
-      - name: Print recording implementation
+      - name: Validate automatic conference recording
         shell: pwsh
         run: |
-          Write-Host '=== UI APP JS ==='
-          Get-Content '.\server\ui.go' | Select-Object -First 55
-          Write-Host '=== RECORDING STORE ==='
-          Select-String -Path '.\server\store.go' -Pattern 'StartOrGetRecording|AppendRecording|FinalizeRecording|RecordingPath|RoomStatus|Join\(|Leave\(|Heartbeat\(' -Context 5,80
-          Write-Host '=== RECORDING TYPES ==='
-          Select-String -Path '.\server\types.go' -Pattern 'type Recording|type RoomSession|type Participant|type LiveRoom' -Context 0,35
+          $ui = Get-Content '.\server\ui.go' -Raw -Encoding UTF8
+          $store = Get-Content '.\server\store.go' -Raw -Encoding UTF8
+
+          foreach ($required in @(
+            'MediaRecorder',
+            'recorderCanvas.captureStream',
+            'addAudioStream',
+            'getDisplayMedia',
+            '/api/recordings/upload',
+            '/api/recordings/finalize'
+          )) {
+            if ($ui -notmatch [regex]::Escape($required)) {
+              throw "Recording pipeline component is missing: $required"
+            }
+          }
+
+          if ($ui -notmatch 'async function leaveRoom\(\)\{if\(!currentRoom\)return;await stopRecording\(\);') {
+            throw 'Conference leave does not flush recording before server leave.'
+          }
+          if ($ui -notmatch 'async function stopRecording\(\)') {
+            throw 'Recording stop/finalize is not awaitable.'
+          }
+          if ($store -notmatch 's\.state\.Recordings\[i\]\.SessionID == id' -or
+              $store -notmatch 'FinishedAt == nil') {
+            throw 'Server does not finalize unfinished recording metadata when the last participant leaves.'
+          }
+          if ($store -notmatch 'if lr\.Recorder == ""' -or
+              $store -notmatch 'lr\.Recorder = key') {
+            throw 'Server no longer elects the first participant as recorder.'
+          }
+
+          Write-Host 'Automatic first-participant recording and last-participant finalization validated.' -ForegroundColor Green
 
       - name: Print route and LDAP structure
         shell: pwsh
