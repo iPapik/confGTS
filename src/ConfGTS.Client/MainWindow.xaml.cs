@@ -353,7 +353,7 @@ public sealed class MainWindow : Window
         deviceSettings.Click += MediaSettingsButton_Click;
         footer.Children.Add(deviceSettings);
 
-        var logout = SidebarButton("\uE8BB", "Выйти");
+        var logout = SidebarButton("\uE72B", "Выйти");
         logout.Click += LogoutButton_Click;
         footer.Children.Add(logout);
 
