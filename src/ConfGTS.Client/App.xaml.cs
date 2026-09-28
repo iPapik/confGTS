@@ -51,6 +51,34 @@ public partial class App : Application
                     }
                 });
             }
+
+            if (Environment.GetCommandLineArgs().Any(
+                    x => string.Equals(x, "--self-test-remember-me", StringComparison.OrdinalIgnoreCase)))
+            {
+                MainWindowInstance.DispatcherQueue.TryEnqueue(() =>
+                {
+                    try
+                    {
+                        const string testUser = "confgts-ci-user";
+                        const string testPassword = "ConfGTS-CI-Remember-2026!";
+                        RememberedLoginStore.Save(testUser, testPassword);
+                        var loaded = RememberedLoginStore.Load();
+                        if (loaded is null ||
+                            !string.Equals(loaded.Username, testUser, StringComparison.Ordinal) ||
+                            !string.Equals(loaded.Password, testPassword, StringComparison.Ordinal))
+                        {
+                            throw new InvalidOperationException("Windows Credential Locker round-trip did not return the saved credentials.");
+                        }
+
+                        RememberedLoginStore.Clear();
+                        StartupDiagnostics.Log("Remember-me credential smoke test completed.");
+                    }
+                    catch (Exception ex)
+                    {
+                        StartupDiagnostics.Log("Remember-me credential smoke test failed.", ex);
+                    }
+                });
+            }
         }
         catch (Exception ex)
         {
