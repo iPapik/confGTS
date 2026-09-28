@@ -30,7 +30,6 @@ public sealed class MainWindow : Window
     private readonly Grid _loginView = new();
     private readonly Grid _dashboardView = new();
     private readonly TextBox _loginBox = new();
-    private readonly ComboBox _authModeBox = new();
     private readonly PasswordBox _passwordBox = new();
     private readonly Button _loginButton = new();
     private readonly TextBlock _loginError = new();
@@ -160,34 +159,8 @@ public sealed class MainWindow : Window
             Margin = new Thickness(0, 14, 0, 16)
         });
 
-        panel.Children.Add(Label("Тип учетной записи"));
-        _authModeBox.ItemsSource = new[]
-        {
-            "Автоматически",
-            "Локальная учетная запись ConfGTS",
-            "Доменная учетная запись (Active Directory)"
-        };
-        _authModeBox.SelectedIndex = 0;
-        _authModeBox.MinHeight = 46;
-        _authModeBox.HorizontalAlignment = HorizontalAlignment.Stretch;
-        _authModeBox.Background = Brush("#FFFFFF");
-        _authModeBox.BorderBrush = Brush(Line);
-        _authModeBox.BorderThickness = new Thickness(1);
-        _authModeBox.CornerRadius = new CornerRadius(10);
-        _authModeBox.SelectionChanged += (_, _) => UpdateLoginModeUi();
-        panel.Children.Add(_authModeBox);
-
-        panel.Children.Add(new TextBlock
-        {
-            Text = "Локальные учетные записи создаются администратором ConfGTS на сервере и не требуют учетной записи домена.",
-            FontSize = 11,
-            Foreground = Brush(Muted),
-            TextWrapping = TextWrapping.Wrap,
-            Margin = new Thickness(0, -2, 0, 2)
-        });
-
         panel.Children.Add(Label("Логин"));
-        _loginBox.PlaceholderText = "Доменный или локальный логин";
+        _loginBox.PlaceholderText = "Логин";
         _loginBox.IsSpellCheckEnabled = false;
         _loginBox.IsTextPredictionEnabled = false;
         StyleLoginTextBox(_loginBox);
@@ -296,7 +269,7 @@ public sealed class MainWindow : Window
 
         panel.Children.Add(new TextBlock
         {
-            Text = "Версия 0.18.3 beta  |  © ГТС, 2026",
+            Text = "Версия 0.18.4 beta  |  © ГТС, 2026",
             FontSize = 11,
             Foreground = Brush("#8A9BAC"),
             HorizontalAlignment = HorizontalAlignment.Center,
@@ -482,12 +455,13 @@ public sealed class MainWindow : Window
             RenderConferences(rooms);
             RenderMainConference(rooms);
 
-            _dashboardServerText.Text = "●  " + _api.EffectiveBaseUrl.Replace("http://", "").Replace("https://", "");
+            _dashboardServerText.Text = "●  Подключено";
             _dashboardServerText.Foreground = Brush("#278E55");
         }
         catch (Exception ex)
         {
-            _dashboardServerText.Text = "●  Ошибка обновления: " + ex.Message;
+            StartupDiagnostics.Log("Dashboard refresh failed.", ex);
+            _dashboardServerText.Text = "●  Сервер недоступен";
             _dashboardServerText.Foreground = Brush("#B54242");
         }
         finally
@@ -592,14 +566,6 @@ public sealed class MainWindow : Window
                 Foreground = Brush(Navy),
                 TextTrimming = TextTrimming.CharacterEllipsis
             });
-            stack.Children.Add(new TextBlock
-            {
-                Text = room.Id,
-                FontSize = 9,
-                Foreground = Brush(Muted),
-                TextTrimming = TextTrimming.CharacterEllipsis
-            });
-
             button.Content = stack;
             button.Click += async (_, _) =>
             {
@@ -691,36 +657,6 @@ public sealed class MainWindow : Window
             FontWeight = FontWeights.Bold,
             Foreground = Brush(Navy)
         });
-        detail.Children.Add(new TextBlock
-        {
-            Text = "Постоянная конференция",
-            FontSize = 16,
-            Foreground = Brush(Blue)
-        });
-        if (!string.IsNullOrWhiteSpace(room.Description))
-        {
-            detail.Children.Add(new TextBlock
-            {
-                Text = room.Description,
-                FontSize = 14,
-                Foreground = Brush(Muted),
-                TextWrapping = TextWrapping.Wrap
-            });
-        }
-        detail.Children.Add(new TextBlock
-        {
-            Text = "Идентификатор: " + room.Id,
-            FontSize = 12,
-            Foreground = Brush(Muted)
-        });
-        detail.Children.Add(new TextBlock
-        {
-            Text = "●  Конференция доступна",
-            FontSize = 13,
-            Foreground = Brush("#278E55"),
-            Margin = new Thickness(0, 5, 0, 0)
-        });
-
         grid.Children.Add(detail);
 
         var join = PrimaryActionButton("Подключиться");
@@ -856,7 +792,7 @@ public sealed class MainWindow : Window
                 try
                 {
                     await ConfigureConferenceDocumentAsync(web, room.Id);
-                    status.Text = "Конференция открыта. Разрешите доступ к камере и микрофону, если Windows запросит разрешение.";
+                    status.Text = "Конференция открыта. Подключение работает даже без камеры, микрофона или динамиков.";
                     status.Foreground = Brush("#278E55");
                 }
                 catch (Exception ex)
@@ -993,9 +929,7 @@ public sealed class MainWindow : Window
         try
         {
             var ok = await _api.HealthAsync();
-            _serverText.Text = ok
-                ? "Сервер доступен · " + _api.EffectiveBaseUrl.Replace("http://", "").Replace("https://", "")
-                : "Сервер недоступен";
+            _serverText.Text = ok ? "Сервер доступен" : "Сервер недоступен";
             _serverDot.Fill = Brush(ok ? "#31B657" : "#D14343");
         }
         catch
@@ -1027,9 +961,8 @@ public sealed class MainWindow : Window
 
         try
         {
-            var authType = SelectedAuthType();
-            StartupDiagnostics.Log("Login requested. Auth type: " + authType);
-            await _api.LoginAsync(_loginBox.Text.Trim(), _passwordBox.Password, authType);
+            StartupDiagnostics.Log("Login requested in automatic authentication mode.");
+            await _api.LoginAsync(_loginBox.Text.Trim(), _passwordBox.Password);
 
             _loginView.Visibility = Visibility.Collapsed;
             _dashboardView.Visibility = Visibility.Visible;
@@ -1047,23 +980,6 @@ public sealed class MainWindow : Window
         {
             _loginButton.IsEnabled = true;
         }
-    }
-
-    private string SelectedAuthType() => _authModeBox.SelectedIndex switch
-    {
-        1 => "local",
-        2 => "domain",
-        _ => "auto"
-    };
-
-    private void UpdateLoginModeUi()
-    {
-        _loginBox.PlaceholderText = SelectedAuthType() switch
-        {
-            "local" => "Локальный логин ConfGTS",
-            "domain" => "Доменный логин (например ivanov)",
-            _ => "Доменный или локальный логин"
-        };
     }
 
     internal async Task RunSettingsSmokeTestAsync()
