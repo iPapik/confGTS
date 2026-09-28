@@ -1,0 +1,231 @@
+name: Build ConfGTS Server 0.18.7
+
+on:
+  push:
+    branches: [ main, 'beta-*', 'fix/client-server-*' ]
+    paths:
+      - '.github/workflows/build-server.yml'
+      - 'server-source/**'
+      - 'server-overrides/**'
+      - 'build-server.ps1'
+      - 'prepare-assets.ps1'
+      - 'Installer/Server/**'
+      - 'src/ConfGTS.Server.Settings/**'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: confgts-server-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  server:
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+
+      - name: Reconstruct and patch server
+        shell: pwsh
+        run: |
+          $parts = Get-ChildItem '.\server-source\parts\part*.b64' | Sort-Object Name
+          if ($parts.Count -ne 11) { throw "Expected 11 server source parts, found $($parts.Count)." }
+
+          $builder = [System.Text.StringBuilder]::new()
+          foreach ($part in $parts) {
+            [void]$builder.Append((Get-Content $part.FullName -Raw).Trim())
+          }
+
+          $zip = Join-Path $env:RUNNER_TEMP 'ConfGTS-Server-Base.zip'
+          [IO.File]::WriteAllBytes($zip, [Convert]::FromBase64String($builder.ToString()))
+          Expand-Archive $zip -DestinationPath '.' -Force
+          .\server-overrides\apply.ps1
+
+      - name: Validate automatic recording lifecycle
+        shell: pwsh
+        run: |
+          $ui = Get-Content '.\server\ui.go' -Raw -Encoding UTF8
+          $store = Get-Content '.\server\store.go' -Raw -Encoding UTF8
+
+          foreach ($required in @(
+            'MediaRecorder',
+            'recorderCanvas.captureStream',
+            'addAudioStream',
+            'getDisplayMedia',
+            '/api/recordings/upload',
+            '/api/recordings/finalize'
+          )) {
+            if ($ui -notmatch [regex]::Escape($required)) {
+              throw "Missing recording component: $required"
+            }
+          }
+
+          if ($ui -notmatch 'async function leaveRoom\(\)\{if\(!currentRoom\)return;await stopRecording\(\);') {
+            throw 'Final recording data is not flushed before room leave.'
+          }
+          if ($store -notmatch 's\.state\.Recordings\[i\]\.SessionID == id' -or
+              $store -notmatch 'FinishedAt == nil') {
+            throw 'Last-participant server finalization guard is missing.'
+          }
+
+      - name: Format and test server
+        shell: pwsh
+        run: |
+          Get-ChildItem '.\server' -Filter *.go -File | ForEach-Object { gofmt -w $_.FullName }
+          go test ./server
+          if ($LASTEXITCODE -ne 0) { throw 'Go server tests failed.' }
+
+      - name: Build server MSI and EXE
+        shell: pwsh
+        run: .\build-server.ps1
+
+      - name: Package server source
+        shell: pwsh
+        run: |
+          $stage = Join-Path $env:RUNNER_TEMP 'ConfGTS-Server-0.18.7-Source'
+          Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          Copy-Item '.\go.mod' $stage -Force
+          Copy-Item '.\server' (Join-Path $stage 'server') -Recurse -Force
+          New-Item -ItemType Directory -Force -Path (Join-Path $stage 'src') | Out-Null
+          Copy-Item '.\src\ConfGTS.Server.Settings' (Join-Path $stage 'src\ConfGTS.Server.Settings') -Recurse -Force
+          New-Item -ItemType Directory -Force -Path (Join-Path $stage 'Installer') | Out-Null
+          Copy-Item '.\Installer\Server' (Join-Path $stage 'Installer\Server') -Recurse -Force
+          Copy-Item '.\build-server.ps1' $stage -Force
+          New-Item -ItemType Directory -Force -Path '.\artifacts' | Out-Null
+          Compress-Archive -Path "$stage\*" -DestinationPath '.\artifacts\ConfGTS-Server-0.18.7-Source.zip' -Force
+
+      - name: Verify server artifacts
+        shell: pwsh
+        run: |
+          $required = @(
+            'artifacts\server-publish\ConfGTSServer.exe',
+            'artifacts\server-publish\ConfGTS.Server.Settings.exe',
+            'artifacts\server-msi\ConfGTS-Server-0.18.7-x64.msi',
+            'artifacts\server-setup\ConfGTS-Server-Setup-0.18.7-x64.exe',
+            'artifacts\ConfGTS-Server-0.18.7-Source.zip'
+          )
+          foreach ($file in $required) {
+            if (!(Test-Path $file)) { throw "Missing server artifact: $file" }
+          }
+          Get-Item $required | Select-Object Name,Length | Format-Table -AutoSize
+
+      - name: Test server MSI installation
+        shell: pwsh
+        run: |
+          function Wait-Server {
+            param([string]$Uri)
+            for ($i = 0; $i -lt 30; $i++) {
+              try {
+                $health = Invoke-RestMethod -Uri $Uri -TimeoutSec 2
+                if ($health.ok -eq $true) { return $health }
+              } catch {}
+              Start-Sleep -Seconds 1
+            }
+            throw "ConfGTS Server health endpoint did not become ready: $Uri"
+          }
+
+          $msi = (Resolve-Path 'artifacts\server-msi\ConfGTS-Server-0.18.7-x64.msi').Path
+          Remove-Item "$env:ProgramData\ConfGTS" -Recurse -Force -ErrorAction SilentlyContinue
+
+          $install = Start-Process msiexec.exe -ArgumentList @('/i', ('"' + $msi + '"'), '/qn', '/norestart') -Wait -PassThru
+          if ($install.ExitCode -ne 0) { throw "Server MSI install failed: $($install.ExitCode)" }
+
+          $health = Wait-Server 'http://127.0.0.1:8090/health'
+          if ($health.version -ne '0.18.7') { throw "Unexpected server version: $($health.version)" }
+
+          $service = Get-Service 'ConfGTSServer' -ErrorAction Stop
+          if ($service.Status -ne 'Running') { throw 'ConfGTSServer service is not running after MSI install.' }
+
+          $remove = Start-Process msiexec.exe -ArgumentList @('/x', ('"' + $msi + '"'), '/qn', '/norestart') -Wait -PassThru
+          if ($remove.ExitCode -ne 0) { throw "Server MSI uninstall failed: $($remove.ExitCode)" }
+
+      - name: Test server EXE installation
+        shell: pwsh
+        run: |
+          function Wait-Server {
+            param([string]$Uri)
+            for ($i = 0; $i -lt 30; $i++) {
+              try {
+                $health = Invoke-RestMethod -Uri $Uri -TimeoutSec 2
+                if ($health.ok -eq $true) { return $health }
+              } catch {}
+              Start-Sleep -Seconds 1
+            }
+            throw "ConfGTS Server health endpoint did not become ready: $Uri"
+          }
+
+          $setup = (Resolve-Path 'artifacts\server-setup\ConfGTS-Server-Setup-0.18.7-x64.exe').Path
+          Remove-Item "$env:ProgramData\ConfGTS" -Recurse -Force -ErrorAction SilentlyContinue
+
+          $install = Start-Process $setup -ArgumentList @('/quiet','/norestart') -Wait -PassThru
+          if ($install.ExitCode -ne 0) { throw "Server EXE install failed: $($install.ExitCode)" }
+
+          $health = Wait-Server 'http://127.0.0.1:8090/health'
+          if ($health.version -ne '0.18.7') { throw "Unexpected server version after EXE install: $($health.version)" }
+
+          $remove = Start-Process $setup -ArgumentList @('/uninstall','/quiet','/norestart') -Wait -PassThru
+          if ($remove.ExitCode -ne 0) { throw "Server EXE uninstall failed: $($remove.ExitCode)" }
+
+      - name: Generate SHA-256
+        shell: pwsh
+        run: |
+          $files = @(
+            'artifacts\server-msi\ConfGTS-Server-0.18.7-x64.msi',
+            'artifacts\server-setup\ConfGTS-Server-Setup-0.18.7-x64.exe',
+            'artifacts\ConfGTS-Server-0.18.7-Source.zip'
+          )
+          $lines = foreach ($file in $files) {
+            $hash = Get-FileHash $file -Algorithm SHA256
+            "$($hash.Hash.ToLower())  $([IO.Path]::GetFileName($file))"
+          }
+          $lines | Set-Content 'artifacts\SHA256SUMS-server.txt' -Encoding ascii
+          Get-Content 'artifacts\SHA256SUMS-server.txt'
+
+      - name: Upload tested server packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: ConfGTS-Server-0.18.7-tested
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+          path: |
+            artifacts/server-msi/ConfGTS-Server-0.18.7-x64.msi
+            artifacts/server-setup/ConfGTS-Server-Setup-0.18.7-x64.exe
+            artifacts/ConfGTS-Server-0.18.7-Source.zip
+            artifacts/SHA256SUMS-server.txt
+
+      - name: Publish server GitHub Release
+        if: github.ref == 'refs/heads/main'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete server-v0.18.7 --cleanup-tag --yes 2>$null
+          if ($LASTEXITCODE -ne 0) { Write-Host 'No previous server-v0.18.7 release to delete.' }
+
+          @'
+          ConfGTS Server 0.18.7.
+
+          - Автоматическая запись запускается для первого вошедшего участника: сервер выбирает recorder, а клиент-рекордер формирует общую WebM-запись из всех видеопотоков и аудиопотоков конференции.
+          - Демонстрация экрана входит в записываемую видеосетку.
+          - При штатном выходе рекордера финальный фрагмент записи выгружается и финализируется до удаления участника из конференции.
+          - Когда выходит последний участник, сервер завершает сеанс и принудительно закрывает незавершённые метаданные записи.
+          - Файлы записей сохраняются в настроенном RecordingDir сервера и доступны через архив записей ConfGTS.
+          '@ | Set-Content 'artifacts\RELEASE-NOTES-server.md' -Encoding utf8
+
+          gh release create server-v0.18.7             'artifacts\server-msi\ConfGTS-Server-0.18.7-x64.msi'             'artifacts\server-setup\ConfGTS-Server-Setup-0.18.7-x64.exe'             'artifacts\ConfGTS-Server-0.18.7-Source.zip'             'artifacts\SHA256SUMS-server.txt'             --target '${{ github.sha }}'             --title 'ConfGTS Server 0.18.7'             --notes-file 'artifacts\RELEASE-NOTES-server.md'
