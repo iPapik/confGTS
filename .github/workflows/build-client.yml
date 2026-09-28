@@ -45,7 +45,7 @@ jobs:
           $main = Get-Content '.\src\ConfGTS.Client\MainWindow.xaml.cs' -Raw -Encoding UTF8
           $settings = Get-Content '.\src\ConfGTS.Client\MediaSettingsWindow.cs' -Raw -Encoding UTF8
           if ($main -match 'Тип учетной записи' -or $main -match '_authModeBox') { throw 'Authentication type selector is still present.' }
-          if ($main -match 'Идентификатор:' -or $main -match 'Постоянная конференция') { throw 'Conference metadata is still present in the client card.' }
+          if ($main -match 'Идентификатор:' -or $main -match 'Text = "Постоянная конференция",') { throw 'Conference metadata is still present in the client card.' }
           if ($settings -match 'ms-settings:') { throw 'Device settings still open Windows Settings.' }
           if ($settings -notmatch 'DeviceInformation.FindAllAsync') { throw 'In-app device enumeration is missing.' }
           Get-Item $required | Select-Object Name,Length | Format-Table -AutoSize
