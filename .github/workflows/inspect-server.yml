@@ -106,6 +106,9 @@ jobs:
           if ($web -notmatch 'time\.Since\(\*existing\.FinishedAt\) <= 30\*time\.Second') {
             throw 'Final recording upload grace period is missing.'
           }
+          if ($web -notmatch 'CanUploadEndedSessionRecording' -or $store -notmatch 'func \(s \*Store\) CanUploadEndedSessionRecording') {
+            throw 'Immediate-admin-stop final-chunk authorization is missing.'
+          }
           Write-Host 'Automatic recording lifecycle validated.' -ForegroundColor Green
 
       - name: Print route and LDAP structure
