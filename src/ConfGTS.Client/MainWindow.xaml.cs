@@ -814,6 +814,19 @@ public sealed class MainWindow : Window
     private async Task ConfigureConferenceDocumentAsync(WebView2 web, string roomId)
     {
         var roomJson = JsonSerializer.Serialize(roomId);
+        var media = MediaDeviceSettings.Load();
+        var mediaJson = JsonSerializer.Serialize(new
+        {
+            microphoneName = media.MicrophoneName,
+            speakerName = media.SpeakerName,
+            cameraName = media.CameraName,
+            microphoneEnabled = media.MicrophoneEnabled,
+            speakerEnabled = media.SpeakerEnabled,
+            cameraEnabled = media.CameraEnabled,
+            microphoneVolume = Math.Clamp(media.MicrophoneVolume / 100.0, 0, 1),
+            speakerVolume = Math.Clamp(media.SpeakerVolume / 100.0, 0, 1)
+        });
+
         var script = $$"""
         (() => {
           const nativeStyle = document.createElement('style');
@@ -830,17 +843,149 @@ public sealed class MainWindow : Window
           document.head.appendChild(nativeStyle);
 
           const roomId = {{roomJson}};
+          const nativePrefs = {{mediaJson}};
+          const emptyStream = () => new MediaStream();
+
+          const findBrowserDevice = async (kind, wantedName) => {
+            if (!wantedName || !navigator.mediaDevices?.enumerateDevices) return null;
+            try {
+              const devices = await navigator.mediaDevices.enumerateDevices();
+              const normalized = String(wantedName).trim().toLocaleLowerCase();
+              return devices.find(d => d.kind === kind && String(d.label || '').trim().toLocaleLowerCase() === normalized)
+                  || devices.find(d => d.kind === kind && String(d.label || '').toLocaleLowerCase().includes(normalized))
+                  || null;
+            } catch {
+              return null;
+            }
+          };
+
+          const applyOutputSettings = async () => {
+            const volume = nativePrefs.speakerEnabled ? Number(nativePrefs.speakerVolume ?? 0.7) : 0;
+            let sinkId = '';
+            if (nativePrefs.speakerEnabled && nativePrefs.speakerName) {
+              const match = await findBrowserDevice('audiooutput', nativePrefs.speakerName);
+              sinkId = match?.deviceId || '';
+            }
+
+            for (const mediaElement of document.querySelectorAll('video, audio')) {
+              if (!mediaElement.muted) mediaElement.volume = Math.max(0, Math.min(1, volume));
+              if (sinkId && typeof mediaElement.setSinkId === 'function') {
+                try { await mediaElement.setSinkId(sinkId); } catch (e) { console.debug('ConfGTS setSinkId:', e); }
+              }
+            }
+          };
+
+          const nativeEnsureMedia = async () => {
+            if (localStream) return localStream;
+
+            const useAudio = !!nativePrefs.microphoneEnabled;
+            const useVideo = !!nativePrefs.cameraEnabled;
+            const devices = navigator.mediaDevices;
+
+            // Lack of WebRTC capture API, a missing device, denied permission or
+            // an insecure HTTP origin must never prevent joining the room.
+            if ((!useAudio && !useVideo) || !devices || typeof devices.getUserMedia !== 'function') {
+              localStream = emptyStream();
+              console.info('ConfGTS: joining without local media.');
+              return localStream;
+            }
+
+            try {
+              let capture = await devices.getUserMedia({
+                audio: useAudio ? { echoCancellation:true, noiseSuppression:true, autoGainControl:true } : false,
+                video: useVideo ? true : false
+              });
+
+              // After the first permission grant Chromium exposes device labels.
+              // Match the device names selected in native ConfGTS settings and
+              // reacquire only when a matching browser device exists.
+              try {
+                const mic = useAudio ? await findBrowserDevice('audioinput', nativePrefs.microphoneName) : null;
+                const cam = useVideo ? await findBrowserDevice('videoinput', nativePrefs.cameraName) : null;
+                if ((mic && mic.deviceId) || (cam && cam.deviceId)) {
+                  const exactCapture = await devices.getUserMedia({
+                    audio: useAudio
+                      ? {
+                          ...(mic?.deviceId ? {deviceId:{exact:mic.deviceId}} : {}),
+                          echoCancellation:true,
+                          noiseSuppression:true,
+                          autoGainControl:true
+                        }
+                      : false,
+                    video: useVideo
+                      ? (cam?.deviceId ? {deviceId:{exact:cam.deviceId}} : true)
+                      : false
+                  });
+                  capture.getTracks().forEach(t => t.stop());
+                  capture = exactCapture;
+                }
+              } catch (e) {
+                console.debug('ConfGTS: selected device fallback to browser default:', e);
+              }
+
+              rawStream = capture;
+              const tracks = [];
+              capture.getVideoTracks().forEach(t => tracks.push(t));
+
+              const audioTrack = capture.getAudioTracks()[0];
+              if (audioTrack) {
+                const gainValue = Math.max(0, Math.min(1, Number(nativePrefs.microphoneVolume ?? 1)));
+                try {
+                  const AudioCtx = window.AudioContext || window.webkitAudioContext;
+                  if (AudioCtx) {
+                    mediaAudioCtx = new AudioCtx();
+                    const src = mediaAudioCtx.createMediaStreamSource(new MediaStream([audioTrack]));
+                    const gain = mediaAudioCtx.createGain();
+                    gain.gain.value = gainValue;
+                    const dst = mediaAudioCtx.createMediaStreamDestination();
+                    src.connect(gain).connect(dst);
+                    dst.stream.getAudioTracks().forEach(t => tracks.push(t));
+                  } else {
+                    tracks.push(audioTrack);
+                  }
+                } catch (e) {
+                  console.debug('ConfGTS microphone gain fallback:', e);
+                  tracks.push(audioTrack);
+                }
+              }
+
+              localStream = new MediaStream(tracks);
+              await applyOutputSettings();
+              return localStream;
+            } catch (e) {
+              console.warn('ConfGTS: media unavailable, joining without local media.', e);
+              try { rawStream?.getTracks?.().forEach(t => t.stop()); } catch {}
+              rawStream = null;
+              localStream = emptyStream();
+              return localStream;
+            }
+          };
+
+          try {
+            ensureMedia = nativeEnsureMedia;
+          } catch {
+            window.ensureMedia = nativeEnsureMedia;
+          }
+
+          // Apply speaker level/output to remote media elements as they appear.
+          const outputObserver = new MutationObserver(() => { applyOutputSettings().catch(() => {}); });
+          outputObserver.observe(document.documentElement, { childList:true, subtree:true });
+          window.__confgtsNativeOutputObserver?.disconnect?.();
+          window.__confgtsNativeOutputObserver = outputObserver;
+          applyOutputSettings().catch(() => {});
+
           if (typeof selectRoom !== 'function' || typeof joinRoom !== 'function') {
             throw new Error('Серверная WebRTC-страница не содержит функций конференции.');
           }
 
           selectRoom(roomId)
             .then(() => joinRoom())
+            .then(() => applyOutputSettings())
             .catch(err => {
               console.error('ConfGTS native conference join failed', err);
               const box = document.createElement('div');
-              box.style.cssText = 'margin:20px;padding:16px;border-radius:12px;background:#fff1f0;color:#a72e2e';
-              box.textContent = 'Не удалось войти в конференцию: ' + (err?.message || err);
+              box.style.cssText = 'margin:20px;padding:16px;border-radius:12px;background:#fff8e8;color:#8a5a00';
+              box.textContent = 'Конференция открыта, но возникла ошибка локального медиа: ' + (err?.message || err);
               document.body.prepend(box);
             });
         })();
