@@ -203,6 +203,22 @@ if ($joinRoomRegex.IsMatch($ui)) {
     throw 'ConfGTS joinRoom media blocking logic was not replaced.'
 }
 
+# Screen sharing includes audio when WebView2/Windows exposes it. The shared
+# system/tab audio is mixed with the microphone for remote participants, while
+# the local recorder adds the display-audio stream separately so the microphone
+# is not counted twice in the conference recording.
+$shareScreenPattern = '(?s)async function shareScreen\(\)\{.*?\}\r?\nfunction addAudioStream'
+$shareScreenReplacement = @'
+async function shareScreen(){try{let s=await navigator.mediaDevices.getDisplayMedia({video:true,audio:true});let nt=s.getVideoTracks()[0];if(!nt)throw new Error('Экран не выбран');let displayAudio=s.getAudioTracks()[0]||null;let mic=localStream?.getAudioTracks?.()[0]||null;let mixedAudio=null;window.__confgtsShareVideoTrack=nt;window.__confgtsShareAudioTrack=null;if(displayAudio){try{let AudioCtx=window.AudioContext||window.webkitAudioContext;if(AudioCtx){window.__confgtsShareAudioCtx?.close?.().catch?.(()=>{});let ctx=new AudioCtx();let dst=ctx.createMediaStreamDestination();if(mic)ctx.createMediaStreamSource(new MediaStream([mic])).connect(dst);ctx.createMediaStreamSource(new MediaStream([displayAudio])).connect(dst);mixedAudio=dst.stream.getAudioTracks()[0]||displayAudio;window.__confgtsShareAudioCtx=ctx;window.__confgtsShareAudioTrack=mixedAudio}else{mixedAudio=displayAudio;window.__confgtsShareAudioTrack=displayAudio}}catch(e){console.warn('screen audio mix',e);mixedAudio=displayAudio;window.__confgtsShareAudioTrack=displayAudio}if(audioDest)addAudioStream(new MediaStream([displayAudio]))}for(let [,pc]of peers){let vs=pc.getSenders().find(x=>x.track?.kind==='video');if(vs)await vs.replaceTrack(nt);if(mixedAudio){let as=pc.getSenders().find(x=>x.track?.kind==='audio');if(as)await as.replaceTrack(mixedAudio)}}addVideo('me',new MediaStream([nt]),ME.display_name+' · экран',true);nt.onended=async()=>{let cam=localStream?.getVideoTracks?.()[0]||null;let localMic=localStream?.getAudioTracks?.()[0]||null;for(let [,pc]of peers){let vs=pc.getSenders().find(x=>x.track?.kind==='video');if(vs)await vs.replaceTrack(cam);let as=pc.getSenders().find(x=>x.track?.kind==='audio');if(as&&window.__confgtsShareAudioTrack)await as.replaceTrack(localMic)}window.__confgtsShareVideoTrack=null;window.__confgtsShareAudioTrack=null;try{await window.__confgtsShareAudioCtx?.close?.()}catch{}window.__confgtsShareAudioCtx=null;s.getAudioTracks().forEach(t=>{try{t.stop()}catch{}});addVideo('me',localStream,ME.display_name+' (Вы)',true)}}catch(e){console.warn(e);throw e}}
+function addAudioStream
+'@
+$shareScreenRegex = [regex]::new($shareScreenPattern)
+if ($shareScreenRegex.IsMatch($ui)) {
+    $ui = $shareScreenRegex.Replace($ui, $shareScreenReplacement.TrimEnd("`r","`n"), 1)
+} elseif (-not $ui.Contains("getDisplayMedia({video:true,audio:true})")) {
+    throw 'ConfGTS shareScreen function was not found.'
+}
+
 # Flush and finalize the active MediaRecorder before telling the server that
 # this participant left. The recording upload endpoint only accepts the currently
 # elected recorder, so sending /leave first could reject the final WebM chunk.
