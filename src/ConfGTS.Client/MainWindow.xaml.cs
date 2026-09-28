@@ -35,6 +35,7 @@ public sealed class MainWindow : Window
     private readonly TextBlock _loginError = new();
     private readonly TextBlock _serverText = new();
     private readonly Ellipse _serverDot = new();
+    private readonly CheckBox _rememberMeBox = new();
 
     private readonly StackPanel _contactsPanel = new();
     private readonly StackPanel _conferenceSidebarPanel = new();
@@ -45,6 +46,8 @@ public sealed class MainWindow : Window
     private bool _dashboardRefreshRunning;
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _dashboardTimer;
     private readonly Grid _mainContentHost = new();
+    private readonly ColumnDefinition _dashboardSidebarColumn = new() { Width = new GridLength(330) };
+    private Border? _dashboardSidebar;
     private ScrollViewer? _dashboardMainScroll;
     private MediaSettingsPanel? _mediaSettingsPanel;
     private WebView2? _conferenceWebView;
@@ -60,6 +63,7 @@ public sealed class MainWindow : Window
         SetWindowSize(1400, 900);
 
         Content = BuildRoot();
+        LoadRememberedCredentials();
         StartupDiagnostics.Log("MainWindow C# UI construction completed.");
 
         _ = CheckServerAsync();
@@ -208,6 +212,12 @@ public sealed class MainWindow : Window
         passwordHost.Children.Add(revealButton);
         panel.Children.Add(passwordHost);
 
+        _rememberMeBox.Content = "Запомнить меня";
+        _rememberMeBox.FontSize = 13;
+        _rememberMeBox.Foreground = Brush(Text);
+        _rememberMeBox.Margin = new Thickness(0, 2, 0, 2);
+        panel.Children.Add(_rememberMeBox);
+
         _loginButton.Height = 54;
         _loginButton.HorizontalAlignment = HorizontalAlignment.Stretch;
         _loginButton.Background = Brush(Blue);
@@ -269,7 +279,7 @@ public sealed class MainWindow : Window
 
         panel.Children.Add(new TextBlock
         {
-            Text = "Версия 0.18.6 beta  |  © ГТС, 2026",
+            Text = "Версия 0.18.7 beta  |  © ГТС, 2026",
             FontSize = 11,
             Foreground = Brush("#8A9BAC"),
             HorizontalAlignment = HorizontalAlignment.Center,
@@ -283,7 +293,7 @@ public sealed class MainWindow : Window
     private void BuildDashboardView()
     {
         _dashboardView.Visibility = Visibility.Collapsed;
-        _dashboardView.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(330) });
+        _dashboardView.ColumnDefinitions.Add(_dashboardSidebarColumn);
         _dashboardView.ColumnDefinitions.Add(new ColumnDefinition());
 
         var sidebar = new Border
@@ -292,6 +302,8 @@ public sealed class MainWindow : Window
             BorderBrush = Brush(Line),
             BorderThickness = new Thickness(0, 0, 1, 0)
         };
+
+        _dashboardSidebar = sidebar;
 
         var sideGrid = new Grid { Padding = new Thickness(22, 20, 22, 18) };
         sideGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -333,15 +345,16 @@ public sealed class MainWindow : Window
         deviceSettings.Click += MediaSettingsButton_Click;
         footer.Children.Add(deviceSettings);
 
+        var logout = SidebarButton("\uE72B", "Выйти");
+        logout.Click += LogoutButton_Click;
+        footer.Children.Add(logout);
+
         _dashboardServerText.Text = "●  Сервер доступен";
         _dashboardServerText.Foreground = Brush("#278E55");
         _dashboardServerText.FontSize = 12;
         _dashboardServerText.TextWrapping = TextWrapping.Wrap;
+        _dashboardServerText.Margin = new Thickness(2, 0, 0, 0);
         footer.Children.Add(_dashboardServerText);
-
-        var logout = SidebarButton("\uE8AC", "Выйти");
-        logout.Click += LogoutButton_Click;
-        footer.Children.Add(logout);
 
         sideGrid.Children.Add(footer);
         sidebar.Child = sideGrid;
@@ -688,12 +701,13 @@ public sealed class MainWindow : Window
         if (_dashboardMainScroll is not null)
             _dashboardMainScroll.Visibility = Visibility.Collapsed;
 
+        SetConferenceLayout(true);
         _activeRoomId = room.Id;
 
         var host = new Grid
         {
             Background = Brush(Background),
-            Padding = new Thickness(20)
+            Padding = new Thickness(8)
         };
         host.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         host.RowDefinitions.Add(new RowDefinition());
@@ -952,14 +966,14 @@ public sealed class MainWindow : Window
               background:#164C79 !important;
             }
             .controls .btn.native-hangup {
-              min-width:48px !important;
-              width:48px !important;
-              height:48px !important;
-              padding:0 !important;
-              border-radius:50% !important;
-              border:1px solid #F08D8D !important;
-              background:#D93B3B !important;
-              font-size:25px !important;
+              min-width:108px !important;
+              width:auto !important;
+              height:44px !important;
+              padding:0 15px !important;
+              border-radius:12px !important;
+              border:1px solid #E46B6B !important;
+              background:#C93F48 !important;
+              font-size:14px !important;
             }
             .controls .btn.native-hangup:hover { background:#B92F2F !important; }
             #confgts-native-participants {
@@ -1022,8 +1036,8 @@ public sealed class MainWindow : Window
                 font-size:12px !important;
               }
               .controls .btn.native-hangup {
-                flex:0 0 46px !important;
-                width:46px !important;
+                flex:1 1 auto !important;
+                width:auto !important;
               }
               .video-grid { padding:6px 6px 80px !important; }
             }
@@ -1168,16 +1182,18 @@ public sealed class MainWindow : Window
             hangupBtn.className = 'btn native-hangup';
             hangupBtn.title = 'Выйти из конференции';
             hangupBtn.setAttribute('aria-label', 'Выйти из конференции');
-            hangupBtn.textContent = '☎';
-            hangupBtn.onclick = () => {
+            hangupBtn.textContent = '☎ Выйти';
+            hangupBtn.onclick = async () => {
               try {
-                if (window.chrome?.webview) {
-                  window.chrome.webview.postMessage('leave-conference');
-                } else if (typeof leaveRoom === 'function') {
-                  leaveRoom();
+                if (typeof leaveRoom === 'function') {
+                  await leaveRoom();
                 }
               } catch (e) {
-                console.error('ConfGTS hangup failed', e);
+                console.error('ConfGTS conference leave failed', e);
+              } finally {
+                if (window.chrome?.webview) {
+                  window.chrome.webview.postMessage('leave-conference');
+                }
               }
             };
             controls.appendChild(hangupBtn);
@@ -1368,7 +1384,7 @@ public sealed class MainWindow : Window
         {
             try
             {
-                await web.ExecuteScriptAsync("if (typeof leaveRoom === 'function') { leaveRoom(); }");
+                await web.ExecuteScriptAsync("if (typeof leaveRoom === 'function') { await leaveRoom(); }");
             }
             catch
             {
@@ -1377,6 +1393,8 @@ public sealed class MainWindow : Window
 
         if (host is not null)
             _mainContentHost.Children.Remove(host);
+
+        SetConferenceLayout(false);
 
         if (showDashboard && _dashboardMainScroll is not null)
         {
@@ -1486,6 +1504,11 @@ public sealed class MainWindow : Window
             StartupDiagnostics.Log("Login requested in automatic authentication mode.");
             await _api.LoginAsync(_loginBox.Text.Trim(), _passwordBox.Password);
 
+            if (_rememberMeBox.IsChecked == true)
+                RememberedCredentials.Save(_loginBox.Text.Trim(), _passwordBox.Password);
+            else
+                RememberedCredentials.Clear();
+
             _loginView.Visibility = Visibility.Collapsed;
             _dashboardView.Visibility = Visibility.Visible;
             RenderLoadingDashboard();
@@ -1504,6 +1527,37 @@ public sealed class MainWindow : Window
         }
     }
 
+    private void LoadRememberedCredentials()
+    {
+        try
+        {
+            if (!RememberedCredentials.TryRead(out var username, out var password))
+                return;
+
+            _loginBox.Text = username;
+            _passwordBox.Password = password;
+            _rememberMeBox.IsChecked = true;
+            StartupDiagnostics.Log("Remembered login restored from Windows Credential Manager.");
+        }
+        catch (Exception ex)
+        {
+            StartupDiagnostics.Log("Failed to restore remembered login.", ex);
+        }
+    }
+
+    private void SetConferenceLayout(bool conferenceMode)
+    {
+        if (_dashboardSidebar is not null)
+            _dashboardSidebar.Visibility = conferenceMode ? Visibility.Collapsed : Visibility.Visible;
+
+        _dashboardSidebarColumn.Width = conferenceMode
+            ? new GridLength(0)
+            : new GridLength(330);
+
+        Grid.SetColumn(_mainContentHost, conferenceMode ? 0 : 1);
+        Grid.SetColumnSpan(_mainContentHost, conferenceMode ? 2 : 1);
+    }
+
     internal async Task RunSettingsSmokeTestAsync()
     {
         StartupDiagnostics.Log("Settings smoke test requested.");
@@ -1520,7 +1574,8 @@ public sealed class MainWindow : Window
         await LeaveConferenceAsync(false);
         _dashboardView.Visibility = Visibility.Collapsed;
         _loginView.Visibility = Visibility.Visible;
-        _passwordBox.Password = "";
+        if (_rememberMeBox.IsChecked != true)
+            _passwordBox.Password = "";
     }
 
     private async void MediaSettingsButton_Click(object sender, RoutedEventArgs e)

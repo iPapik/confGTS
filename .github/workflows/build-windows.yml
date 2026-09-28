@@ -1,6 +1,8 @@
 name: Build full ConfGTS client and server (manual)
 
 on:
+  push:
+    branches: [ main, 'beta-full-*' ]
   workflow_dispatch:
 
 permissions:
@@ -42,11 +44,11 @@ jobs:
           [IO.File]::WriteAllBytes($zip, [Convert]::FromBase64String($builder.ToString()))
           Expand-Archive $zip -DestinationPath '.' -Force
 
-      - name: Apply ConfGTS Server 0.18.2 overlays
+      - name: Apply ConfGTS Server 0.18.7 overlays
         shell: pwsh
         run: .\server-overrides\apply.ps1
 
-      - name: Validate 0.18.2 server UI changes
+      - name: Validate 0.18.7 server UI changes
         shell: pwsh
         run: |
           $admin = Get-Content '.\server\admin.go' -Raw -Encoding UTF8
@@ -57,6 +59,17 @@ jobs:
             throw "Local-user creation still requires an E-mail form value."
           }
           Write-Host 'Local-user creation no longer requires E-mail.' -ForegroundColor Green
+          $ui = Get-Content '.\server\ui.go' -Raw -Encoding UTF8
+          if ($ui -notmatch 'MediaRecorder' -or $ui -notmatch 'captureStream\(15\)') {
+            throw "Automatic composite conference recording is missing."
+          }
+          if ($ui -notmatch 'stopLoops\(false\);await stopRecording\(\);try\{await api') {
+            throw "Recording is not finalized before recorder leaves."
+          }
+          if ($ui -notmatch 'recorder\.start\(5000\)') {
+            throw "Recording chunk interval is not 5 seconds."
+          }
+          Write-Host 'Automatic recording lifecycle is present.' -ForegroundColor Green
 
       - name: Format and test server source
         shell: pwsh
@@ -68,7 +81,7 @@ jobs:
       - name: Package server source
         shell: pwsh
         run: |
-          $stage = Join-Path $env:RUNNER_TEMP 'ConfGTS-Server-0.18.2-Source'
+          $stage = Join-Path $env:RUNNER_TEMP 'ConfGTS-Server-0.18.7-Source'
           Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Force -Path $stage | Out-Null
           Copy-Item '.\go.mod' $stage -Force
@@ -79,7 +92,7 @@ jobs:
           Copy-Item '.\Installer\Server' (Join-Path $stage 'Installer\Server') -Recurse -Force
           Copy-Item '.\build-server.ps1' $stage -Force
           New-Item -ItemType Directory -Force -Path '.\artifacts' | Out-Null
-          Compress-Archive -Path "$stage\*" -DestinationPath '.\artifacts\ConfGTS-Server-0.18.2-Source.zip' -Force
+          Compress-Archive -Path "$stage\*" -DestinationPath '.\artifacts\ConfGTS-Server-0.18.7-Source.zip' -Force
 
       - name: Build client MSI and EXE
         shell: pwsh
@@ -94,13 +107,13 @@ jobs:
         run: |
           $required = @(
             'artifacts\publish\ConfGTS.Client.exe',
-            'artifacts\msi\ConfGTS-0.18.2-x64.msi',
-            'artifacts\setup\ConfGTS-Setup-0.18.2-x64.exe',
+            'artifacts\msi\ConfGTS-0.18.7-x64.msi',
+            'artifacts\setup\ConfGTS-Setup-0.18.7-x64.exe',
             'artifacts\server-publish\ConfGTSServer.exe',
             'artifacts\server-publish\ConfGTS.Server.Settings.exe',
-            'artifacts\server-msi\ConfGTS-Server-0.18.2-x64.msi',
-            'artifacts\server-setup\ConfGTS-Server-Setup-0.18.2-x64.exe',
-            'artifacts\ConfGTS-Server-0.18.2-Source.zip'
+            'artifacts\server-msi\ConfGTS-Server-0.18.7-x64.msi',
+            'artifacts\server-setup\ConfGTS-Server-Setup-0.18.7-x64.exe',
+            'artifacts\ConfGTS-Server-0.18.7-Source.zip'
           )
           foreach ($file in $required) {
             if (!(Test-Path $file)) { throw "Missing artifact: $file" }
@@ -129,7 +142,7 @@ jobs:
       - name: Test client MSI installation, shortcuts and startup
         shell: pwsh
         run: |
-          $msi = (Resolve-Path 'artifacts\msi\ConfGTS-0.18.2-x64.msi').Path
+          $msi = (Resolve-Path 'artifacts\msi\ConfGTS-0.18.7-x64.msi').Path
           $installedExe = Join-Path $env:ProgramFiles 'ГТС\ConfGTS\ConfGTS.Client.exe'
           $startMenu = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\ConfGTS\ConfGTS.lnk'
           $desktop = Join-Path ([Environment]::GetFolderPath('CommonDesktopDirectory')) 'ConfGTS.lnk'
@@ -159,7 +172,7 @@ jobs:
       - name: Test client EXE installation, shortcuts and startup
         shell: pwsh
         run: |
-          $setup = (Resolve-Path 'artifacts\setup\ConfGTS-Setup-0.18.2-x64.exe').Path
+          $setup = (Resolve-Path 'artifacts\setup\ConfGTS-Setup-0.18.7-x64.exe').Path
           $installedExe = Join-Path $env:ProgramFiles 'ГТС\ConfGTS\ConfGTS.Client.exe'
           $startMenu = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\ConfGTS\ConfGTS.lnk'
           $desktop = Join-Path ([Environment]::GetFolderPath('CommonDesktopDirectory')) 'ConfGTS.lnk'
@@ -201,7 +214,7 @@ jobs:
             throw "ConfGTS Server health endpoint did not become ready: $Uri"
           }
 
-          $msi = (Resolve-Path 'artifacts\server-msi\ConfGTS-Server-0.18.2-x64.msi').Path
+          $msi = (Resolve-Path 'artifacts\server-msi\ConfGTS-Server-0.18.7-x64.msi').Path
           $serverDir = Join-Path $env:ProgramFiles 'ГТС\ConfGTS Server'
           $serverExe = Join-Path $serverDir 'ConfGTSServer.exe'
           $settingsExe = Join-Path $serverDir 'ConfGTS.Server.Settings.exe'
@@ -222,7 +235,7 @@ jobs:
           if ($svc.Status -ne 'Running') { Start-Service 'ConfGTSServer' }
 
           $health = Wait-Server 'http://127.0.0.1:8090/health'
-          if ($health.version -ne '0.18.2') { throw "Unexpected server version: $($health.version)" }
+          if ($health.version -ne '0.18.7') { throw "Unexpected server version: $($health.version)" }
 
           $nameHealth = Wait-Server ("http://{0}:8090/health" -f $env:COMPUTERNAME)
           if ($nameHealth.ok -ne $true) { throw "Server is not reachable by Windows computer name." }
@@ -302,7 +315,7 @@ jobs:
             throw "ConfGTS Server health endpoint did not become ready: $Uri"
           }
 
-          $setup = (Resolve-Path 'artifacts\server-setup\ConfGTS-Server-Setup-0.18.2-x64.exe').Path
+          $setup = (Resolve-Path 'artifacts\server-setup\ConfGTS-Server-Setup-0.18.7-x64.exe').Path
           $serverDir = Join-Path $env:ProgramFiles 'ГТС\ConfGTS Server'
           $serverExe = Join-Path $serverDir 'ConfGTSServer.exe'
           $settingsExe = Join-Path $serverDir 'ConfGTS.Server.Settings.exe'
@@ -315,7 +328,7 @@ jobs:
           }
 
           $health = Wait-Server 'http://127.0.0.1:8090/health'
-          if ($health.version -ne '0.18.2') { throw "Unexpected server version: $($health.version)" }
+          if ($health.version -ne '0.18.7') { throw "Unexpected server version: $($health.version)" }
           [void](Wait-Server ("http://{0}:8090/health" -f $env:COMPUTERNAME))
 
           $web = Invoke-WebRequest -Uri 'http://127.0.0.1:8090/server-login' -UseBasicParsing -TimeoutSec 5
@@ -330,11 +343,11 @@ jobs:
         shell: pwsh
         run: |
           $files = @(
-            'artifacts\msi\ConfGTS-0.18.2-x64.msi',
-            'artifacts\setup\ConfGTS-Setup-0.18.2-x64.exe',
-            'artifacts\server-msi\ConfGTS-Server-0.18.2-x64.msi',
-            'artifacts\server-setup\ConfGTS-Server-Setup-0.18.2-x64.exe',
-            'artifacts\ConfGTS-Server-0.18.2-Source.zip'
+            'artifacts\msi\ConfGTS-0.18.7-x64.msi',
+            'artifacts\setup\ConfGTS-Setup-0.18.7-x64.exe',
+            'artifacts\server-msi\ConfGTS-Server-0.18.7-x64.msi',
+            'artifacts\server-setup\ConfGTS-Server-Setup-0.18.7-x64.exe',
+            'artifacts\ConfGTS-Server-0.18.7-Source.zip'
           )
           $lines = foreach ($file in $files) {
             $hash = Get-FileHash $file -Algorithm SHA256
@@ -346,16 +359,16 @@ jobs:
       - name: Upload tested packages
         uses: actions/upload-artifact@v4
         with:
-          name: ConfGTS-0.18.2-tested
+          name: ConfGTS-0.18.7-tested
           if-no-files-found: error
           retention-days: 30
           compression-level: 0
           path: |
-            artifacts/msi/ConfGTS-0.18.2-x64.msi
-            artifacts/setup/ConfGTS-Setup-0.18.2-x64.exe
-            artifacts/server-msi/ConfGTS-Server-0.18.2-x64.msi
-            artifacts/server-setup/ConfGTS-Server-Setup-0.18.2-x64.exe
-            artifacts/ConfGTS-Server-0.18.2-Source.zip
+            artifacts/msi/ConfGTS-0.18.7-x64.msi
+            artifacts/setup/ConfGTS-Setup-0.18.7-x64.exe
+            artifacts/server-msi/ConfGTS-Server-0.18.7-x64.msi
+            artifacts/server-setup/ConfGTS-Server-Setup-0.18.7-x64.exe
+            artifacts/ConfGTS-Server-0.18.7-Source.zip
             artifacts/SHA256SUMS.txt
 
       - name: Publish GitHub Release
@@ -364,6 +377,23 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release delete v0.18.2 --cleanup-tag --yes 2>$null
-          if ($LASTEXITCODE -ne 0) { Write-Host 'No previous v0.18.2 release to delete.' }
-          gh release create v0.18.2 'artifacts\msi\ConfGTS-0.18.2-x64.msi' 'artifacts\setup\ConfGTS-Setup-0.18.2-x64.exe' 'artifacts\server-msi\ConfGTS-Server-0.18.2-x64.msi' 'artifacts\server-setup\ConfGTS-Server-Setup-0.18.2-x64.exe' 'artifacts\ConfGTS-Server-0.18.2-Source.zip' 'artifacts\SHA256SUMS.txt' --target '${{ github.sha }}' --title 'ConfGTS 0.18.2' --notes 'ConfGTS 0.18.2: устранён повторный вылет клиента при открытии «Настройки устройств». Открытие страницы теперь полностью отделено от инициализации оборудования: драйверы, камера и перечисление устройств не вызываются до явного нажатия «Обновить устройства». Необработанные WinUI/Task исключения журналируются и не завершают клиент. Сохранены фирменные иконки приложений, установщиков и ярлыков.'
+          gh release delete v0.18.7 --cleanup-tag --yes 2>$null
+          if ($LASTEXITCODE -ne 0) { Write-Host 'No previous v0.18.7 release to delete.' }
+          @'
+          ConfGTS 0.18.7.
+
+          Клиент:
+          - добавлена опция «Запомнить меня» с хранением учетных данных в Windows Credential Manager;
+          - статус подключения перенесён под кнопку выхода, иконка выхода обновлена;
+          - конференция скрывает левую колонку и занимает всю клиентскую область окна;
+          - кнопка выхода из конференции приведена к общему прямоугольному стилю.
+
+          Сервер и запись:
+          - первый участник автоматически назначается рекордером;
+          - запись композитит все видео, демонстрацию экрана и общий аудиомикс;
+          - фрагменты WebM отправляются и сохраняются в каталоге Recordings на сервере;
+          - запись останавливается и финализируется до выхода рекордера, чтобы последний фрагмент не терялся;
+          - при выходе последнего участника сеанс конференции завершается автоматически;
+          - интервал выгрузки записи уменьшен до 5 секунд.
+          '@ | Set-Content 'artifacts\RELEASE-NOTES.md' -Encoding utf8
+          gh release create v0.18.7 'artifacts\msi\ConfGTS-0.18.7-x64.msi' 'artifacts\setup\ConfGTS-Setup-0.18.7-x64.exe' 'artifacts\server-msi\ConfGTS-Server-0.18.7-x64.msi' 'artifacts\server-setup\ConfGTS-Server-Setup-0.18.7-x64.exe' 'artifacts\ConfGTS-Server-0.18.7-Source.zip' 'artifacts\SHA256SUMS.txt' --target '${{ github.sha }}' --title 'ConfGTS 0.18.7' --notes-file 'artifacts\RELEASE-NOTES.md'

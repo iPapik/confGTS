@@ -56,6 +56,42 @@ jobs:
           }
           Write-Host 'Conference can join without local media and room selection is race-safe.' -ForegroundColor Green
 
+      - name: Inspect recording implementation
+        shell: pwsh
+        run: |
+          Write-Host '=== RECORDING STORE METHODS ==='
+          Select-String -Path '.\server\store.go' -Pattern 'func \(s \*Store\) (Join|Leave|Heartbeat|RoomStatus|StartOrGetRecording|AppendRecording|FinalizeRecording)|Recorder|Recording' -Context 3,28
+          Write-Host '=== RECORDING UI FUNCTIONS ==='
+          Select-String -Path '.\server\ui.go' -Pattern 'startRecording|stopRecording|MediaRecorder|captureStream|AudioContext|shareScreen|updateStateUI|addVideo|ontrack' -Context 3,18
+
+      - name: Validate automatic recording lifecycle
+        shell: pwsh
+        run: |
+          $ui = Get-Content '.\server\ui.go' -Raw -Encoding UTF8
+          $store = Get-Content '.\server\store.go' -Raw -Encoding UTF8
+          if ($ui -notmatch 'startRecording\(\)' -or $ui -notmatch 'MediaRecorder' -or $ui -notmatch 'captureStream\(15\)') {
+            throw 'Composite conference recording implementation is missing.'
+          }
+          if ($ui -notmatch 'addAudioStream\(st\)' -or $ui -notmatch 'video-tile video') {
+            throw 'Conference-wide audio/video composition is missing.'
+          }
+          if ($ui -notmatch 'shareScreen\(\)' -or $ui -notmatch 'replaceTrack\(nt\)') {
+            throw 'Screen sharing is not part of the conference media path.'
+          }
+          if ($ui -notmatch 'stopLoops\(false\);await stopRecording\(\);try\{await api') {
+            throw 'Recording is not flushed before the recorder leaves.'
+          }
+          if ($ui -notmatch 'recorder\.start\(5000\)') {
+            throw 'Recording chunk interval hardening is missing.'
+          }
+          if ($store -notmatch 'if lr\.Recorder == ""' -or $store -notmatch 'lr\.Recorder = key') {
+            throw 'First-participant recorder election is missing.'
+          }
+          if ($store -notmatch 'endIfEmptyLocked' -or $store -notmatch 'len\(lr\.Participants\) != 0') {
+            throw 'Last-participant conference shutdown is missing.'
+          }
+          Write-Host 'Automatic recording lifecycle validated.' -ForegroundColor Green
+
       - name: Print route and LDAP structure
         shell: pwsh
         run: |
