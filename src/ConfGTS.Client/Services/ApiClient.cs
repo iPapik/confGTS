@@ -98,7 +98,7 @@ public sealed class ApiClient
     public async Task<bool> HealthAsync(CancellationToken ct = default) =>
         await EnsureEffectiveEndpointAsync(ct);
 
-    public async Task LoginAsync(string login, string password, string authType = "auto", CancellationToken ct = default)
+    public async Task LoginAsync(string login, string password, CancellationToken ct = default)
     {
         if (!await EnsureEffectiveEndpointAsync(ct))
         {
@@ -111,8 +111,7 @@ public sealed class ApiClient
             new
             {
                 username = login,
-                password,
-                auth_type = string.IsNullOrWhiteSpace(authType) ? "auto" : authType.Trim().ToLowerInvariant()
+                password
             },
             ct);
 
@@ -120,15 +119,7 @@ public sealed class ApiClient
             return;
 
         if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
-        {
-            var mode = string.IsNullOrWhiteSpace(authType) ? "auto" : authType.Trim().ToLowerInvariant();
-            throw new InvalidOperationException(mode switch
-            {
-                "local" => "Неверный логин или пароль локальной учетной записи ConfGTS.",
-                "domain" => "Неверный доменный логин или пароль.",
-                _ => "Неверный логин или пароль."
-            });
-        }
+            throw new InvalidOperationException("Неверный логин или пароль.");
 
         var detail = await response.Content.ReadAsStringAsync(ct);
         throw new InvalidOperationException(string.IsNullOrWhiteSpace(detail)

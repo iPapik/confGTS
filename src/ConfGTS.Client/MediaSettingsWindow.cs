@@ -4,50 +4,53 @@ using Microsoft.UI.Text;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
-using Windows.System;
+using Windows.Devices.Enumeration;
 
 namespace ConfGTS.Client;
 
-/// <summary>
-/// Safe device-settings page.
-///
-/// The previous implementation loaded NAudio, MMDevice/COM and Windows MediaCapture
-/// types into the settings page. On a subset of workstations an OEM multimedia
-/// driver terminated the WinUI process as soon as the page type was created.
-///
-/// This page intentionally contains no audio/video enumeration code at all.
-/// Device selection is delegated to the Windows settings pages. ConfGTS itself
-/// obtains camera/microphone permission inside the conference WebView.
-/// </summary>
 public sealed class MediaSettingsPanel : Grid
 {
     private const string Navy = "#0B2F5B";
     private const string Blue = "#168CB8";
-    private const string Cyan = "#16B6C2";
     private const string Text = "#28445F";
     private const string Muted = "#6A7E93";
     private const string Line = "#CFE0EA";
     private const string Bg = "#EEF7FC";
 
+    private readonly MediaDeviceSettings _settings = MediaDeviceSettings.Load();
+
+    private readonly ComboBox _microphone = new();
+    private readonly ComboBox _speaker = new();
+    private readonly ComboBox _camera = new();
+    private readonly Slider _microphoneVolume = new();
+    private readonly Slider _speakerVolume = new();
+    private readonly ToggleSwitch _microphoneEnabled = new();
+    private readonly ToggleSwitch _speakerEnabled = new();
+    private readonly ToggleSwitch _cameraEnabled = new();
+    private readonly TextBlock _microphoneStatus = new();
+    private readonly TextBlock _speakerStatus = new();
+    private readonly TextBlock _cameraStatus = new();
     private readonly TextBlock _status = new();
+    private readonly Button _refreshButton = new();
+
+    private bool _loading = true;
     private bool _closed;
 
     public event EventHandler? CloseRequested;
 
     public MediaSettingsPanel()
     {
-        StartupDiagnostics.Log("Safe MediaSettingsPanel constructor started.");
+        StartupDiagnostics.Log("MediaSettingsPanel 0.18.4 constructor started.");
         Background = Brush(Bg);
         Children.Add(BuildUi());
-        StartupDiagnostics.Log("Safe MediaSettingsPanel constructor completed.");
+        StartupDiagnostics.Log("MediaSettingsPanel 0.18.4 constructor completed.");
     }
 
-    public Task InitializeAsync()
+    public async Task InitializeAsync()
     {
-        StartupDiagnostics.Log("Safe media settings initialized without loading hardware APIs.");
-        _status.Text = "Настройки открыты. Драйверы камер и аудиоустройств ConfGTS на этой странице не загружает.";
-        _status.Foreground = Brush("#278E55");
-        return Task.CompletedTask;
+        ApplySavedValues();
+        await RefreshDevicesAsync();
+        StartupDiagnostics.Log("In-app media settings initialized.");
     }
 
     public Task ShutdownAsync()
@@ -56,7 +59,8 @@ public sealed class MediaSettingsPanel : Grid
             return Task.CompletedTask;
 
         _closed = true;
-        StartupDiagnostics.Log("Safe media settings closed.");
+        SaveSettings();
+        StartupDiagnostics.Log("In-app media settings closed.");
         return Task.CompletedTask;
     }
 
@@ -83,10 +87,10 @@ public sealed class MediaSettingsPanel : Grid
 
         outer.Children.Add(BuildHeader());
 
-        _status.Text = "Открытие настроек…";
         _status.FontSize = 13;
         _status.Foreground = Brush(Muted);
         _status.TextWrapping = TextWrapping.Wrap;
+        _status.Text = "Загрузка устройств…";
 
         outer.Children.Add(new Border
         {
@@ -98,22 +102,9 @@ public sealed class MediaSettingsPanel : Grid
             Child = _status
         });
 
-        outer.Children.Add(DeviceCard(
-            "\uE720",
-            "Микрофон и динамики",
-            "Выбор устройства, уровень громкости и проверка звука выполняются штатными средствами Windows. " +
-            "Так ConfGTS не загружает проблемные аудиодрайверы при открытии этой страницы.",
-            ("Открыть параметры звука", "ms-settings:sound"),
-            ("Разрешения микрофона", "ms-settings:privacy-microphone")));
-
-        outer.Children.Add(DeviceCard(
-            "\uE8B8",
-            "Камера",
-            "Камера открывается только непосредственно внутри конференции. На странице настроек камера не запускается.",
-            ("Разрешения камеры", "ms-settings:privacy-webcam"),
-            ("Bluetooth и устройства", "ms-settings:bluetooth")));
-
-        outer.Children.Add(Card(BuildDiagnosticsPanel()));
+        outer.Children.Add(BuildMicrophoneCard());
+        outer.Children.Add(BuildSpeakerCard());
+        outer.Children.Add(BuildCameraCard());
 
         scroll.Content = outer;
         root.Children.Add(scroll);
@@ -136,33 +127,155 @@ public sealed class MediaSettingsPanel : Grid
         });
         title.Children.Add(new TextBlock
         {
-            Text = "Безопасный режим настроек ConfGTS",
+            Text = "Камера, микрофон и звук настраиваются внутри ConfGTS",
             FontSize = 13,
             Foreground = Brush(Muted)
         });
         grid.Children.Add(title);
 
-        var back = SecondaryButton("← К конференциям");
-        back.VerticalAlignment = VerticalAlignment.Center;
-        back.Click += (_, _) =>
+        var actions = new StackPanel
         {
-            StartupDiagnostics.Log("Media settings back button clicked.");
-            CloseRequested?.Invoke(this, EventArgs.Empty);
+            Orientation = Orientation.Horizontal,
+            Spacing = 8,
+            VerticalAlignment = VerticalAlignment.Center
         };
-        Grid.SetColumn(back, 1);
-        grid.Children.Add(back);
 
+        _refreshButton.Content = "↻ Обновить устройства";
+        StyleSecondaryButton(_refreshButton);
+        _refreshButton.Click += async (_, _) => await RefreshDevicesAsync();
+        actions.Children.Add(_refreshButton);
+
+        var back = SecondaryButton("← К конференциям");
+        back.Click += (_, _) => CloseRequested?.Invoke(this, EventArgs.Empty);
+        actions.Children.Add(back);
+
+        Grid.SetColumn(actions, 1);
+        grid.Children.Add(actions);
         return grid;
     }
 
-    private UIElement DeviceCard(
-        string glyph,
-        string title,
-        string description,
-        (string Caption, string Uri) primary,
-        (string Caption, string Uri) secondary)
+    private UIElement BuildMicrophoneCard()
     {
-        var panel = new StackPanel { Spacing = 13 };
+        var panel = CardPanel("\uE720", "Микрофон");
+
+        ConfigureCombo(_microphone);
+        _microphone.PlaceholderText = "Микрофон не найден";
+        _microphone.SelectionChanged += (_, _) =>
+        {
+            if (_loading) return;
+            var selected = _microphone.SelectedItem as DeviceChoice;
+            _settings.MicrophoneId = selected?.Id ?? "";
+            _settings.MicrophoneName = selected?.Name ?? "";
+            SaveSettings();
+        };
+
+        _microphoneEnabled.Header = "Использовать микрофон в конференции";
+        _microphoneEnabled.Toggled += (_, _) =>
+        {
+            if (_loading) return;
+            _settings.MicrophoneEnabled = _microphoneEnabled.IsOn;
+            _microphone.IsEnabled = _microphoneEnabled.IsOn && _microphone.Items.Count > 0;
+            _microphoneVolume.IsEnabled = _microphoneEnabled.IsOn;
+            SaveSettings();
+        };
+
+        _microphoneVolume.Minimum = 0;
+        _microphoneVolume.Maximum = 100;
+        _microphoneVolume.StepFrequency = 1;
+        _microphoneVolume.Header = "Уровень передачи микрофона";
+        _microphoneVolume.ValueChanged += (_, _) =>
+        {
+            if (_loading) return;
+            _settings.MicrophoneVolume = _microphoneVolume.Value;
+            SaveSettings();
+        };
+
+        ConfigureStatus(_microphoneStatus);
+        panel.Children.Add(_microphoneEnabled);
+        panel.Children.Add(_microphone);
+        panel.Children.Add(_microphoneVolume);
+        panel.Children.Add(_microphoneStatus);
+        return Card(panel);
+    }
+
+    private UIElement BuildSpeakerCard()
+    {
+        var panel = CardPanel("\uE767", "Динамики / наушники");
+
+        ConfigureCombo(_speaker);
+        _speaker.PlaceholderText = "Устройство вывода не найдено";
+        _speaker.SelectionChanged += (_, _) =>
+        {
+            if (_loading) return;
+            var selected = _speaker.SelectedItem as DeviceChoice;
+            _settings.SpeakerId = selected?.Id ?? "";
+            _settings.SpeakerName = selected?.Name ?? "";
+            SaveSettings();
+        };
+
+        _speakerEnabled.Header = "Воспроизводить звук конференции";
+        _speakerEnabled.Toggled += (_, _) =>
+        {
+            if (_loading) return;
+            _settings.SpeakerEnabled = _speakerEnabled.IsOn;
+            _speaker.IsEnabled = _speakerEnabled.IsOn && _speaker.Items.Count > 0;
+            _speakerVolume.IsEnabled = _speakerEnabled.IsOn;
+            SaveSettings();
+        };
+
+        _speakerVolume.Minimum = 0;
+        _speakerVolume.Maximum = 100;
+        _speakerVolume.StepFrequency = 1;
+        _speakerVolume.Header = "Громкость конференции";
+        _speakerVolume.ValueChanged += (_, _) =>
+        {
+            if (_loading) return;
+            _settings.SpeakerVolume = _speakerVolume.Value;
+            SaveSettings();
+        };
+
+        ConfigureStatus(_speakerStatus);
+        panel.Children.Add(_speakerEnabled);
+        panel.Children.Add(_speaker);
+        panel.Children.Add(_speakerVolume);
+        panel.Children.Add(_speakerStatus);
+        return Card(panel);
+    }
+
+    private UIElement BuildCameraCard()
+    {
+        var panel = CardPanel("\uE8B8", "Камера");
+
+        ConfigureCombo(_camera);
+        _camera.PlaceholderText = "Камера не найдена";
+        _camera.SelectionChanged += (_, _) =>
+        {
+            if (_loading) return;
+            var selected = _camera.SelectedItem as DeviceChoice;
+            _settings.CameraId = selected?.Id ?? "";
+            _settings.CameraName = selected?.Name ?? "";
+            SaveSettings();
+        };
+
+        _cameraEnabled.Header = "Использовать камеру в конференции";
+        _cameraEnabled.Toggled += (_, _) =>
+        {
+            if (_loading) return;
+            _settings.CameraEnabled = _cameraEnabled.IsOn;
+            _camera.IsEnabled = _cameraEnabled.IsOn && _camera.Items.Count > 0;
+            SaveSettings();
+        };
+
+        ConfigureStatus(_cameraStatus);
+        panel.Children.Add(_cameraEnabled);
+        panel.Children.Add(_camera);
+        panel.Children.Add(_cameraStatus);
+        return Card(panel);
+    }
+
+    private StackPanel CardPanel(string glyph, string title)
+    {
+        var panel = new StackPanel { Spacing = 12 };
 
         var heading = new StackPanel
         {
@@ -186,85 +299,175 @@ public sealed class MediaSettingsPanel : Grid
         });
         panel.Children.Add(heading);
 
-        panel.Children.Add(new TextBlock
-        {
-            Text = description,
-            TextWrapping = TextWrapping.Wrap,
-            FontSize = 13,
-            Foreground = Brush(Text),
-            LineHeight = 20
-        });
-
-        var buttons = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            Spacing = 10
-        };
-
-        var first = PrimaryButton(primary.Caption);
-        first.Click += async (_, _) => await OpenSystemSettingsAsync(primary.Uri);
-        buttons.Children.Add(first);
-
-        var second = SecondaryButton(secondary.Caption);
-        second.Click += async (_, _) => await OpenSystemSettingsAsync(secondary.Uri);
-        buttons.Children.Add(second);
-
-        panel.Children.Add(buttons);
-        return Card(panel);
-    }
-
-    private UIElement BuildDiagnosticsPanel()
-    {
-        var panel = new StackPanel { Spacing = 9 };
-        panel.Children.Add(new TextBlock
-        {
-            Text = "Диагностика",
-            FontSize = 20,
-            FontWeight = FontWeights.SemiBold,
-            Foreground = Brush(Navy)
-        });
-        panel.Children.Add(new TextBlock
-        {
-            Text = "Журнал клиента:",
-            FontSize = 12,
-            FontWeight = FontWeights.SemiBold,
-            Foreground = Brush(Text)
-        });
-        panel.Children.Add(new TextBlock
-        {
-            Text = StartupDiagnostics.LogPath,
-            FontSize = 12,
-            Foreground = Brush(Muted),
-            TextWrapping = TextWrapping.Wrap,
-            IsTextSelectionEnabled = true
-        });
-        panel.Children.Add(new TextBlock
-        {
-            Text = "Если приложение когда-либо завершится аварийно, этот файл позволяет определить последний успешно выполненный этап.",
-            FontSize = 12,
-            Foreground = Brush(Muted),
-            TextWrapping = TextWrapping.Wrap
-        });
         return panel;
     }
 
-    private async Task OpenSystemSettingsAsync(string uri)
+    private void ApplySavedValues()
     {
+        _loading = true;
+        _microphoneEnabled.IsOn = _settings.MicrophoneEnabled;
+        _speakerEnabled.IsOn = _settings.SpeakerEnabled;
+        _cameraEnabled.IsOn = _settings.CameraEnabled;
+        _microphoneVolume.Value = Math.Clamp(_settings.MicrophoneVolume, 0, 100);
+        _speakerVolume.Value = Math.Clamp(_settings.SpeakerVolume, 0, 100);
+    }
+
+    private async Task RefreshDevicesAsync()
+    {
+        if (_closed || !_refreshButton.IsEnabled)
+            return;
+
+        _refreshButton.IsEnabled = false;
+        _status.Text = "Поиск устройств…";
+        _status.Foreground = Brush(Muted);
+
         try
         {
-            StartupDiagnostics.Log("Opening Windows settings: " + uri);
-            var opened = await Launcher.LaunchUriAsync(new Uri(uri));
-            _status.Text = opened
-                ? "Системные параметры Windows открыты."
-                : "Windows не смогла открыть выбранный раздел параметров.";
-            _status.Foreground = Brush(opened ? "#278E55" : "#B25C28");
+            var microphones = await EnumerateAsync(DeviceClass.AudioCapture, "микрофонов");
+            if (_closed) return;
+            var speakers = await EnumerateAsync(DeviceClass.AudioRender, "устройств вывода");
+            if (_closed) return;
+            var cameras = await EnumerateAsync(DeviceClass.VideoCapture, "камер");
+            if (_closed) return;
+
+            BindDevices(_microphone, microphones, _settings.MicrophoneId, _settings.MicrophoneName);
+            BindDevices(_speaker, speakers, _settings.SpeakerId, _settings.SpeakerName);
+            BindDevices(_camera, cameras, _settings.CameraId, _settings.CameraName);
+
+            _microphone.IsEnabled = _settings.MicrophoneEnabled && microphones.Count > 0;
+            _speaker.IsEnabled = _settings.SpeakerEnabled && speakers.Count > 0;
+            _camera.IsEnabled = _settings.CameraEnabled && cameras.Count > 0;
+            _microphoneVolume.IsEnabled = _settings.MicrophoneEnabled;
+            _speakerVolume.IsEnabled = _settings.SpeakerEnabled;
+
+            _microphoneStatus.Text = microphones.Count == 0
+                ? "Микрофон не найден. В конференцию всё равно можно подключиться."
+                : $"Найдено микрофонов: {microphones.Count}.";
+            _speakerStatus.Text = speakers.Count == 0
+                ? "Динамики или наушники не найдены. Подключение к конференции не блокируется."
+                : $"Найдено устройств вывода: {speakers.Count}.";
+            _cameraStatus.Text = cameras.Count == 0
+                ? "Камера не найдена. В конференцию можно войти без видео."
+                : $"Найдено камер: {cameras.Count}.";
+
+            SyncSelectedValues();
+            _status.Text = "Устройства обновлены. Выбор сохраняется автоматически.";
+            _status.Foreground = Brush("#278E55");
         }
         catch (Exception ex)
         {
-            StartupDiagnostics.Log("Failed to open Windows settings: " + uri, ex);
-            _status.Text = "Не удалось открыть системные параметры: " + ex.Message;
-            _status.Foreground = Brush("#B54242");
+            StartupDiagnostics.Log("Unexpected in-app device settings refresh failure.", ex);
+            _status.Text = "Не удалось получить часть устройств. Это не мешает входу в конференцию.";
+            _status.Foreground = Brush("#B25C28");
         }
+        finally
+        {
+            _loading = false;
+            _refreshButton.IsEnabled = true;
+            SaveSettings();
+        }
+    }
+
+    private static async Task<List<DeviceChoice>> EnumerateAsync(DeviceClass deviceClass, string label)
+    {
+        try
+        {
+            var devices = await DeviceInformation.FindAllAsync(deviceClass);
+            return devices
+                .Where(d => d.IsEnabled)
+                .Select(d => new DeviceChoice(d.Id, string.IsNullOrWhiteSpace(d.Name) ? "Без названия" : d.Name))
+                .OrderBy(d => d.Name, StringComparer.CurrentCultureIgnoreCase)
+                .ToList();
+        }
+        catch (Exception ex)
+        {
+            StartupDiagnostics.Log($"Failed to enumerate {label}.", ex);
+            return [];
+        }
+    }
+
+    private static void BindDevices(ComboBox combo, IReadOnlyList<DeviceChoice> devices, string savedId, string savedName)
+    {
+        combo.ItemsSource = devices;
+
+        if (devices.Count == 0)
+        {
+            combo.SelectedItem = null;
+            return;
+        }
+
+        var selected = devices.FirstOrDefault(d =>
+                           !string.IsNullOrWhiteSpace(savedId) &&
+                           string.Equals(d.Id, savedId, StringComparison.OrdinalIgnoreCase))
+                       ?? devices.FirstOrDefault(d =>
+                           !string.IsNullOrWhiteSpace(savedName) &&
+                           string.Equals(d.Name, savedName, StringComparison.CurrentCultureIgnoreCase))
+                       ?? devices[0];
+
+        combo.SelectedItem = selected;
+    }
+
+    private void SyncSelectedValues()
+    {
+        if (_microphone.SelectedItem is DeviceChoice microphone)
+        {
+            _settings.MicrophoneId = microphone.Id;
+            _settings.MicrophoneName = microphone.Name;
+        }
+        else
+        {
+            _settings.MicrophoneId = "";
+            _settings.MicrophoneName = "";
+        }
+
+        if (_speaker.SelectedItem is DeviceChoice speaker)
+        {
+            _settings.SpeakerId = speaker.Id;
+            _settings.SpeakerName = speaker.Name;
+        }
+        else
+        {
+            _settings.SpeakerId = "";
+            _settings.SpeakerName = "";
+        }
+
+        if (_camera.SelectedItem is DeviceChoice camera)
+        {
+            _settings.CameraId = camera.Id;
+            _settings.CameraName = camera.Name;
+        }
+        else
+        {
+            _settings.CameraId = "";
+            _settings.CameraName = "";
+        }
+    }
+
+    private void SaveSettings()
+    {
+        _settings.MicrophoneVolume = _microphoneVolume.Value;
+        _settings.SpeakerVolume = _speakerVolume.Value;
+        _settings.MicrophoneEnabled = _microphoneEnabled.IsOn;
+        _settings.SpeakerEnabled = _speakerEnabled.IsOn;
+        _settings.CameraEnabled = _cameraEnabled.IsOn;
+        _settings.Save();
+    }
+
+    private static void ConfigureCombo(ComboBox combo)
+    {
+        combo.HorizontalAlignment = HorizontalAlignment.Stretch;
+        combo.MinHeight = 44;
+        combo.Background = Brush("#FFFFFF");
+        combo.BorderBrush = Brush(Line);
+        combo.BorderThickness = new Thickness(1);
+        combo.CornerRadius = new CornerRadius(10);
+    }
+
+    private static void ConfigureStatus(TextBlock block)
+    {
+        block.FontSize = 12;
+        block.Foreground = Brush(Muted);
+        block.TextWrapping = TextWrapping.Wrap;
     }
 
     private static Border Card(UIElement child) => new()
@@ -277,45 +480,25 @@ public sealed class MediaSettingsPanel : Grid
         Child = child
     };
 
-    private static Button PrimaryButton(string text)
+    private static Button SecondaryButton(string text)
     {
-        var button = new Button
-        {
-            Content = text,
-            MinHeight = 44,
-            Padding = new Thickness(16, 9, 16, 9),
-            Background = Brush(Blue),
-            Foreground = Brush("#FFFFFF"),
-            BorderThickness = new Thickness(0),
-            CornerRadius = new CornerRadius(10),
-            FontWeight = FontWeights.SemiBold
-        };
-        button.Resources["ButtonBackground"] = Brush(Blue);
-        button.Resources["ButtonBackgroundPointerOver"] = Brush(Navy);
-        button.Resources["ButtonBackgroundPressed"] = Brush("#0F6F98");
-        button.Resources["ButtonForeground"] = Brush("#FFFFFF");
-        button.Resources["ButtonForegroundPointerOver"] = Brush("#FFFFFF");
-        button.Resources["ButtonForegroundPressed"] = Brush("#FFFFFF");
+        var button = new Button { Content = text };
+        StyleSecondaryButton(button);
         return button;
     }
 
-    private static Button SecondaryButton(string text)
+    private static void StyleSecondaryButton(Button button)
     {
-        var button = new Button
-        {
-            Content = text,
-            MinHeight = 44,
-            Padding = new Thickness(16, 9, 16, 9),
-            Background = Brush("#E8F4F9"),
-            Foreground = Brush(Navy),
-            BorderBrush = Brush(Line),
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(10)
-        };
+        button.MinHeight = 44;
+        button.Padding = new Thickness(16, 9, 16, 9);
+        button.Background = Brush("#E8F4F9");
+        button.Foreground = Brush(Navy);
+        button.BorderBrush = Brush(Line);
+        button.BorderThickness = new Thickness(1);
+        button.CornerRadius = new CornerRadius(10);
         button.Resources["ButtonBackground"] = Brush("#E8F4F9");
         button.Resources["ButtonBackgroundPointerOver"] = Brush("#DCEEF6");
         button.Resources["ButtonBackgroundPressed"] = Brush("#CFE7F1");
-        return button;
     }
 
     private static SolidColorBrush Brush(string value) => new(Color(value));
@@ -336,5 +519,18 @@ public sealed class MediaSettingsPanel : Grid
         var green = Convert.ToByte(hex.Substring(offset + 2, 2), 16);
         var blue = Convert.ToByte(hex.Substring(offset + 4, 2), 16);
         return ColorHelper.FromArgb(alpha, red, green, blue);
+    }
+
+    private sealed class DeviceChoice
+    {
+        public DeviceChoice(string id, string name)
+        {
+            Id = id;
+            Name = name;
+        }
+
+        public string Id { get; }
+        public string Name { get; }
+        public override string ToString() => Name;
     }
 }

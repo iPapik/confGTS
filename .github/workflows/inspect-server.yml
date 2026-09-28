@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - '.github/workflows/inspect-server.yml'
+      - 'server-overrides/**'
   workflow_dispatch:
 
 permissions:
@@ -36,6 +37,21 @@ jobs:
             throw 'Explicit local/domain API authentication patch was not applied.'
           }
           Write-Host 'Local/domain API authentication patch validated.' -ForegroundColor Green
+
+      - name: Validate media-optional conference join
+        shell: pwsh
+        run: |
+          $ui = Get-Content '.\server\ui.go' -Raw -Encoding UTF8
+          if ($ui -notmatch 'media API unavailable, continuing without local media') {
+            throw 'Server UI does not contain the no-media fallback.'
+          }
+          if ($ui -match "alert\('Не удалось получить камеру/микрофон") {
+            throw 'Server UI still blocks conference entry when media is unavailable.'
+          }
+          if ($ui -notmatch 'localStream=new MediaStream\(\);return localStream') {
+            throw 'Server UI does not create an empty stream fallback.'
+          }
+          Write-Host 'Conference can join without local media.' -ForegroundColor Green
 
       - name: Print route and LDAP structure
         shell: pwsh

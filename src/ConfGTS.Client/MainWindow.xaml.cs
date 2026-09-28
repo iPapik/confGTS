@@ -30,7 +30,6 @@ public sealed class MainWindow : Window
     private readonly Grid _loginView = new();
     private readonly Grid _dashboardView = new();
     private readonly TextBox _loginBox = new();
-    private readonly ComboBox _authModeBox = new();
     private readonly PasswordBox _passwordBox = new();
     private readonly Button _loginButton = new();
     private readonly TextBlock _loginError = new();
@@ -160,34 +159,8 @@ public sealed class MainWindow : Window
             Margin = new Thickness(0, 14, 0, 16)
         });
 
-        panel.Children.Add(Label("Тип учетной записи"));
-        _authModeBox.ItemsSource = new[]
-        {
-            "Автоматически",
-            "Локальная учетная запись ConfGTS",
-            "Доменная учетная запись (Active Directory)"
-        };
-        _authModeBox.SelectedIndex = 0;
-        _authModeBox.MinHeight = 46;
-        _authModeBox.HorizontalAlignment = HorizontalAlignment.Stretch;
-        _authModeBox.Background = Brush("#FFFFFF");
-        _authModeBox.BorderBrush = Brush(Line);
-        _authModeBox.BorderThickness = new Thickness(1);
-        _authModeBox.CornerRadius = new CornerRadius(10);
-        _authModeBox.SelectionChanged += (_, _) => UpdateLoginModeUi();
-        panel.Children.Add(_authModeBox);
-
-        panel.Children.Add(new TextBlock
-        {
-            Text = "Локальные учетные записи создаются администратором ConfGTS на сервере и не требуют учетной записи домена.",
-            FontSize = 11,
-            Foreground = Brush(Muted),
-            TextWrapping = TextWrapping.Wrap,
-            Margin = new Thickness(0, -2, 0, 2)
-        });
-
         panel.Children.Add(Label("Логин"));
-        _loginBox.PlaceholderText = "Доменный или локальный логин";
+        _loginBox.PlaceholderText = "Логин";
         _loginBox.IsSpellCheckEnabled = false;
         _loginBox.IsTextPredictionEnabled = false;
         StyleLoginTextBox(_loginBox);
@@ -296,7 +269,7 @@ public sealed class MainWindow : Window
 
         panel.Children.Add(new TextBlock
         {
-            Text = "Версия 0.18.3 beta  |  © ГТС, 2026",
+            Text = "Версия 0.18.4 beta  |  © ГТС, 2026",
             FontSize = 11,
             Foreground = Brush("#8A9BAC"),
             HorizontalAlignment = HorizontalAlignment.Center,
@@ -482,12 +455,13 @@ public sealed class MainWindow : Window
             RenderConferences(rooms);
             RenderMainConference(rooms);
 
-            _dashboardServerText.Text = "●  " + _api.EffectiveBaseUrl.Replace("http://", "").Replace("https://", "");
+            _dashboardServerText.Text = "●  Подключено";
             _dashboardServerText.Foreground = Brush("#278E55");
         }
         catch (Exception ex)
         {
-            _dashboardServerText.Text = "●  Ошибка обновления: " + ex.Message;
+            StartupDiagnostics.Log("Dashboard refresh failed.", ex);
+            _dashboardServerText.Text = "●  Сервер недоступен";
             _dashboardServerText.Foreground = Brush("#B54242");
         }
         finally
@@ -592,14 +566,6 @@ public sealed class MainWindow : Window
                 Foreground = Brush(Navy),
                 TextTrimming = TextTrimming.CharacterEllipsis
             });
-            stack.Children.Add(new TextBlock
-            {
-                Text = room.Id,
-                FontSize = 9,
-                Foreground = Brush(Muted),
-                TextTrimming = TextTrimming.CharacterEllipsis
-            });
-
             button.Content = stack;
             button.Click += async (_, _) =>
             {
@@ -691,36 +657,6 @@ public sealed class MainWindow : Window
             FontWeight = FontWeights.Bold,
             Foreground = Brush(Navy)
         });
-        detail.Children.Add(new TextBlock
-        {
-            Text = "Постоянная конференция",
-            FontSize = 16,
-            Foreground = Brush(Blue)
-        });
-        if (!string.IsNullOrWhiteSpace(room.Description))
-        {
-            detail.Children.Add(new TextBlock
-            {
-                Text = room.Description,
-                FontSize = 14,
-                Foreground = Brush(Muted),
-                TextWrapping = TextWrapping.Wrap
-            });
-        }
-        detail.Children.Add(new TextBlock
-        {
-            Text = "Идентификатор: " + room.Id,
-            FontSize = 12,
-            Foreground = Brush(Muted)
-        });
-        detail.Children.Add(new TextBlock
-        {
-            Text = "●  Конференция доступна",
-            FontSize = 13,
-            Foreground = Brush("#278E55"),
-            Margin = new Thickness(0, 5, 0, 0)
-        });
-
         grid.Children.Add(detail);
 
         var join = PrimaryActionButton("Подключиться");
@@ -856,7 +792,7 @@ public sealed class MainWindow : Window
                 try
                 {
                     await ConfigureConferenceDocumentAsync(web, room.Id);
-                    status.Text = "Конференция открыта. Разрешите доступ к камере и микрофону, если Windows запросит разрешение.";
+                    status.Text = "Конференция открыта. Подключение работает даже без камеры, микрофона или динамиков.";
                     status.Foreground = Brush("#278E55");
                 }
                 catch (Exception ex)
@@ -878,7 +814,20 @@ public sealed class MainWindow : Window
     private async Task ConfigureConferenceDocumentAsync(WebView2 web, string roomId)
     {
         var roomJson = JsonSerializer.Serialize(roomId);
-        var script = $$"""
+        var media = MediaDeviceSettings.Load();
+        var mediaJson = JsonSerializer.Serialize(new
+        {
+            microphoneName = media.MicrophoneName,
+            speakerName = media.SpeakerName,
+            cameraName = media.CameraName,
+            microphoneEnabled = media.MicrophoneEnabled,
+            speakerEnabled = media.SpeakerEnabled,
+            cameraEnabled = media.CameraEnabled,
+            microphoneVolume = Math.Clamp(media.MicrophoneVolume / 100.0, 0, 1),
+            speakerVolume = Math.Clamp(media.SpeakerVolume / 100.0, 0, 1)
+        });
+
+        var script = """
         (() => {
           const nativeStyle = document.createElement('style');
           nativeStyle.id = 'confgts-native-shell-style';
@@ -893,22 +842,157 @@ public sealed class MainWindow : Window
           document.getElementById(nativeStyle.id)?.remove();
           document.head.appendChild(nativeStyle);
 
-          const roomId = {{roomJson}};
+          const roomId = __CONFGTS_ROOM_JSON__;
+          const nativePrefs = __CONFGTS_MEDIA_JSON__;
+          const emptyStream = () => new MediaStream();
+
+          const findBrowserDevice = async (kind, wantedName) => {
+            if (!wantedName || !navigator.mediaDevices?.enumerateDevices) return null;
+            try {
+              const devices = await navigator.mediaDevices.enumerateDevices();
+              const normalized = String(wantedName).trim().toLocaleLowerCase();
+              return devices.find(d => d.kind === kind && String(d.label || '').trim().toLocaleLowerCase() === normalized)
+                  || devices.find(d => d.kind === kind && String(d.label || '').toLocaleLowerCase().includes(normalized))
+                  || null;
+            } catch {
+              return null;
+            }
+          };
+
+          const applyOutputSettings = async () => {
+            const volume = nativePrefs.speakerEnabled ? Number(nativePrefs.speakerVolume ?? 0.7) : 0;
+            let sinkId = '';
+            if (nativePrefs.speakerEnabled && nativePrefs.speakerName) {
+              const match = await findBrowserDevice('audiooutput', nativePrefs.speakerName);
+              sinkId = match?.deviceId || '';
+            }
+
+            for (const mediaElement of document.querySelectorAll('video, audio')) {
+              if (!mediaElement.muted) mediaElement.volume = Math.max(0, Math.min(1, volume));
+              if (sinkId && typeof mediaElement.setSinkId === 'function') {
+                try { await mediaElement.setSinkId(sinkId); } catch (e) { console.debug('ConfGTS setSinkId:', e); }
+              }
+            }
+          };
+
+          const nativeEnsureMedia = async () => {
+            if (localStream) return localStream;
+
+            const useAudio = !!nativePrefs.microphoneEnabled;
+            const useVideo = !!nativePrefs.cameraEnabled;
+            const devices = navigator.mediaDevices;
+
+            // Lack of WebRTC capture API, a missing device, denied permission or
+            // an insecure HTTP origin must never prevent joining the room.
+            if ((!useAudio && !useVideo) || !devices || typeof devices.getUserMedia !== 'function') {
+              localStream = emptyStream();
+              console.info('ConfGTS: joining without local media.');
+              return localStream;
+            }
+
+            try {
+              let capture = await devices.getUserMedia({
+                audio: useAudio ? { echoCancellation:true, noiseSuppression:true, autoGainControl:true } : false,
+                video: useVideo ? true : false
+              });
+
+              // After the first permission grant Chromium exposes device labels.
+              // Match the device names selected in native ConfGTS settings and
+              // reacquire only when a matching browser device exists.
+              try {
+                const mic = useAudio ? await findBrowserDevice('audioinput', nativePrefs.microphoneName) : null;
+                const cam = useVideo ? await findBrowserDevice('videoinput', nativePrefs.cameraName) : null;
+                if ((mic && mic.deviceId) || (cam && cam.deviceId)) {
+                  const exactCapture = await devices.getUserMedia({
+                    audio: useAudio
+                      ? {
+                          ...(mic?.deviceId ? {deviceId:{exact:mic.deviceId}} : {}),
+                          echoCancellation:true,
+                          noiseSuppression:true,
+                          autoGainControl:true
+                        }
+                      : false,
+                    video: useVideo
+                      ? (cam?.deviceId ? {deviceId:{exact:cam.deviceId}} : true)
+                      : false
+                  });
+                  capture.getTracks().forEach(t => t.stop());
+                  capture = exactCapture;
+                }
+              } catch (e) {
+                console.debug('ConfGTS: selected device fallback to browser default:', e);
+              }
+
+              rawStream = capture;
+              const tracks = [];
+              capture.getVideoTracks().forEach(t => tracks.push(t));
+
+              const audioTrack = capture.getAudioTracks()[0];
+              if (audioTrack) {
+                const gainValue = Math.max(0, Math.min(1, Number(nativePrefs.microphoneVolume ?? 1)));
+                try {
+                  const AudioCtx = window.AudioContext || window.webkitAudioContext;
+                  if (AudioCtx) {
+                    mediaAudioCtx = new AudioCtx();
+                    const src = mediaAudioCtx.createMediaStreamSource(new MediaStream([audioTrack]));
+                    const gain = mediaAudioCtx.createGain();
+                    gain.gain.value = gainValue;
+                    const dst = mediaAudioCtx.createMediaStreamDestination();
+                    src.connect(gain).connect(dst);
+                    dst.stream.getAudioTracks().forEach(t => tracks.push(t));
+                  } else {
+                    tracks.push(audioTrack);
+                  }
+                } catch (e) {
+                  console.debug('ConfGTS microphone gain fallback:', e);
+                  tracks.push(audioTrack);
+                }
+              }
+
+              localStream = new MediaStream(tracks);
+              await applyOutputSettings();
+              return localStream;
+            } catch (e) {
+              console.warn('ConfGTS: media unavailable, joining without local media.', e);
+              try { rawStream?.getTracks?.().forEach(t => t.stop()); } catch {}
+              rawStream = null;
+              localStream = emptyStream();
+              return localStream;
+            }
+          };
+
+          try {
+            ensureMedia = nativeEnsureMedia;
+          } catch {
+            window.ensureMedia = nativeEnsureMedia;
+          }
+
+          // Apply speaker level/output to remote media elements as they appear.
+          const outputObserver = new MutationObserver(() => { applyOutputSettings().catch(() => {}); });
+          outputObserver.observe(document.documentElement, { childList:true, subtree:true });
+          window.__confgtsNativeOutputObserver?.disconnect?.();
+          window.__confgtsNativeOutputObserver = outputObserver;
+          applyOutputSettings().catch(() => {});
+
           if (typeof selectRoom !== 'function' || typeof joinRoom !== 'function') {
             throw new Error('Серверная WebRTC-страница не содержит функций конференции.');
           }
 
           selectRoom(roomId)
             .then(() => joinRoom())
+            .then(() => applyOutputSettings())
             .catch(err => {
               console.error('ConfGTS native conference join failed', err);
               const box = document.createElement('div');
-              box.style.cssText = 'margin:20px;padding:16px;border-radius:12px;background:#fff1f0;color:#a72e2e';
-              box.textContent = 'Не удалось войти в конференцию: ' + (err?.message || err);
+              box.style.cssText = 'margin:20px;padding:16px;border-radius:12px;background:#fff8e8;color:#8a5a00';
+              box.textContent = 'Конференция открыта, но возникла ошибка локального медиа: ' + (err?.message || err);
               document.body.prepend(box);
             });
         })();
         """;
+        script = script
+            .Replace("__CONFGTS_ROOM_JSON__", roomJson, StringComparison.Ordinal)
+            .Replace("__CONFGTS_MEDIA_JSON__", mediaJson, StringComparison.Ordinal);
         await web.ExecuteScriptAsync(script);
     }
 
@@ -993,9 +1077,7 @@ public sealed class MainWindow : Window
         try
         {
             var ok = await _api.HealthAsync();
-            _serverText.Text = ok
-                ? "Сервер доступен · " + _api.EffectiveBaseUrl.Replace("http://", "").Replace("https://", "")
-                : "Сервер недоступен";
+            _serverText.Text = ok ? "Сервер доступен" : "Сервер недоступен";
             _serverDot.Fill = Brush(ok ? "#31B657" : "#D14343");
         }
         catch
@@ -1027,9 +1109,8 @@ public sealed class MainWindow : Window
 
         try
         {
-            var authType = SelectedAuthType();
-            StartupDiagnostics.Log("Login requested. Auth type: " + authType);
-            await _api.LoginAsync(_loginBox.Text.Trim(), _passwordBox.Password, authType);
+            StartupDiagnostics.Log("Login requested in automatic authentication mode.");
+            await _api.LoginAsync(_loginBox.Text.Trim(), _passwordBox.Password);
 
             _loginView.Visibility = Visibility.Collapsed;
             _dashboardView.Visibility = Visibility.Visible;
@@ -1047,23 +1128,6 @@ public sealed class MainWindow : Window
         {
             _loginButton.IsEnabled = true;
         }
-    }
-
-    private string SelectedAuthType() => _authModeBox.SelectedIndex switch
-    {
-        1 => "local",
-        2 => "domain",
-        _ => "auto"
-    };
-
-    private void UpdateLoginModeUi()
-    {
-        _loginBox.PlaceholderText = SelectedAuthType() switch
-        {
-            "local" => "Локальный логин ConfGTS",
-            "domain" => "Доменный логин (например ivanov)",
-            _ => "Доменный или локальный логин"
-        };
     }
 
     internal async Task RunSettingsSmokeTestAsync()

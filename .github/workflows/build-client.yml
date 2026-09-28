@@ -1,4 +1,4 @@
-name: Build ConfGTS Client 0.18.3
+name: Build ConfGTS Client 0.18.4
 
 on:
   push:
@@ -34,14 +34,20 @@ jobs:
         run: |
           $required = @(
             'artifacts\publish\ConfGTS.Client.exe',
-            'artifacts\msi\ConfGTS-0.18.3-x64.msi',
-            'artifacts\setup\ConfGTS-Setup-0.18.3-x64.exe'
+            'artifacts\msi\ConfGTS-0.18.4-x64.msi',
+            'artifacts\setup\ConfGTS-Setup-0.18.4-x64.exe'
           )
           foreach ($file in $required) { if (!(Test-Path $file)) { throw "Missing artifact: $file" } }
           foreach ($dll in @('vcruntime140.dll','vcruntime140_1.dll','msvcp140.dll')) {
             if (!(Test-Path (Join-Path 'artifacts\publish' $dll))) { throw "Client app-local runtime missing: $dll" }
           }
-          if (Test-Path 'artifacts\publish\NAudio.dll') { throw 'NAudio.dll must not be present in the crash-safe client build.' }
+          if (Test-Path 'artifacts\publish\NAudio.dll') { throw 'NAudio.dll must not be present in the client build.' }
+          $main = Get-Content '.\src\ConfGTS.Client\MainWindow.xaml.cs' -Raw -Encoding UTF8
+          $settings = Get-Content '.\src\ConfGTS.Client\MediaSettingsWindow.cs' -Raw -Encoding UTF8
+          if ($main -match 'Тип учетной записи' -or $main -match '_authModeBox') { throw 'Authentication type selector is still present.' }
+          if ($main -match 'Идентификатор:' -or $main -match 'Text = "Постоянная конференция",') { throw 'Conference metadata is still present in the client card.' }
+          if ($settings -match 'ms-settings:') { throw 'Device settings still open Windows Settings.' }
+          if ($settings -notmatch 'DeviceInformation.FindAllAsync') { throw 'In-app device enumeration is missing.' }
           Get-Item $required | Select-Object Name,Length | Format-Table -AutoSize
 
       - name: Settings navigation smoke test
@@ -53,7 +59,7 @@ jobs:
           $p = Start-Process $exe -ArgumentList '--self-test-settings' -PassThru
           Start-Sleep -Seconds 10
           $log = if (Test-Path $startupLog) { Get-Content $startupLog -Raw } else { '' }
-          if ($p.HasExited -or $log -notmatch 'Settings smoke test completed\.' -or $log -notmatch 'Safe MediaSettingsPanel constructor completed\.' -or $log -match 'Fatal error|Settings smoke test failed|XAML parsing failed') {
+          if ($p.HasExited -or $log -notmatch 'Settings smoke test completed\.' -or $log -notmatch 'MediaSettingsPanel 0.18.4 constructor completed\.' -or $log -notmatch 'In-app media settings initialized\.' -or $log -match 'Fatal error|Settings smoke test failed|XAML parsing failed') {
             if (Test-Path $startupLog) { Get-Content $startupLog -Tail 160 }
             Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
             throw 'Published client failed the settings navigation smoke test.'
@@ -63,7 +69,7 @@ jobs:
       - name: Test client MSI installation and settings
         shell: pwsh
         run: |
-          $msi = (Resolve-Path 'artifacts\msi\ConfGTS-0.18.3-x64.msi').Path
+          $msi = (Resolve-Path 'artifacts\msi\ConfGTS-0.18.4-x64.msi').Path
           $installedExe = Join-Path $env:ProgramFiles 'ГТС\ConfGTS\ConfGTS.Client.exe'
           $startMenu = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\ConfGTS\ConfGTS.lnk'
           $desktop = Join-Path ([Environment]::GetFolderPath('CommonDesktopDirectory')) 'ConfGTS.lnk'
@@ -88,7 +94,7 @@ jobs:
       - name: Test client EXE installation and settings
         shell: pwsh
         run: |
-          $setup = (Resolve-Path 'artifacts\setup\ConfGTS-Setup-0.18.3-x64.exe').Path
+          $setup = (Resolve-Path 'artifacts\setup\ConfGTS-Setup-0.18.4-x64.exe').Path
           $installedExe = Join-Path $env:ProgramFiles 'ГТС\ConfGTS\ConfGTS.Client.exe'
           $startupLog = "$env:LOCALAPPDATA\ConfGTS\logs\startup.log"
           $p = Start-Process $setup -ArgumentList @('/quiet','/norestart') -Wait -PassThru
@@ -111,7 +117,7 @@ jobs:
       - name: Generate SHA-256
         shell: pwsh
         run: |
-          $files = @('artifacts\msi\ConfGTS-0.18.3-x64.msi','artifacts\setup\ConfGTS-Setup-0.18.3-x64.exe')
+          $files = @('artifacts\msi\ConfGTS-0.18.4-x64.msi','artifacts\setup\ConfGTS-Setup-0.18.4-x64.exe')
           $lines = foreach ($file in $files) {
             $hash = Get-FileHash $file -Algorithm SHA256
             "$($hash.Hash.ToLower())  $([IO.Path]::GetFileName($file))"
@@ -122,13 +128,13 @@ jobs:
       - name: Upload tested client packages
         uses: actions/upload-artifact@v4
         with:
-          name: ConfGTS-Client-0.18.3-tested
+          name: ConfGTS-Client-0.18.4-tested
           if-no-files-found: error
           retention-days: 30
           compression-level: 0
           path: |
-            artifacts/msi/ConfGTS-0.18.3-x64.msi
-            artifacts/setup/ConfGTS-Setup-0.18.3-x64.exe
+            artifacts/msi/ConfGTS-0.18.4-x64.msi
+            artifacts/setup/ConfGTS-Setup-0.18.4-x64.exe
             artifacts/SHA256SUMS-client.txt
 
       - name: Publish client GitHub Release
@@ -137,6 +143,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release delete v0.18.3 --cleanup-tag --yes 2>$null
-          if ($LASTEXITCODE -ne 0) { Write-Host 'No previous v0.18.3 release to delete.' }
-          gh release create v0.18.3 'artifacts\msi\ConfGTS-0.18.3-x64.msi' 'artifacts\setup\ConfGTS-Setup-0.18.3-x64.exe' 'artifacts\SHA256SUMS-client.txt' --target '${{ github.sha }}' --title 'ConfGTS Client 0.18.3' --notes 'Клиентская сборка 0.18.3. Полностью заменена страница «Настройки устройств»: из билда удалён NAudio, страница не загружает COM/MediaCapture или драйверы и проходит отдельный smoke-тест навигации после установки MSI и EXE. На экране входа добавлен выбор локальной учетной записи ConfGTS или доменной учетной записи Active Directory.'
+          gh release delete v0.18.4 --cleanup-tag --yes 2>$null
+          if ($LASTEXITCODE -ne 0) { Write-Host 'No previous v0.18.4 release to delete.' }
+          gh release create v0.18.4 'artifacts\msi\ConfGTS-0.18.4-x64.msi' 'artifacts\setup\ConfGTS-Setup-0.18.4-x64.exe' 'artifacts\SHA256SUMS-client.txt' --target '${{ github.sha }}' --title 'ConfGTS Client 0.18.4' --notes 'Клиентская сборка 0.18.4. Удалён выбор типа учетной записи: сервер автоматически проверяет локальную учетную запись ConfGTS и Active Directory. Настройки камеры, микрофона и динамиков теперь реализованы внутри клиента без перехода в параметры Windows. Вход в конференцию не блокируется при отсутствии камеры, микрофона, динамиков, отказе в разрешении или недоступности getUserMedia. Из боковой панели убран адрес сервера, а из карточки конференции удалены описание, идентификатор и статус — остаётся название и кнопка подключения.'
