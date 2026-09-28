@@ -51,7 +51,10 @@ jobs:
           if ($ui -notmatch 'localStream=new MediaStream\(\);return localStream') {
             throw 'Server UI does not create an empty stream fallback.'
           }
-          Write-Host 'Conference can join without local media.' -ForegroundColor Green
+          if ($ui -notmatch 'ConfGTS: room not found' -or $ui -notmatch 'await loadRooms\(\)') {
+            throw 'Server UI is missing the room-selection startup-race guard.'
+          }
+          Write-Host 'Conference can join without local media and room selection is race-safe.' -ForegroundColor Green
 
       - name: Print route and LDAP structure
         shell: pwsh
