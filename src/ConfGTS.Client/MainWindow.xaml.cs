@@ -269,7 +269,7 @@ public sealed class MainWindow : Window
 
         panel.Children.Add(new TextBlock
         {
-            Text = "Версия 0.18.4 beta  |  © ГТС, 2026",
+            Text = "Версия 0.18.5 beta  |  © ГТС, 2026",
             FontSize = 11,
             Foreground = Brush("#8A9BAC"),
             HorizontalAlignment = HorizontalAlignment.Center,
@@ -433,8 +433,13 @@ public sealed class MainWindow : Window
 
     private async Task RefreshDashboardAsync()
     {
-        if (_dashboardRefreshRunning || _dashboardView.Visibility != Visibility.Visible)
+        if (_dashboardRefreshRunning ||
+            _dashboardView.Visibility != Visibility.Visible ||
+            _conferenceHost is not null ||
+            _mediaSettingsPanel is not null)
+        {
             return;
+        }
 
         _dashboardRefreshRunning = true;
         try
@@ -675,6 +680,10 @@ public sealed class MainWindow : Window
     {
         await CloseInlineSettingsAsync();
         await LeaveConferenceAsync(false);
+        StopDashboardTimer();
+
+        _dashboardServerText.Text = "●  Подключено";
+        _dashboardServerText.Foreground = Brush("#278E55");
 
         if (_dashboardMainScroll is not null)
             _dashboardMainScroll.Visibility = Visibility.Collapsed;
@@ -978,16 +987,38 @@ public sealed class MainWindow : Window
             throw new Error('Серверная WebRTC-страница не содержит функций конференции.');
           }
 
-          selectRoom(roomId)
-            .then(() => joinRoom())
-            .then(() => applyOutputSettings())
-            .catch(err => {
-              console.error('ConfGTS native conference join failed', err);
-              const box = document.createElement('div');
-              box.style.cssText = 'margin:20px;padding:16px;border-radius:12px;background:#fff8e8;color:#8a5a00';
-              box.textContent = 'Конференция открыта, но возникла ошибка локального медиа: ' + (err?.message || err);
-              document.body.prepend(box);
-            });
+          const waitForRoom = async () => {
+            for (let attempt = 0; attempt < 50; attempt++) {
+              if (Array.isArray(rooms) && rooms.some(r => r && r.id === roomId)) {
+                return true;
+              }
+
+              if (attempt === 0 && typeof loadRooms === 'function') {
+                try { await loadRooms(); } catch (e) { console.debug('ConfGTS room preload:', e); }
+              }
+
+              await new Promise(resolve => setTimeout(resolve, 100));
+            }
+
+            return false;
+          };
+
+          (async () => {
+            const roomReady = await waitForRoom();
+            if (!roomReady) {
+              throw new Error('Список конференций не успел загрузиться с сервера.');
+            }
+
+            await selectRoom(roomId);
+            await joinRoom();
+            await applyOutputSettings();
+          })().catch(err => {
+            console.error('ConfGTS native conference join failed', err);
+            const box = document.createElement('div');
+            box.style.cssText = 'margin:20px;padding:16px;border-radius:12px;background:#fff8e8;color:#8a5a00';
+            box.textContent = 'Не удалось полностью открыть конференцию: ' + (err?.message || err);
+            document.body.prepend(box);
+          });
         })();
         """;
         script = script
@@ -1023,6 +1054,7 @@ public sealed class MainWindow : Window
         {
             _dashboardMainScroll.Visibility = Visibility.Visible;
             await RefreshDashboardAsync();
+            StartDashboardTimer();
         }
     }
 

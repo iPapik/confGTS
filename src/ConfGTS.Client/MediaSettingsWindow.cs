@@ -33,6 +33,10 @@ public sealed class MediaSettingsPanel : Grid
     private readonly TextBlock _status = new();
     private readonly Button _refreshButton = new();
 
+    private List<DeviceChoice> _microphoneDevices = [];
+    private List<DeviceChoice> _speakerDevices = [];
+    private List<DeviceChoice> _cameraDevices = [];
+
     private bool _loading = true;
     private bool _closed;
 
@@ -40,10 +44,10 @@ public sealed class MediaSettingsPanel : Grid
 
     public MediaSettingsPanel()
     {
-        StartupDiagnostics.Log("MediaSettingsPanel 0.18.4 constructor started.");
+        StartupDiagnostics.Log("MediaSettingsPanel 0.18.5 constructor started.");
         Background = Brush(Bg);
         Children.Add(BuildUi());
-        StartupDiagnostics.Log("MediaSettingsPanel 0.18.4 constructor completed.");
+        StartupDiagnostics.Log("MediaSettingsPanel 0.18.5 constructor completed.");
     }
 
     public async Task InitializeAsync()
@@ -158,14 +162,18 @@ public sealed class MediaSettingsPanel : Grid
     {
         var panel = CardPanel("\uE720", "Микрофон");
 
-        ConfigureCombo(_microphone);
-        _microphone.PlaceholderText = "Микрофон не найден";
+        ConfigureCombo(_microphone, "Выберите микрофон");
         _microphone.SelectionChanged += (_, _) =>
         {
             if (_loading) return;
-            var selected = _microphone.SelectedItem as DeviceChoice;
-            _settings.MicrophoneId = selected?.Id ?? "";
-            _settings.MicrophoneName = selected?.Name ?? "";
+            SaveSelectedDevice(
+                _microphone,
+                _microphoneDevices,
+                (id, name) =>
+                {
+                    _settings.MicrophoneId = id;
+                    _settings.MicrophoneName = name;
+                });
             SaveSettings();
         };
 
@@ -174,7 +182,7 @@ public sealed class MediaSettingsPanel : Grid
         {
             if (_loading) return;
             _settings.MicrophoneEnabled = _microphoneEnabled.IsOn;
-            _microphone.IsEnabled = _microphoneEnabled.IsOn && _microphone.Items.Count > 0;
+            _microphone.IsEnabled = _microphoneEnabled.IsOn;
             _microphoneVolume.IsEnabled = _microphoneEnabled.IsOn;
             SaveSettings();
         };
@@ -192,6 +200,7 @@ public sealed class MediaSettingsPanel : Grid
 
         ConfigureStatus(_microphoneStatus);
         panel.Children.Add(_microphoneEnabled);
+        panel.Children.Add(DeviceLabel("Устройство"));
         panel.Children.Add(_microphone);
         panel.Children.Add(_microphoneVolume);
         panel.Children.Add(_microphoneStatus);
@@ -202,14 +211,18 @@ public sealed class MediaSettingsPanel : Grid
     {
         var panel = CardPanel("\uE767", "Динамики / наушники");
 
-        ConfigureCombo(_speaker);
-        _speaker.PlaceholderText = "Устройство вывода не найдено";
+        ConfigureCombo(_speaker, "Выберите устройство вывода");
         _speaker.SelectionChanged += (_, _) =>
         {
             if (_loading) return;
-            var selected = _speaker.SelectedItem as DeviceChoice;
-            _settings.SpeakerId = selected?.Id ?? "";
-            _settings.SpeakerName = selected?.Name ?? "";
+            SaveSelectedDevice(
+                _speaker,
+                _speakerDevices,
+                (id, name) =>
+                {
+                    _settings.SpeakerId = id;
+                    _settings.SpeakerName = name;
+                });
             SaveSettings();
         };
 
@@ -218,7 +231,7 @@ public sealed class MediaSettingsPanel : Grid
         {
             if (_loading) return;
             _settings.SpeakerEnabled = _speakerEnabled.IsOn;
-            _speaker.IsEnabled = _speakerEnabled.IsOn && _speaker.Items.Count > 0;
+            _speaker.IsEnabled = _speakerEnabled.IsOn;
             _speakerVolume.IsEnabled = _speakerEnabled.IsOn;
             SaveSettings();
         };
@@ -236,6 +249,7 @@ public sealed class MediaSettingsPanel : Grid
 
         ConfigureStatus(_speakerStatus);
         panel.Children.Add(_speakerEnabled);
+        panel.Children.Add(DeviceLabel("Устройство"));
         panel.Children.Add(_speaker);
         panel.Children.Add(_speakerVolume);
         panel.Children.Add(_speakerStatus);
@@ -246,14 +260,18 @@ public sealed class MediaSettingsPanel : Grid
     {
         var panel = CardPanel("\uE8B8", "Камера");
 
-        ConfigureCombo(_camera);
-        _camera.PlaceholderText = "Камера не найдена";
+        ConfigureCombo(_camera, "Выберите камеру");
         _camera.SelectionChanged += (_, _) =>
         {
             if (_loading) return;
-            var selected = _camera.SelectedItem as DeviceChoice;
-            _settings.CameraId = selected?.Id ?? "";
-            _settings.CameraName = selected?.Name ?? "";
+            SaveSelectedDevice(
+                _camera,
+                _cameraDevices,
+                (id, name) =>
+                {
+                    _settings.CameraId = id;
+                    _settings.CameraName = name;
+                });
             SaveSettings();
         };
 
@@ -262,12 +280,13 @@ public sealed class MediaSettingsPanel : Grid
         {
             if (_loading) return;
             _settings.CameraEnabled = _cameraEnabled.IsOn;
-            _camera.IsEnabled = _cameraEnabled.IsOn && _camera.Items.Count > 0;
+            _camera.IsEnabled = _cameraEnabled.IsOn;
             SaveSettings();
         };
 
         ConfigureStatus(_cameraStatus);
         panel.Children.Add(_cameraEnabled);
+        panel.Children.Add(DeviceLabel("Устройство"));
         panel.Children.Add(_camera);
         panel.Children.Add(_cameraStatus);
         return Card(panel);
@@ -317,46 +336,65 @@ public sealed class MediaSettingsPanel : Grid
         if (_closed || !_refreshButton.IsEnabled)
             return;
 
+        _loading = true;
         _refreshButton.IsEnabled = false;
         _status.Text = "Поиск устройств…";
         _status.Foreground = Brush(Muted);
 
         try
         {
-            var microphones = await EnumerateAsync(DeviceClass.AudioCapture, "микрофонов");
+            _microphoneDevices = await EnumerateAsync(DeviceClass.AudioCapture, "микрофонов");
             if (_closed) return;
-            var speakers = await EnumerateAsync(DeviceClass.AudioRender, "устройств вывода");
+            _speakerDevices = await EnumerateAsync(DeviceClass.AudioRender, "устройств вывода");
             if (_closed) return;
-            var cameras = await EnumerateAsync(DeviceClass.VideoCapture, "камер");
+            _cameraDevices = await EnumerateAsync(DeviceClass.VideoCapture, "камер");
             if (_closed) return;
 
-            BindDevices(_microphone, microphones, _settings.MicrophoneId, _settings.MicrophoneName);
-            BindDevices(_speaker, speakers, _settings.SpeakerId, _settings.SpeakerName);
-            BindDevices(_camera, cameras, _settings.CameraId, _settings.CameraName);
+            BindDevices(
+                _microphone,
+                _microphoneDevices,
+                _settings.MicrophoneId,
+                _settings.MicrophoneName,
+                "Микрофон не найден");
+            BindDevices(
+                _speaker,
+                _speakerDevices,
+                _settings.SpeakerId,
+                _settings.SpeakerName,
+                "Динамики / наушники не найдены");
+            BindDevices(
+                _camera,
+                _cameraDevices,
+                _settings.CameraId,
+                _settings.CameraName,
+                "Камера не найдена");
 
-            _microphone.IsEnabled = _settings.MicrophoneEnabled && microphones.Count > 0;
-            _speaker.IsEnabled = _settings.SpeakerEnabled && speakers.Count > 0;
-            _camera.IsEnabled = _settings.CameraEnabled && cameras.Count > 0;
+            _microphone.IsEnabled = _settings.MicrophoneEnabled;
+            _speaker.IsEnabled = _settings.SpeakerEnabled;
+            _camera.IsEnabled = _settings.CameraEnabled;
             _microphoneVolume.IsEnabled = _settings.MicrophoneEnabled;
             _speakerVolume.IsEnabled = _settings.SpeakerEnabled;
 
-            _microphoneStatus.Text = microphones.Count == 0
+            _microphoneStatus.Text = _microphoneDevices.Count == 0
                 ? "Микрофон не найден. В конференцию всё равно можно подключиться."
-                : $"Найдено микрофонов: {microphones.Count}.";
-            _speakerStatus.Text = speakers.Count == 0
+                : $"Найдено микрофонов: {_microphoneDevices.Count}.";
+            _speakerStatus.Text = _speakerDevices.Count == 0
                 ? "Динамики или наушники не найдены. Подключение к конференции не блокируется."
-                : $"Найдено устройств вывода: {speakers.Count}.";
-            _cameraStatus.Text = cameras.Count == 0
-                ? "Камера не найдена. В конференцию можно войти без видео."
-                : $"Найдено камер: {cameras.Count}.";
+                : $"Найдено устройств вывода: {_speakerDevices.Count}.";
+            _cameraStatus.Text = _cameraDevices.Count == 0
+                ? "Камера не найдена. Поле выбора остаётся доступным, а в конференцию можно войти без видео."
+                : $"Найдено камер: {_cameraDevices.Count}.";
 
             SyncSelectedValues();
-            _status.Text = "Устройства обновлены. Выбор сохраняется автоматически.";
+            _status.Text = "Устройства обновлены. Выбранные устройства отображаются в полях и сохраняются автоматически.";
             _status.Foreground = Brush("#278E55");
         }
         catch (Exception ex)
         {
             StartupDiagnostics.Log("Unexpected in-app device settings refresh failure.", ex);
+            EnsureEmptyPlaceholder(_microphone, "Микрофон не найден");
+            EnsureEmptyPlaceholder(_speaker, "Динамики / наушники не найдены");
+            EnsureEmptyPlaceholder(_camera, "Камера не найдена");
             _status.Text = "Не удалось получить часть устройств. Это не мешает входу в конференцию.";
             _status.Foreground = Brush("#B25C28");
         }
@@ -386,61 +424,91 @@ public sealed class MediaSettingsPanel : Grid
         }
     }
 
-    private static void BindDevices(ComboBox combo, IReadOnlyList<DeviceChoice> devices, string savedId, string savedName)
+    private static void BindDevices(
+        ComboBox combo,
+        IReadOnlyList<DeviceChoice> devices,
+        string savedId,
+        string savedName,
+        string emptyText)
     {
-        combo.ItemsSource = devices;
+        combo.ItemsSource = null;
 
         if (devices.Count == 0)
         {
-            combo.SelectedItem = null;
+            combo.ItemsSource = new[] { emptyText };
+            combo.SelectedIndex = 0;
             return;
         }
 
-        var selected = devices.FirstOrDefault(d =>
-                           !string.IsNullOrWhiteSpace(savedId) &&
-                           string.Equals(d.Id, savedId, StringComparison.OrdinalIgnoreCase))
-                       ?? devices.FirstOrDefault(d =>
-                           !string.IsNullOrWhiteSpace(savedName) &&
-                           string.Equals(d.Name, savedName, StringComparison.CurrentCultureIgnoreCase))
-                       ?? devices[0];
+        var selectedIndex = 0;
+        for (var i = 0; i < devices.Count; i++)
+        {
+            if ((!string.IsNullOrWhiteSpace(savedId) &&
+                 string.Equals(devices[i].Id, savedId, StringComparison.OrdinalIgnoreCase)) ||
+                (!string.IsNullOrWhiteSpace(savedName) &&
+                 string.Equals(devices[i].Name, savedName, StringComparison.CurrentCultureIgnoreCase)))
+            {
+                selectedIndex = i;
+                break;
+            }
+        }
 
-        combo.SelectedItem = selected;
+        combo.ItemsSource = devices.Select(d => d.Name).ToList();
+        combo.SelectedIndex = selectedIndex;
+    }
+
+    private static void EnsureEmptyPlaceholder(ComboBox combo, string emptyText)
+    {
+        if (combo.Items.Count > 0)
+            return;
+
+        combo.ItemsSource = new[] { emptyText };
+        combo.SelectedIndex = 0;
+    }
+
+    private static void SaveSelectedDevice(
+        ComboBox combo,
+        IReadOnlyList<DeviceChoice> devices,
+        Action<string, string> save)
+    {
+        if (devices.Count == 0 || combo.SelectedIndex < 0 || combo.SelectedIndex >= devices.Count)
+        {
+            save("", "");
+            return;
+        }
+
+        var selected = devices[combo.SelectedIndex];
+        save(selected.Id, selected.Name);
     }
 
     private void SyncSelectedValues()
     {
-        if (_microphone.SelectedItem is DeviceChoice microphone)
-        {
-            _settings.MicrophoneId = microphone.Id;
-            _settings.MicrophoneName = microphone.Name;
-        }
-        else
-        {
-            _settings.MicrophoneId = "";
-            _settings.MicrophoneName = "";
-        }
+        SaveSelectedDevice(
+            _microphone,
+            _microphoneDevices,
+            (id, name) =>
+            {
+                _settings.MicrophoneId = id;
+                _settings.MicrophoneName = name;
+            });
 
-        if (_speaker.SelectedItem is DeviceChoice speaker)
-        {
-            _settings.SpeakerId = speaker.Id;
-            _settings.SpeakerName = speaker.Name;
-        }
-        else
-        {
-            _settings.SpeakerId = "";
-            _settings.SpeakerName = "";
-        }
+        SaveSelectedDevice(
+            _speaker,
+            _speakerDevices,
+            (id, name) =>
+            {
+                _settings.SpeakerId = id;
+                _settings.SpeakerName = name;
+            });
 
-        if (_camera.SelectedItem is DeviceChoice camera)
-        {
-            _settings.CameraId = camera.Id;
-            _settings.CameraName = camera.Name;
-        }
-        else
-        {
-            _settings.CameraId = "";
-            _settings.CameraName = "";
-        }
+        SaveSelectedDevice(
+            _camera,
+            _cameraDevices,
+            (id, name) =>
+            {
+                _settings.CameraId = id;
+                _settings.CameraName = name;
+            });
     }
 
     private void SaveSettings()
@@ -453,15 +521,41 @@ public sealed class MediaSettingsPanel : Grid
         _settings.Save();
     }
 
-    private static void ConfigureCombo(ComboBox combo)
+    private static void ConfigureCombo(ComboBox combo, string placeholder)
     {
         combo.HorizontalAlignment = HorizontalAlignment.Stretch;
+        combo.HorizontalContentAlignment = HorizontalAlignment.Stretch;
         combo.MinHeight = 44;
+        combo.Height = 44;
+        combo.FontSize = 14;
+        combo.Padding = new Thickness(12, 0, 38, 0);
+        combo.PlaceholderText = placeholder;
         combo.Background = Brush("#FFFFFF");
+        combo.Foreground = Brush(Text);
         combo.BorderBrush = Brush(Line);
         combo.BorderThickness = new Thickness(1);
         combo.CornerRadius = new CornerRadius(10);
+
+        combo.Resources["ComboBoxBackground"] = Brush("#FFFFFF");
+        combo.Resources["ComboBoxBackgroundPointerOver"] = Brush("#F7FCFF");
+        combo.Resources["ComboBoxBackgroundPressed"] = Brush("#F1F8FC");
+        combo.Resources["ComboBoxForeground"] = Brush(Text);
+        combo.Resources["ComboBoxForegroundPointerOver"] = Brush(Text);
+        combo.Resources["ComboBoxForegroundPressed"] = Brush(Text);
+        combo.Resources["ComboBoxBorderBrush"] = Brush(Line);
+        combo.Resources["ComboBoxBorderBrushPointerOver"] = Brush(Blue);
+        combo.Resources["ComboBoxBorderBrushPressed"] = Brush(Blue);
+        combo.Resources["ComboBoxPlaceholderForeground"] = Brush(Muted);
     }
+
+    private static TextBlock DeviceLabel(string text) => new()
+    {
+        Text = text,
+        FontSize = 12,
+        FontWeight = FontWeights.SemiBold,
+        Foreground = Brush(Text),
+        Margin = new Thickness(0, 2, 0, -4)
+    };
 
     private static void ConfigureStatus(TextBlock block)
     {
@@ -531,6 +625,5 @@ public sealed class MediaSettingsPanel : Grid
 
         public string Id { get; }
         public string Name { get; }
-        public override string ToString() => Name;
     }
 }
