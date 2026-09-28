@@ -35,7 +35,19 @@ sid := lr.Session.ID
     $store = $store.Replace($stopRoomAnchor, $stopRoomExpanded.TrimEnd())
 }
 
-$emptyRoomPattern = '(?m)^\s*id := lr\.Session\.ID\s*
+$emptyRoomPattern = '(?m)^\s*id := lr\.Session\.ID\s*$'
+if ([regex]::IsMatch($store, $emptyRoomPattern) -and -not $store.Contains('Finalize unfinished recordings when the room becomes empty.')) {
+    $emptyRoomExpanded = @'
+	id := lr.Session.ID
+	// Finalize unfinished recordings when the room becomes empty.
+	for i := range s.state.Recordings {
+		if s.state.Recordings[i].SessionID == id && s.state.Recordings[i].FinishedAt == nil {
+			s.state.Recordings[i].FinishedAt = &now
+		}
+	}
+'@
+    $store = [regex]::Replace($store, $emptyRoomPattern, $emptyRoomExpanded.Trim(), 1)
+}
 
 if (-not $store.Contains('func (s *Store) RecordingByCaptureID(')) {
     $recordingByIdAnchor = 'func (s *Store) RecordingByID(id string) (Recording, bool) {'
