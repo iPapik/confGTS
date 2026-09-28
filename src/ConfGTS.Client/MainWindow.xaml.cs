@@ -827,7 +827,7 @@ public sealed class MainWindow : Window
             speakerVolume = Math.Clamp(media.SpeakerVolume / 100.0, 0, 1)
         });
 
-        var script = $$"""
+        var script = """
         (() => {
           const nativeStyle = document.createElement('style');
           nativeStyle.id = 'confgts-native-shell-style';
