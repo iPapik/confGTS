@@ -67,7 +67,7 @@ public sealed class MainWindow : Window
         _ = CheckServerAsync();
 
         if (!Environment.GetCommandLineArgs().Any(
-                x => string.Equals(x, "--self-test-settings", StringComparison.OrdinalIgnoreCase)))
+                x => x.StartsWith("--self-test-", StringComparison.OrdinalIgnoreCase)))
         {
             _ = RestoreRememberedLoginAsync();
         }
