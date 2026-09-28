@@ -44,10 +44,10 @@ public sealed class MediaSettingsPanel : Grid
 
     public MediaSettingsPanel()
     {
-        StartupDiagnostics.Log("MediaSettingsPanel 0.18.7 constructor started.");
+        StartupDiagnostics.Log("MediaSettingsPanel 0.18.8 constructor started.");
         Background = Brush(Bg);
         Children.Add(BuildUi());
-        StartupDiagnostics.Log("MediaSettingsPanel 0.18.7 constructor completed.");
+        StartupDiagnostics.Log("MediaSettingsPanel 0.18.8 constructor completed.");
     }
 
     public async Task InitializeAsync()
@@ -91,21 +91,6 @@ public sealed class MediaSettingsPanel : Grid
 
         outer.Children.Add(BuildHeader());
 
-        _status.FontSize = 13;
-        _status.Foreground = Brush(Muted);
-        _status.TextWrapping = TextWrapping.Wrap;
-        _status.Text = "Загрузка устройств…";
-
-        outer.Children.Add(new Border
-        {
-            Background = Brush("#F7FCFF"),
-            BorderBrush = Brush("#C9E4EF"),
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(12),
-            Padding = new Thickness(16, 12, 16, 12),
-            Child = _status
-        });
-
         outer.Children.Add(BuildMicrophoneCard());
         outer.Children.Add(BuildSpeakerCard());
         outer.Children.Add(BuildCameraCard());
@@ -128,12 +113,6 @@ public sealed class MediaSettingsPanel : Grid
             FontSize = 28,
             FontWeight = FontWeights.Bold,
             Foreground = Brush(Navy)
-        });
-        title.Children.Add(new TextBlock
-        {
-            Text = "Камера, микрофон и звук настраиваются внутри ConfGTS",
-            FontSize = 13,
-            Foreground = Brush(Muted)
         });
         grid.Children.Add(title);
 
