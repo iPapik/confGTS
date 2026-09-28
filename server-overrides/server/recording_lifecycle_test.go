@@ -1,6 +1,7 @@
 package main
 
 import (
+	"time"
 	"os"
 	"path/filepath"
 	"testing"
@@ -82,5 +83,24 @@ func TestRecordingFinalizedWhenAdminStopsRoom(t *testing.T) {
 	session, participants, recorder := s.RoomStatus(room.ID)
 	if session != nil || len(participants) != 0 || recorder != "" {
 		t.Fatalf("room remained active after StopRoom: session=%v participants=%d recorder=%q", session, len(participants), recorder)
+	}
+}
+
+
+func TestImmediateAdminStopAllowsStarterFinalChunk(t *testing.T) {
+	s, room := newRecordingTestStore(t)
+	u := User{Username: `TEPLO\recorder`, DisplayName: "Recorder"}
+	session, _, recorder, err := s.Join(room.ID, u)
+	if err != nil {
+		t.Fatalf("Join: %v", err)
+	}
+	if session == nil || recorder != "recorder" {
+		t.Fatalf("unexpected session/recorder: session=%v recorder=%q", session, recorder)
+	}
+	if err := s.StopRoom(room.ID, "administrator"); err != nil {
+		t.Fatalf("StopRoom: %v", err)
+	}
+	if !s.CanUploadEndedSessionRecording(session.ID, u.Username, 30*time.Second) {
+		t.Fatal("session starter was not allowed to upload the final chunk after immediate admin stop")
 	}
 }
