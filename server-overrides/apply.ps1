@@ -2,7 +2,7 @@ $ErrorActionPreference = "Stop"
 
 $root = Split-Path -Parent $PSScriptRoot
 
-Write-Host "Applying ConfGTS Server 0.18.2 overlays..." -ForegroundColor Cyan
+Write-Host "Applying ConfGTS Server 0.18.7 overlays..." -ForegroundColor Cyan
 
 Copy-Item (Join-Path $PSScriptRoot "src\*") (Join-Path $root "src") -Recurse -Force
 Copy-Item (Join-Path $PSScriptRoot "server\*") (Join-Path $root "server") -Recurse -Force
@@ -24,8 +24,8 @@ Set-Content $storePath $store -Encoding UTF8 -NoNewline
 
 $mainPath = Join-Path $root "server\main.go"
 $main = Get-Content $mainPath -Raw -Encoding UTF8
-$main = $main.Replace('const Version = "0.16.0"', 'const Version = "0.18.2"')
-$main = $main.Replace('const Version = "0.16.1"', 'const Version = "0.18.2"')
+$main = $main.Replace('const Version = "0.16.0"', 'const Version = "0.18.7"')
+$main = $main.Replace('const Version = "0.16.1"', 'const Version = "0.18.7"')
 $main = $main.Replace('cfg.ListenAddr == ":8090" {', 'cfg.ListenAddr == ":8090" || cfg.ListenAddr == "0.0.0.0:8090" {')
 $main = $main.Replace('cfg.ListenAddr = "127.0.0.1:" + strconv.Itoa(n)', 'cfg.ListenAddr = "0.0.0.0:" + strconv.Itoa(n)')
 $main = $main.Replace('addr = "127.0.0.1:8090"', 'addr = "0.0.0.0:8090"')
@@ -192,6 +192,38 @@ if ($selectRoomRegex.IsMatch($ui)) {
     throw 'ConfGTS selectRoom startup-race guard was not applied.'
 }
 
+# Recording is assigned to the first participant by Store.Join. The elected
+# recorder composites every visible video/screen stream plus all audio into a
+# WebM stream and uploads chunks to the server. Flush and finalize the recording
+# BEFORE the recorder leaves the room; otherwise the final chunk can be rejected
+# after Store.Leave clears/reassigns Recorder.
+$stopRecordingPattern = '(?s)function stopRecording\(\)\{.*?\}\r?\nwindow\.addEventListener'
+$stopRecordingReplacement = @'
+async function stopRecording(){if(!recorder||recorder.state==='inactive')return recordQueue;let active=recorder;return new Promise(resolve=>{let oldStop=active.onstop;active.onstop=()=>{try{if(oldStop)oldStop()}finally{Promise.resolve(recordQueue).finally(resolve)}};try{active.requestData()}catch{};try{active.stop()}catch{resolve()}})}
+window.addEventListener
+'@
+$stopRecordingRegex = [regex]::new($stopRecordingPattern)
+if ($stopRecordingRegex.IsMatch($ui)) {
+    $ui = $stopRecordingRegex.Replace($ui, $stopRecordingReplacement.TrimEnd("`r","`n"), 1)
+} elseif (-not $ui.Contains('Promise.resolve(recordQueue).finally(resolve)')) {
+    throw 'ConfGTS stopRecording function was not found.'
+}
+
+$leaveRoomPattern = '(?s)async function leaveRoom\(\)\{.*?\}\r?\nfunction addVideoPreviewHome'
+$leaveRoomReplacement = @'
+async function leaveRoom(){if(!currentRoom)return;stopLoops(false);await stopRecording();try{await api('/api/rooms/'+currentRoom+'/leave',{method:'POST'})}catch{};for(let [k,p] of peers){p.close()}peers.clear();document.querySelectorAll('.video-tile').forEach(x=>x.remove());addVideoPreviewHome();roomState=null;$('#conference').style.display='none';$('#joinBtn').style.display='inline-flex';$('#leaveBtn').style.display='none';await loadRooms()}
+function addVideoPreviewHome
+'@
+$leaveRoomRegex = [regex]::new($leaveRoomPattern)
+if ($leaveRoomRegex.IsMatch($ui)) {
+    $ui = $leaveRoomRegex.Replace($ui, $leaveRoomReplacement.TrimEnd("`r","`n"), 1)
+} elseif (-not $ui.Contains('stopLoops(false);await stopRecording();try{await api')) {
+    throw 'ConfGTS leaveRoom recording-flush patch was not applied.'
+}
+
+# Reduce chunk duration so an unexpected process loss can only lose a small tail.
+$ui = $ui.Replace('recorder.start(15000)', 'recorder.start(5000)')
+
 Set-Content $uiPath $ui -Encoding UTF8 -NoNewline
 
 # Apply the same palette to server admin pages that contain a few
@@ -213,13 +245,13 @@ $versionTargets = @(
 foreach ($target in $versionTargets) {
     if (Test-Path $target -PathType Leaf) {
         $text = Get-Content $target -Raw -Encoding UTF8
-        $text = $text.Replace("0.16.0", "0.18.2").Replace("0.16.1", "0.18.2").Replace("0.17.0", "0.18.2").Replace("0.18.0", "0.18.2").Replace("0.18.1", "0.18.2").Replace("0.18.0", "0.18.2").Replace("0.18.1", "0.18.2")
+        $text = $text.Replace("0.16.0", "0.18.7").Replace("0.16.1", "0.18.7").Replace("0.17.0", "0.18.7").Replace("0.18.0", "0.18.7").Replace("0.18.1", "0.18.7").Replace("0.18.0", "0.18.7").Replace("0.18.1", "0.18.7")
         Set-Content $target $text -Encoding UTF8 -NoNewline
     } elseif (Test-Path $target -PathType Container) {
         Get-ChildItem $target -Recurse -File -Include *.go,*.cs,*.xaml,*.csproj,*.wxs,*.wixproj,*.ps1 | ForEach-Object {
             $text = Get-Content $_.FullName -Raw -Encoding UTF8
             if ($text.Contains("0.16.0") -or $text.Contains("0.16.1") -or $text.Contains("0.17.0") -or $text.Contains("0.18.0") -or $text.Contains("0.18.1")) {
-                $text = $text.Replace("0.16.0", "0.18.2").Replace("0.16.1", "0.18.2").Replace("0.17.0", "0.18.2")
+                $text = $text.Replace("0.16.0", "0.18.7").Replace("0.16.1", "0.18.7").Replace("0.17.0", "0.18.7")
                 Set-Content $_.FullName $text -Encoding UTF8 -NoNewline
             }
         }
@@ -257,7 +289,7 @@ $serverBundle = Join-Path $root "Installer\Server\Bootstrapper\Bundle.wxs"
 if (Test-Path $serverBundle) {
     $bundle = Get-Content $serverBundle -Raw -Encoding UTF8
     if (-not $bundle.Contains('IconSourceFile=')) {
-        $bundle = $bundle.Replace('          Version="0.18.2"', '          Version="0.18.2"' + [Environment]::NewLine + '          IconSourceFile="!(bindpath.assets)\ConfGTS.ico"')
+        $bundle = $bundle.Replace('          Version="0.18.7"', '          Version="0.18.7"' + [Environment]::NewLine + '          IconSourceFile="!(bindpath.assets)\ConfGTS.ico"')
     }
     Set-Content $serverBundle $bundle -Encoding UTF8 -NoNewline
 }
