@@ -183,13 +183,7 @@ if (-not $web.Contains('"time"')) {
         1)
 }
 
-$recordAuthOld = @'
-	sess, _, recorder := a.store.RoomStatus(roomID)
-	if sess == nil || sess.ID != sessionID || recorder != normUser(u.Username) {
-		http.Error(w, "not recorder", 403)
-		return
-	}
-'@
+$recordAuthPattern = '(?ms)^\s*sess, _, recorder := a\.store\.RoomStatus\(roomID\)\r?\n\s*if sess == nil \|\| sess\.ID != sessionID \|\| recorder != normUser\(u\.Username\) \{\r?\n\s*http\.Error\(w, "not recorder", 403\)\r?\n\s*return\r?\n\s*\}'
 $recordAuthNew = @'
 	sess, _, recorder := a.store.RoomStatus(roomID)
 	authorized := sess != nil && sess.ID == sessionID && recorder == normUser(u.Username)
@@ -208,8 +202,9 @@ $recordAuthNew = @'
 		return
 	}
 '@
-if ($web.Contains($recordAuthOld)) {
-    $web = $web.Replace($recordAuthOld, $recordAuthNew)
+$recordAuthRegex = [regex]::new($recordAuthPattern)
+if ($recordAuthRegex.IsMatch($web)) {
+    $web = $recordAuthRegex.Replace($web, $recordAuthNew.Trim(), 1)
 } elseif (-not $web.Contains('time.Since(*existing.FinishedAt) <= 30*time.Second')) {
     throw 'Recording upload authorization block was not found.'
 }
