@@ -35,10 +35,399 @@ sid := lr.Session.ID
     $store = $store.Replace($stopRoomAnchor, $stopRoomExpanded.TrimEnd())
 }
 
-$emptyRoomAnchor = 'id := lr.Session.ID'
-if ($store.Contains($emptyRoomAnchor) -and -not $store.Contains('Finalize unfinished recordings when the room becomes empty.')) {
+$emptyRoomPattern = '(?m)^\s*id := lr\.Session\.ID\s*
+
+if (-not $store.Contains('func (s *Store) RecordingByCaptureID(')) {
+    $recordingByIdAnchor = 'func (s *Store) RecordingByID(id string) (Recording, bool) {'
+    $recordingByCapture = @'
+func (s *Store) RecordingByCaptureID(captureID string) (Recording, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, r := range s.state.Recordings {
+		if r.CaptureID == captureID {
+			return r, true
+		}
+	}
+	return Recording{}, false
+}
+
+'@
+    if ($store.Contains($recordingByIdAnchor)) {
+        $store = $store.Replace($recordingByIdAnchor, $recordingByCapture + $recordingByIdAnchor)
+    } else {
+        throw 'RecordingByID anchor not found.'
+    }
+}
+
+Set-Content $storePath $store -Encoding UTF8 -NoNewline
+
+$mainPath = Join-Path $root "server\main.go"
+$main = Get-Content $mainPath -Raw -Encoding UTF8
+$main = $main.Replace('const Version = "0.16.0"', 'const Version = "0.18.8"')
+$main = $main.Replace('const Version = "0.16.1"', 'const Version = "0.18.8"')
+$main = $main.Replace('cfg.ListenAddr == ":8090" {', 'cfg.ListenAddr == ":8090" || cfg.ListenAddr == "0.0.0.0:8090" {')
+$main = $main.Replace('cfg.ListenAddr = "127.0.0.1:" + strconv.Itoa(n)', 'cfg.ListenAddr = "0.0.0.0:" + strconv.Itoa(n)')
+$main = $main.Replace('addr = "127.0.0.1:8090"', 'addr = "0.0.0.0:8090"')
+$httpsPattern = '(?m)^\tcfg := store\.Config\(\)\r?\n\taddr := strings\.TrimSpace\(cfg\.ListenAddr\)'
+$httpsBlock = @'
+	cfg := store.Config()
+	if cfg.HTTPS.Enabled {
+		cfgWithCert, certErr := ensureHTTPSCertificate(cfg)
+		if certErr != nil {
+			return certErr
+		}
+		cfg = cfgWithCert
+		_ = store.SaveConfig(cfg)
+	}
+	addr := strings.TrimSpace(cfg.ListenAddr)
+'@
+$httpsBlock = $httpsBlock -replace "`r`n", "`n"
+$httpsRegex = [regex]::new($httpsPattern)
+if ($httpsRegex.IsMatch($main)) {
+    $main = $httpsRegex.Replace($main, $httpsBlock.TrimEnd("`r","`n"), 1)
+} else {
+    Write-Host "HTTPS runServer anchor not found; continuing." -ForegroundColor Yellow
+}
+Set-Content $mainPath $main -Encoding UTF8 -NoNewline
+
+$adminPath = Join-Path $root "server\admin.go"
+$admin = Get-Content $adminPath -Raw -Encoding UTF8
+$admin = $admin.Replace('c.ListenAddr = "127.0.0.1:8090"', 'c.ListenAddr = "0.0.0.0:8090"')
+
+# Local users in ConfGTS do not require e-mail. Keep the storage/API call
+# compatible by passing an empty string and remove the field from the form.
+$admin = $admin.Replace(
+    'a.store.CreateLocalUser(r.FormValue("username"), r.FormValue("display_name"), r.FormValue("email"), r.FormValue("password"), u.Username)',
+    'a.store.CreateLocalUser(r.FormValue("username"), r.FormValue("display_name"), "", r.FormValue("password"), u.Username)')
+$admin = $admin.Replace(
+    '<div class=field><label>E-mail</label><input name=email type=email></div>',
+    '')
+Set-Content $adminPath $admin -Encoding UTF8 -NoNewline
+
+# Client 0.18.3 can explicitly choose local ConfGTS authentication or
+# LDAP/Active Directory. Older clients remain compatible because the default
+# "auto" mode preserves the existing local-first behaviour.
+$webPath = Join-Path $root "server\web.go"
+$web = Get-Content $webPath -Raw -Encoding UTF8
+if (-not $web.Contains('AuthType string `json:"auth_type"`')) {
+    $web = $web.Replace(
+        'Password string `json:"password"`',
+        'Password string `json:"password"`' + [Environment]::NewLine + "`t`tAuthType string ``json:`"auth_type`"``")
+}
+
+$apiAuthPattern = '(?ms)\tlocalOK := false\r?\n\tif a\.store\.HasLocalUser\(username\) \{.*?\r?\n\t\}\r?\n\tif err != nil \|\|'
+$apiAuthReplacement = @'
+	localOK := false
+	authType := strings.ToLower(strings.TrimSpace(in.AuthType))
+	if authType == "" {
+		authType = "auto"
+	}
+	switch authType {
+	case "local":
+		if !a.store.HasLocalUser(username) {
+			err = fmt.Errorf("local ConfGTS user not found")
+		} else if lu, ok := a.store.AuthenticateLocal(username, in.Password); ok {
+			u, localOK = lu, true
+		} else {
+			err = fmt.Errorf("invalid local credentials")
+		}
+	case "domain":
+		if a.store.Config().LDAP.Enabled {
+			u, err = ldapAuthenticate(a.store.Config().LDAP, username, in.Password)
+		} else {
+			err = fmt.Errorf("LDAP / Active Directory is not configured")
+		}
+	default:
+		if a.store.HasLocalUser(username) {
+			if lu, ok := a.store.AuthenticateLocal(username, in.Password); ok {
+				u, localOK = lu, true
+			} else {
+				err = fmt.Errorf("invalid local credentials")
+			}
+		} else if dev := os.Getenv("CONFGTS_DEV_USER"); dev != "" && normUser(dev) == username {
+			u, localOK = User{Username: username, DisplayName: username + " (DEV)"}, true
+		} else if a.store.Config().LDAP.Enabled {
+			u, err = ldapAuthenticate(a.store.Config().LDAP, username, in.Password)
+		} else {
+			err = fmt.Errorf("LDAP / Active Directory is not configured")
+		}
+	}
+	if err != nil ||
+'@
+$apiAuthRegex = [regex]::new($apiAuthPattern)
+if ($apiAuthRegex.IsMatch($web)) {
+    $web = $apiAuthRegex.Replace($web, $apiAuthReplacement.TrimEnd("`r","`n"), 1)
+} elseif (-not $web.Contains('authType := strings.ToLower(strings.TrimSpace(in.AuthType))')) {
+    throw "ConfGTS API login authentication block was not found."
+}
+# After an administrator stops a room, allow the elected recorder a short
+# grace period to upload the final MediaRecorder chunk that was already being
+# captured. The finished recording remains stored only on the server.
+if (-not $web.Contains('"time"')) {
+    $web = [regex]::Replace(
+        $web,
+        'import\s*\(',
+        'import (' + [Environment]::NewLine + [char]9 + '"time"',
+        1)
+}
+
+$recordAuthPattern = '(?ms)^\s*sess, _, recorder := a\.store\.RoomStatus\(roomID\)\r?\n\s*if sess == nil \|\| sess\.ID != sessionID \|\| recorder != normUser\(u\.Username\) \{\r?\n\s*http\.Error\(w, "not recorder", 403\)\r?\n\s*return\r?\n\s*\}'
+$recordAuthNew = @'
+	sess, _, recorder := a.store.RoomStatus(roomID)
+	authorized := sess != nil && sess.ID == sessionID && recorder == normUser(u.Username)
+	if !authorized && capture != "" {
+		if existing, ok := a.store.RecordingByCaptureID(capture); ok &&
+			existing.RoomID == roomID &&
+			existing.SessionID == sessionID &&
+			normUser(existing.Recorder) == normUser(u.Username) &&
+			existing.FinishedAt != nil &&
+			time.Since(*existing.FinishedAt) <= 30*time.Second {
+			authorized = true
+		}
+	}
+	if !authorized {
+		http.Error(w, "not recorder", 403)
+		return
+	}
+'@
+$recordAuthRegex = [regex]::new($recordAuthPattern)
+if ($recordAuthRegex.IsMatch($web)) {
+    $web = $recordAuthRegex.Replace($web, $recordAuthNew.Trim(), 1)
+} elseif (-not $web.Contains('time.Since(*existing.FinishedAt) <= 30*time.Second')) {
+    throw 'Recording upload authorization block was not found.'
+}
+
+Set-Content $webPath $web -Encoding UTF8 -NoNewline
+
+$uiPath = Join-Path $root "server\ui.go"
+$ui = Get-Content $uiPath -Raw -Encoding UTF8
+$replacements = [ordered]@{
+    '#2b2b2d' = '#0B2F5B'
+    '#3a3a3d' = '#164C79'
+    '#f2a21b' = '#168CB8'
+    '#ffc72c' = '#16B6C2'
+    '#ef9c12' = '#168CB8'
+    '#f4f3ef' = '#EEF7FC'
+    '#262628' = '#28445F'
+    '#747474' = '#6A7E93'
+    '#e5e1d7' = '#D8E6EF'
+    '#ece9e1' = '#E8F4F9'
+    '#f0eee8' = '#E8F4F9'
+    '#f8f7f3' = '#F6FBFE'
+    '#d8d4ca' = '#C7DCE8'
+    '#7d766b' = '#5D7891'
+    '#766f65' = '#607A91'
+    '#5b554b' = '#42637E'
+    '#f6f4ee' = '#F1F8FC'
+    '#fff9ed' = '#F0FAFC'
+    '#a46700' = '#0E769B'
+}
+foreach ($entry in $replacements.GetEnumerator()) {
+    $ui = $ui.Replace($entry.Key, $entry.Value)
+}
+
+# A participant must be able to join even when camera/microphone APIs are
+# unavailable, permissions are denied, or the page is opened from an HTTP
+# origin where Chromium does not expose navigator.mediaDevices.
+$ensureMediaPattern = '(?s)async function ensureMedia\(\)\{.*?\}\r?\nasync function startHomePreview'
+$ensureMediaReplacement = @'
+async function ensureMedia(){if(localStream)return localStream;if(!navigator.mediaDevices||typeof navigator.mediaDevices.getUserMedia!=='function'){localStream=new MediaStream();console.info('ConfGTS: media API unavailable, continuing without local media');return localStream}try{let p=mediaPrefs();let ac=p.audioInput?{deviceId:{exact:p.audioInput},echoCancellation:true,noiseSuppression:true,autoGainControl:true}:{echoCancellation:true,noiseSuppression:true,autoGainControl:true};let vc=p.videoInput?{deviceId:{exact:p.videoInput}}:true;rawStream=await navigator.mediaDevices.getUserMedia({video:vc,audio:ac});let tracks=[];rawStream.getVideoTracks().forEach(t=>tracks.push(t));let at=rawStream.getAudioTracks()[0];if(at){mediaAudioCtx=new AudioContext();let src=mediaAudioCtx.createMediaStreamSource(new MediaStream([at]));let gain=mediaAudioCtx.createGain();gain.gain.value=Number(p.micVolume??1);let dst=mediaAudioCtx.createMediaStreamDestination();src.connect(gain).connect(dst);dst.stream.getAudioTracks().forEach(t=>tracks.push(t))}localStream=new MediaStream(tracks);return localStream}catch(e){console.warn('ConfGTS: local media unavailable; joining without it',e);localStream=new MediaStream();return localStream}}
+async function startHomePreview
+'@
+$ensureMediaRegex = [regex]::new($ensureMediaPattern)
+if ($ensureMediaRegex.IsMatch($ui)) {
+    $ui = $ensureMediaRegex.Replace($ui, $ensureMediaReplacement.TrimEnd("`r","`n"), 1)
+} elseif (-not $ui.Contains('media API unavailable, continuing without local media')) {
+    throw 'ConfGTS ensureMedia function was not found.'
+}
+
+$joinRoomPattern = '(?s)async function joinRoom\(\)\{.*?\}\r?\nasync function leaveRoom'
+$joinRoomReplacement = @'
+async function joinRoom(){if(!currentRoom)return;await ensureMedia();roomState=await api('/api/rooms/'+currentRoom+'/join',{method:'POST'});$('#joinBtn').style.display='none';$('#leaveBtn').style.display='inline-flex';$('#conference').style.display='block';addVideo('me',localStream,ME.display_name+' (Вы)',true);startLoops();await reconcilePeers();updateStateUI()}
+async function leaveRoom
+'@
+$joinRoomRegex = [regex]::new($joinRoomPattern)
+if ($joinRoomRegex.IsMatch($ui)) {
+    $ui = $joinRoomRegex.Replace($ui, $joinRoomReplacement.TrimEnd("`r","`n"), 1)
+} elseif ($ui.Contains("alert('Не удалось получить камеру/микрофон")) {
+    throw 'ConfGTS joinRoom media blocking logic was not replaced.'
+}
+
+# The native client can request a room immediately after WebView navigation.
+# Harden the server page against that startup race: selectRoom must not dereference
+# an undefined room while loadRooms() is still in flight.
+$selectRoomPattern = '(?s)async function selectRoom\(id\)\{.*?\}\r?\nasync function ensureMedia'
+$selectRoomReplacement = @'
+async function selectRoom(id){currentRoom=id;if(!Array.isArray(rooms)||!rooms.some(x=>x&&x.id===id)){try{await loadRooms()}catch(e){console.warn(e)}}let r=(rooms||[]).find(x=>x&&x.id===id);if(!r){console.warn('ConfGTS: room not found',id);return false}renderRooms();$('#roomTitle').textContent=r.name;$('#roomDesc').textContent=r.description||'Постоянная корпоративная конференция';$('#joinBtn').style.display='inline-flex';$('#leaveBtn').style.display='none';$('#conference').style.display='none';await refreshRoomState();return true}
+async function ensureMedia
+'@
+$selectRoomRegex = [regex]::new($selectRoomPattern)
+if ($selectRoomRegex.IsMatch($ui)) {
+    $ui = $selectRoomRegex.Replace($ui, $selectRoomReplacement.TrimEnd("`r","`n"), 1)
+} elseif (-not $ui.Contains("ConfGTS: room not found")) {
+    throw 'ConfGTS selectRoom startup-race guard was not applied.'
+}
+
+# Recording is assigned to the first participant by Store.Join. The elected
+# recorder composites every visible video/screen stream plus all audio into a
+# WebM stream and uploads chunks to the server. Flush and finalize the recording
+# BEFORE the recorder leaves the room; otherwise the final chunk can be rejected
+# after Store.Leave clears/reassigns Recorder.
+$stopRecordingPattern = '(?s)function stopRecording\(\)\{.*?\}\r?\nwindow\.addEventListener'
+$stopRecordingReplacement = @'
+async function stopRecording(){if(!recorder||recorder.state==='inactive')return recordQueue;let active=recorder;return new Promise(resolve=>{let oldStop=active.onstop;active.onstop=()=>{try{if(oldStop)oldStop()}finally{Promise.resolve(recordQueue).finally(resolve)}};try{active.requestData()}catch{};try{active.stop()}catch{resolve()}})}
+window.addEventListener
+'@
+$stopRecordingRegex = [regex]::new($stopRecordingPattern)
+if ($stopRecordingRegex.IsMatch($ui)) {
+    $ui = $stopRecordingRegex.Replace($ui, $stopRecordingReplacement.TrimEnd("`r","`n"), 1)
+} elseif (-not $ui.Contains('Promise.resolve(recordQueue).finally(resolve)')) {
+    throw 'ConfGTS stopRecording function was not found.'
+}
+
+$leaveRoomPattern = '(?s)async function leaveRoom\(\)\{.*?\}\r?\nfunction addVideoPreviewHome'
+$leaveRoomReplacement = @'
+async function leaveRoom(){if(!currentRoom)return;stopLoops(false);await stopRecording();try{await api('/api/rooms/'+currentRoom+'/leave',{method:'POST'})}catch{};for(let [k,p] of peers){p.close()}peers.clear();document.querySelectorAll('.video-tile').forEach(x=>x.remove());addVideoPreviewHome();roomState=null;$('#conference').style.display='none';$('#joinBtn').style.display='inline-flex';$('#leaveBtn').style.display='none';await loadRooms()}
+function addVideoPreviewHome
+'@
+$leaveRoomRegex = [regex]::new($leaveRoomPattern)
+if ($leaveRoomRegex.IsMatch($ui)) {
+    $ui = $leaveRoomRegex.Replace($ui, $leaveRoomReplacement.TrimEnd("`r","`n"), 1)
+} elseif (-not $ui.Contains('stopLoops(false);await stopRecording();try{await api')) {
+    throw 'ConfGTS leaveRoom recording-flush patch was not applied.'
+}
+
+
+# Store.Join normalizes domain usernames; normalize the browser-side username too
+# so the first participant actually starts the automatic recorder.
+$updateStateOld = @'
+function updateStateUI(){if(!roomState)return;let ps=roomState.participants||[];$('#participants').innerHTML=participantHTML(ps);$('#previewParticipants').innerHTML=participantHTML(ps);let isRec=roomState.recorder===ME.username.toLowerCase();$('#recState').innerHTML=isRec?'<span class="pill rec"><span class="rec-dot"></span>Автозапись с этого ПК</span>':'<span class="pill"><span class="rec-dot"></span>Автозапись конференции</span>';if(isRec&&!recorder)startRecording();if(!isRec&&recorder)stopRecording();}
+'@
+$updateStateNew = @'
+function updateStateUI(){if(!roomState)return;let ps=roomState.participants||[];$('#participants').innerHTML=participantHTML(ps);$('#previewParticipants').innerHTML=participantHTML(ps);let norm=u=>{u=String(u||'').trim().toLowerCase();if(u.includes('\\'))u=u.split('\\').pop();if(u.endsWith('@teplo.local'))u=u.slice(0,-'@teplo.local'.length);return u};let isRec=norm(roomState.recorder)===norm(ME.username);$('#recState').innerHTML=isRec?'<span class="pill rec"><span class="rec-dot"></span>Автозапись с этого ПК</span>':'<span class="pill"><span class="rec-dot"></span>Автозапись конференции</span>';if(isRec&&!recorder)startRecording();if(!isRec&&recorder)stopRecording();}
+'@
+if ($ui.Contains($updateStateOld.Trim())) {
+    $ui = $ui.Replace($updateStateOld.Trim(), $updateStateNew.Trim())
+} elseif (-not $ui.Contains('norm(roomState.recorder)===norm(ME.username)')) {
+    throw 'Recorder username normalization patch was not applied.'
+}
+
+# Recording must also work when this PC has no microphone. In that case the
+# server still receives the conference video/screen composition without audio.
+$startRecordingPattern = '(?s)async function startRecording\(\)\{.*?\}\r?\nfunction drawRecording'
+$startRecordingReplacement = @'
+async function startRecording(){if(recorder||!roomState?.session)return;if(typeof MediaRecorder==='undefined'){console.warn('ConfGTS: MediaRecorder unavailable');return}captureId='cap_'+Date.now()+'_'+Math.random().toString(16).slice(2);recordPart=0;recorderCanvas=document.createElement('canvas');recorderCanvas.width=1280;recorderCanvas.height=720;recorderCtx=recorderCanvas.getContext('2d');audioCtx=null;audioDest=null;audioSeen=new WeakSet();let cs=recorderCanvas.captureStream(15);try{let AC=window.AudioContext||window.webkitAudioContext;if(AC){audioCtx=new AC();audioDest=audioCtx.createMediaStreamDestination();document.querySelectorAll('.video-tile video').forEach(v=>{if(v.srcObject)addAudioStream(v.srcObject)});audioDest.stream.getAudioTracks().forEach(t=>cs.addTrack(t))}}catch(e){console.warn('ConfGTS recording audio mix unavailable',e);audioCtx=null;audioDest=null}let mime=MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus')?'video/webm;codecs=vp8,opus':'video/webm';try{recorder=new MediaRecorder(cs,{mimeType:mime,videoBitsPerSecond:1800000})}catch(e){console.error('ConfGTS recorder start failed',e);recorder=null;return}drawRecording();recorder.ondataavailable=e=>{if(e.data&&e.data.size>0){let part=recordPart++;recordQueue=recordQueue.then(()=>uploadChunk(e.data,part)).catch(console.warn)}};recorder.onstop=()=>{recordQueue=recordQueue.then(()=>api('/api/recordings/finalize',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({capture_id:captureId})})).catch(()=>{});if(audioCtx)audioCtx.close();audioCtx=null;audioDest=null;recorder=null};recorder.start(5000)}
+function drawRecording
+'@
+$startRecordingRegex = [regex]::new($startRecordingPattern)
+if ($startRecordingRegex.IsMatch($ui)) {
+    $ui = $startRecordingRegex.Replace($ui, $startRecordingReplacement.Trim(), 1)
+} elseif (-not $ui.Contains('ConfGTS recording audio mix unavailable')) {
+    throw 'ConfGTS startRecording patch was not applied.'
+}
+
+# A server-side Stop must end the active conference on every connected client.
+$stateLoopPattern = '(?s)async function heartbeat\(\)\{.*?\}\r?\nasync function refreshRoomState\(\)\{.*?\}\r?\nfunction participantHTML'
+$stateLoopReplacement = @'
+async function handleConferenceStopped(){stopLoops(false);await stopRecording();for(let [k,p] of peers){try{p.close()}catch{}}peers.clear();document.querySelectorAll('.video-tile').forEach(x=>x.remove());roomState=null;$('#conference').style.display='none';$('#joinBtn').style.display='inline-flex';$('#leaveBtn').style.display='none';if(window.chrome?.webview){window.chrome.webview.postMessage('leave-conference')}else{await loadRooms()}}
+async function heartbeat(){if(!currentRoom||!roomState)return;try{let s=await api('/api/rooms/'+currentRoom+'/heartbeat',{method:'POST'});if(!s.session){await handleConferenceStopped();return}roomState=s;updateStateUI();await reconcilePeers()}catch(e){console.warn(e)}}
+async function refreshRoomState(){if(!currentRoom)return;try{let s=await api('/api/rooms/'+currentRoom+'/state');if(roomState){if(!s.session){await handleConferenceStopped();return}roomState=s;updateStateUI();await reconcilePeers()}else{let st={};st[currentRoom]={active:!!s.session,participants:(s.participants||[]).length};renderRooms(st);$('#previewParticipants').innerHTML=participantHTML(s.participants||[])}}catch(e){console.warn(e)}}
+function participantHTML
+'@
+$stateLoopRegex = [regex]::new($stateLoopPattern)
+if ($stateLoopRegex.IsMatch($ui)) {
+    $ui = $stateLoopRegex.Replace($ui, $stateLoopReplacement.Trim(), 1)
+} elseif (-not $ui.Contains("window.chrome?.webview.postMessage('leave-conference')")) {
+    throw 'Server stop client-disconnect patch was not applied.'
+}
+
+# Reduce chunk duration so an unexpected process loss can only lose a small tail.
+$ui = $ui.Replace('recorder.start(15000)', 'recorder.start(5000)')
+
+Set-Content $uiPath $ui -Encoding UTF8 -NoNewline
+
+# Apply the same palette to server admin pages that contain a few
+# hard-coded legacy orange/grey values outside ui.go.
+Get-ChildItem (Join-Path $root "server") -Filter *.go -File | ForEach-Object {
+    $text = Get-Content $_.FullName -Raw -Encoding UTF8
+    foreach ($entry in $replacements.GetEnumerator()) {
+        $text = $text.Replace($entry.Key, $entry.Value)
+    }
+    Set-Content $_.FullName $text -Encoding UTF8 -NoNewline
+}
+
+$versionTargets = @(
+    (Join-Path $root "server"),
+    (Join-Path $root "Installer\Server"),
+    (Join-Path $root "src\ConfGTS.Server.Settings"),
+    (Join-Path $root "build-server.ps1")
+)
+foreach ($target in $versionTargets) {
+    if (Test-Path $target -PathType Leaf) {
+        $text = Get-Content $target -Raw -Encoding UTF8
+        $text = $text.Replace("0.16.0", "0.18.8").Replace("0.16.1", "0.18.8").Replace("0.17.0", "0.18.8").Replace("0.18.7", "0.18.8").Replace("0.18.0", "0.18.8").Replace("0.18.1", "0.18.8").Replace("0.18.0", "0.18.8").Replace("0.18.1", "0.18.8")
+        Set-Content $target $text -Encoding UTF8 -NoNewline
+    } elseif (Test-Path $target -PathType Container) {
+        Get-ChildItem $target -Recurse -File -Include *.go,*.cs,*.xaml,*.csproj,*.wxs,*.wixproj,*.ps1 | ForEach-Object {
+            $text = Get-Content $_.FullName -Raw -Encoding UTF8
+            if ($text.Contains("0.16.0") -or $text.Contains("0.16.1") -or $text.Contains("0.17.0") -or $text.Contains("0.18.0") -or $text.Contains("0.18.1") -or $text.Contains("0.18.7")) {
+                $text = $text.Replace("0.16.0", "0.18.8").Replace("0.16.1", "0.18.8").Replace("0.17.0", "0.18.8")
+                Set-Content $_.FullName $text -Encoding UTF8 -NoNewline
+            }
+        }
+    }
+}
+
+
+# Generate the shared ConfGTS icon before compiling the server settings app
+# and before WiX resolves shortcut/bootstrapper icon paths.
+$assetScript = Join-Path $root "prepare-assets.ps1"
+if (Test-Path $assetScript) {
+    & $assetScript
+}
+
+$serverPackage = Join-Path $root "Installer\Server\Package.wxs"
+if (Test-Path $serverPackage) {
+    $wxs = Get-Content $serverPackage -Raw -Encoding UTF8
+    $wxs = $wxs.Replace('WorkingDirectory="INSTALLFOLDER" />', 'WorkingDirectory="INSTALLFOLDER"' + [Environment]::NewLine + '                  Icon="ConfGTSIcon" />')
+    if (-not $wxs.Contains('Id="ConfGTSIcon"')) {
+        $wxs = $wxs.Replace('    <Feature Id="MainFeature"', '    <Icon Id="ConfGTSIcon" SourceFile="!(bindpath.assets)\ConfGTS.ico" />' + [Environment]::NewLine + '    <Property Id="ARPPRODUCTICON" Value="ConfGTSIcon" />' + [Environment]::NewLine + [Environment]::NewLine + '    <Feature Id="MainFeature"')
+    }
+    Set-Content $serverPackage $wxs -Encoding UTF8 -NoNewline
+}
+
+$serverMsiProject = Join-Path $root "Installer\Server\ConfGTS.Server.Installer.wixproj"
+if (Test-Path $serverMsiProject) {
+    $proj = Get-Content $serverMsiProject -Raw -Encoding UTF8
+    if (-not $proj.Contains('BindName="assets"')) {
+        $proj = $proj.Replace('    <BindPath Include="$(PublishDir)" BindName="publish" />', '    <BindPath Include="$(PublishDir)" BindName="publish" />' + [Environment]::NewLine + '    <BindPath Include="$(MSBuildThisFileDirectory)..\Assets" BindName="assets" />')
+    }
+    Set-Content $serverMsiProject $proj -Encoding UTF8 -NoNewline
+}
+
+$serverBundle = Join-Path $root "Installer\Server\Bootstrapper\Bundle.wxs"
+if (Test-Path $serverBundle) {
+    $bundle = Get-Content $serverBundle -Raw -Encoding UTF8
+    if (-not $bundle.Contains('IconSourceFile=')) {
+        $bundle = $bundle.Replace('          Version="0.18.8"', '          Version="0.18.8"' + [Environment]::NewLine + '          IconSourceFile="!(bindpath.assets)\ConfGTS.ico"')
+    }
+    Set-Content $serverBundle $bundle -Encoding UTF8 -NoNewline
+}
+
+$serverBundleProject = Join-Path $root "Installer\Server\Bootstrapper\ConfGTS.Server.Bootstrapper.wixproj"
+if (Test-Path $serverBundleProject) {
+    $proj = Get-Content $serverBundleProject -Raw -Encoding UTF8
+    if (-not $proj.Contains('BindName="assets"')) {
+        $proj = $proj.Replace('    <BindPath Include="$(MsiDir)" BindName="msi" />', '    <BindPath Include="$(MsiDir)" BindName="msi" />' + [Environment]::NewLine + '    <BindPath Include="$(MSBuildThisFileDirectory)..\..\Assets" BindName="assets" />')
+    }
+    Set-Content $serverBundleProject $proj -Encoding UTF8 -NoNewline
+}
+
+Write-Host "ConfGTS Server overlays applied." -ForegroundColor Green
+
+if ([regex]::IsMatch($store, $emptyRoomPattern) -and -not $store.Contains('Finalize unfinished recordings when the room becomes empty.')) {
     $emptyRoomExpanded = @'
-id := lr.Session.ID
+	id := lr.Session.ID
 	// Finalize unfinished recordings when the room becomes empty.
 	for i := range s.state.Recordings {
 		if s.state.Recordings[i].SessionID == id && s.state.Recordings[i].FinishedAt == nil {
@@ -46,7 +435,7 @@ id := lr.Session.ID
 		}
 	}
 '@
-    $store = $store.Replace($emptyRoomAnchor, $emptyRoomExpanded.TrimEnd())
+    $store = [regex]::Replace($store, $emptyRoomPattern, $emptyRoomExpanded.Trim(), 1)
 }
 
 if (-not $store.Contains('func (s *Store) RecordingByCaptureID(')) {
