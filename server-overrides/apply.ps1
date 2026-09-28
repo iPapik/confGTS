@@ -177,6 +177,21 @@ if ($joinRoomRegex.IsMatch($ui)) {
     throw 'ConfGTS joinRoom media blocking logic was not replaced.'
 }
 
+# The native client can request a room immediately after WebView navigation.
+# Harden the server page against that startup race: selectRoom must not dereference
+# an undefined room while loadRooms() is still in flight.
+$selectRoomPattern = '(?s)async function selectRoom\(id\)\{.*?\}\r?\nasync function ensureMedia'
+$selectRoomReplacement = @'
+async function selectRoom(id){currentRoom=id;if(!Array.isArray(rooms)||!rooms.some(x=>x&&x.id===id)){try{await loadRooms()}catch(e){console.warn(e)}}let r=(rooms||[]).find(x=>x&&x.id===id);if(!r){console.warn('ConfGTS: room not found',id);return false}renderRooms();$('#roomTitle').textContent=r.name;$('#roomDesc').textContent=r.description||'Постоянная корпоративная конференция';$('#joinBtn').style.display='inline-flex';$('#leaveBtn').style.display='none';$('#conference').style.display='none';await refreshRoomState();return true}
+async function ensureMedia
+'@
+$selectRoomRegex = [regex]::new($selectRoomPattern)
+if ($selectRoomRegex.IsMatch($ui)) {
+    $ui = $selectRoomRegex.Replace($ui, $selectRoomReplacement.TrimEnd("`r","`n"), 1)
+} elseif (-not $ui.Contains("ConfGTS: room not found")) {
+    throw 'ConfGTS selectRoom startup-race guard was not applied.'
+}
+
 Set-Content $uiPath $ui -Encoding UTF8 -NoNewline
 
 # Apply the same palette to server admin pages that contain a few
