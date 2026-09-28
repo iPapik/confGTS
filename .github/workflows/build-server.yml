@@ -77,6 +77,9 @@ jobs:
           if ($ui -notmatch 'async function leaveRoom\(\)\{if\(!currentRoom\)return;await stopRecording\(\);') {
             throw 'Final recording data is not flushed before room leave.'
           }
+          if ($ui -notmatch 'getDisplayMedia\(\{video:true,audio:true\}\)') {
+            throw 'Screen sharing does not request optional system/tab audio.'
+          }
           if ($store -notmatch 's\.state\.Recordings\[i\]\.SessionID == id' -or
               $store -notmatch 'FinishedAt == nil') {
             throw 'Last-participant server finalization guard is missing.'
