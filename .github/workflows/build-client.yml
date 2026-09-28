@@ -83,6 +83,23 @@ jobs:
           }
           Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
 
+      - name: Remember-me credential smoke test
+        shell: pwsh
+        run: |
+          $startupLog = "$env:LOCALAPPDATA\ConfGTS\logs\startup.log"
+          Remove-Item $startupLog -Force -ErrorAction SilentlyContinue
+          $exe = (Resolve-Path 'artifacts\publish\ConfGTS.Client.exe').Path
+          $p = Start-Process $exe -ArgumentList '--self-test-remember-me' -PassThru
+          Start-Sleep -Seconds 6
+          $log = if (Test-Path $startupLog) { Get-Content $startupLog -Raw } else { '' }
+          if ($log -notmatch 'Remember-me credential smoke test completed\.' -or
+              $log -match 'Remember-me credential smoke test failed|Fatal error') {
+            if (Test-Path $startupLog) { Get-Content $startupLog -Tail 160 }
+            Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+            throw 'Published client failed the remember-me credential smoke test.'
+          }
+          Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+
       - name: Test client MSI installation and settings
         shell: pwsh
         run: |
