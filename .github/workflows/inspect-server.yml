@@ -92,6 +92,16 @@ jobs:
           }
           Write-Host 'Automatic recording lifecycle validated.' -ForegroundColor Green
 
+      - name: Inspect admin stop and logout
+        shell: pwsh
+        run: |
+          Write-Host '=== ROUTES / LOGOUT / STOP ==='
+          Select-String -Path '.\server\*.go' -Pattern 'logout|StopRoom|stop room|stop-room|conference.*stop|Заверш|handle.*Stop|handle.*Logout' -Context 5,35
+          Write-Host '=== ROOM HANDLERS ==='
+          Select-String -Path '.\server\web.go' -Pattern 'handleRoom|/api/rooms|heartbeat|join|leave' -Context 3,24
+          Write-Host '=== ADMIN CONFERENCES ==='
+          Select-String -Path '.\server\admin.go' -Pattern 'conference|StopRoom|active|participants' -Context 4,30
+
       - name: Print route and LDAP structure
         shell: pwsh
         run: |
