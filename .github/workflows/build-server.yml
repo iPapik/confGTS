@@ -85,6 +85,13 @@ jobs:
             throw 'Last-participant server finalization guard is missing.'
           }
 
+          $appJsMatch = [regex]::Match($ui, '(?s)const appJS = `(.*?)`\r?\n')
+          if (-not $appJsMatch.Success) { throw 'Could not extract ConfGTS appJS for syntax validation.' }
+          $appJsPath = Join-Path $env:RUNNER_TEMP 'confgts-app.js'
+          Set-Content $appJsPath $appJsMatch.Groups[1].Value -Encoding UTF8
+          node --check $appJsPath
+          if ($LASTEXITCODE -ne 0) { throw 'ConfGTS appJS contains a JavaScript syntax error.' }
+
       - name: Format and test server
         shell: pwsh
         run: |
