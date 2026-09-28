@@ -149,6 +149,34 @@ $replacements = [ordered]@{
 foreach ($entry in $replacements.GetEnumerator()) {
     $ui = $ui.Replace($entry.Key, $entry.Value)
 }
+
+# A participant must be able to join even when camera/microphone APIs are
+# unavailable, permissions are denied, or the page is opened from an HTTP
+# origin where Chromium does not expose navigator.mediaDevices.
+$ensureMediaPattern = '(?s)async function ensureMedia\(\)\{.*?\}\r?\nasync function startHomePreview'
+$ensureMediaReplacement = @'
+async function ensureMedia(){if(localStream)return localStream;if(!navigator.mediaDevices||typeof navigator.mediaDevices.getUserMedia!=='function'){localStream=new MediaStream();console.info('ConfGTS: media API unavailable, continuing without local media');return localStream}try{let p=mediaPrefs();let ac=p.audioInput?{deviceId:{exact:p.audioInput},echoCancellation:true,noiseSuppression:true,autoGainControl:true}:{echoCancellation:true,noiseSuppression:true,autoGainControl:true};let vc=p.videoInput?{deviceId:{exact:p.videoInput}}:true;rawStream=await navigator.mediaDevices.getUserMedia({video:vc,audio:ac});let tracks=[];rawStream.getVideoTracks().forEach(t=>tracks.push(t));let at=rawStream.getAudioTracks()[0];if(at){mediaAudioCtx=new AudioContext();let src=mediaAudioCtx.createMediaStreamSource(new MediaStream([at]));let gain=mediaAudioCtx.createGain();gain.gain.value=Number(p.micVolume??1);let dst=mediaAudioCtx.createMediaStreamDestination();src.connect(gain).connect(dst);dst.stream.getAudioTracks().forEach(t=>tracks.push(t))}localStream=new MediaStream(tracks);return localStream}catch(e){console.warn('ConfGTS: local media unavailable; joining without it',e);localStream=new MediaStream();return localStream}}
+async function startHomePreview
+'@
+$ensureMediaRegex = [regex]::new($ensureMediaPattern)
+if ($ensureMediaRegex.IsMatch($ui)) {
+    $ui = $ensureMediaRegex.Replace($ui, $ensureMediaReplacement.TrimEnd("`r","`n"), 1)
+} elseif (-not $ui.Contains('media API unavailable, continuing without local media')) {
+    throw 'ConfGTS ensureMedia function was not found.'
+}
+
+$joinRoomPattern = '(?s)async function joinRoom\(\)\{.*?\}\r?\nasync function leaveRoom'
+$joinRoomReplacement = @'
+async function joinRoom(){if(!currentRoom)return;await ensureMedia();roomState=await api('/api/rooms/'+currentRoom+'/join',{method:'POST'});$('#joinBtn').style.display='none';$('#leaveBtn').style.display='inline-flex';$('#conference').style.display='block';addVideo('me',localStream,ME.display_name+' (Вы)',true);startLoops();await reconcilePeers();updateStateUI()}
+async function leaveRoom
+'@
+$joinRoomRegex = [regex]::new($joinRoomPattern)
+if ($joinRoomRegex.IsMatch($ui)) {
+    $ui = $joinRoomRegex.Replace($ui, $joinRoomReplacement.TrimEnd("`r","`n"), 1)
+} elseif ($ui.Contains("alert('Не удалось получить камеру/микрофон")) {
+    throw 'ConfGTS joinRoom media blocking logic was not replaced.'
+}
+
 Set-Content $uiPath $ui -Encoding UTF8 -NoNewline
 
 # Apply the same palette to server admin pages that contain a few
