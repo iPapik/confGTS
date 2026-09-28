@@ -81,6 +81,9 @@ jobs:
           if ($ui -notmatch 'async function stopRecording\(\)') {
             throw 'Recording stop/finalize is not awaitable.'
           }
+          if ($ui -notmatch 'getDisplayMedia\(\{video:true,audio:true\}\)') {
+            throw 'Screen sharing is not requesting optional system/tab audio.'
+          }
           if ($store -notmatch 's\.state\.Recordings\[i\]\.SessionID == id' -or
               $store -notmatch 'FinishedAt == nil') {
             throw 'Server does not finalize unfinished recording metadata when the last participant leaves.'
