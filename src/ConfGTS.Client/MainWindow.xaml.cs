@@ -842,12 +842,191 @@ public sealed class MainWindow : Window
           const nativeStyle = document.createElement('style');
           nativeStyle.id = 'confgts-native-shell-style';
           nativeStyle.textContent = `
+            html, body {
+              width:100% !important;
+              height:100% !important;
+              margin:0 !important;
+              overflow:hidden !important;
+              background:#111418 !important;
+            }
             .topbar, .client-left, .home-video, .hero { display:none !important; }
-            .client-shell { display:block !important; min-height:100vh !important; }
-            .client-main { padding:0 !important; width:100% !important; max-width:none !important; }
-            #conference { margin:0 !important; padding:0 !important; }
-            body { background:#EEF7FC !important; overflow:auto !important; }
-            .video-grid { min-height:420px !important; }
+            .client-shell, .client-main {
+              display:block !important;
+              width:100% !important;
+              height:100vh !important;
+              min-height:0 !important;
+              max-width:none !important;
+              margin:0 !important;
+              padding:0 !important;
+              overflow:hidden !important;
+            }
+            #conference {
+              display:block !important;
+              position:relative !important;
+              width:100% !important;
+              height:100vh !important;
+              min-height:0 !important;
+              margin:0 !important;
+              padding:0 !important;
+              overflow:hidden !important;
+              background:#111418 !important;
+            }
+            #conference > .toolbar { display:none !important; }
+            #chatPanel { display:none !important; }
+            .video-grid {
+              position:absolute !important;
+              inset:0 !important;
+              display:grid !important;
+              grid-template-columns:repeat(auto-fit,minmax(min(420px,100%),1fr)) !important;
+              grid-auto-rows:minmax(0,1fr) !important;
+              gap:8px !important;
+              width:auto !important;
+              height:auto !important;
+              min-height:0 !important;
+              margin:0 !important;
+              padding:8px 8px 88px !important;
+              box-sizing:border-box !important;
+              overflow:hidden !important;
+              background:#111418 !important;
+            }
+            .video-tile {
+              width:100% !important;
+              height:100% !important;
+              min-width:0 !important;
+              min-height:0 !important;
+              max-width:none !important;
+              max-height:none !important;
+              margin:0 !important;
+              border-radius:14px !important;
+              overflow:hidden !important;
+              background:#111418 !important;
+            }
+            .video-tile video {
+              width:100% !important;
+              height:100% !important;
+              max-width:none !important;
+              max-height:none !important;
+              object-fit:contain !important;
+              background:#111418 !important;
+            }
+            .controls {
+              position:absolute !important;
+              left:50% !important;
+              bottom:18px !important;
+              transform:translateX(-50%) !important;
+              z-index:1000 !important;
+              display:flex !important;
+              align-items:center !important;
+              justify-content:center !important;
+              gap:10px !important;
+              margin:0 !important;
+              padding:9px 11px !important;
+              border-radius:18px !important;
+              background:rgba(9,31,55,.88) !important;
+              box-shadow:0 10px 32px rgba(0,0,0,.28) !important;
+              backdrop-filter:blur(12px) !important;
+              white-space:nowrap !important;
+            }
+            .controls .btn {
+              display:inline-flex !important;
+              align-items:center !important;
+              justify-content:center !important;
+              min-width:108px !important;
+              height:44px !important;
+              margin:0 !important;
+              padding:0 15px !important;
+              border:1px solid #245781 !important;
+              border-radius:12px !important;
+              background:#0B3E72 !important;
+              color:#fff !important;
+              font:600 14px/1 "Segoe UI",sans-serif !important;
+              box-shadow:none !important;
+            }
+            .controls .btn:hover { background:#15568F !important; }
+            .controls .btn.native-disabled {
+              background:#7A3440 !important;
+              border-color:#A5525C !important;
+            }
+            .controls .btn.native-participants {
+              min-width:118px !important;
+              background:#164C79 !important;
+            }
+            .controls .btn.native-hangup {
+              min-width:48px !important;
+              width:48px !important;
+              height:48px !important;
+              padding:0 !important;
+              border-radius:50% !important;
+              border:1px solid #F08D8D !important;
+              background:#D93B3B !important;
+              font-size:25px !important;
+            }
+            .controls .btn.native-hangup:hover { background:#B92F2F !important; }
+            #confgts-native-participants {
+              position:absolute;
+              right:18px;
+              bottom:82px;
+              z-index:1100;
+              width:min(330px,calc(100vw - 36px));
+              max-height:min(55vh,460px);
+              overflow:auto;
+              padding:14px;
+              border:1px solid #CFE0EA;
+              border-radius:16px;
+              background:#F7FCFF;
+              color:#0B2F5B;
+              box-shadow:0 14px 40px rgba(0,0,0,.25);
+              font:14px/1.4 "Segoe UI",sans-serif;
+            }
+            #confgts-native-participants[hidden] { display:none !important; }
+            .confgts-participants-title {
+              display:flex;
+              justify-content:space-between;
+              align-items:center;
+              margin-bottom:10px;
+              font-size:16px;
+              font-weight:700;
+            }
+            .confgts-participant-row {
+              padding:9px 10px;
+              margin-top:6px;
+              border-radius:10px;
+              background:#E8F4F9;
+              color:#28445F;
+            }
+            #confgts-native-toast {
+              position:absolute;
+              top:16px;
+              left:50%;
+              transform:translateX(-50%);
+              z-index:1200;
+              max-width:min(720px,calc(100vw - 32px));
+              padding:11px 16px;
+              border-radius:12px;
+              background:#FFF3D7;
+              color:#8A5A00;
+              box-shadow:0 8px 28px rgba(0,0,0,.18);
+              font:600 13px/1.35 "Segoe UI",sans-serif;
+            }
+            #confgts-native-toast[hidden] { display:none !important; }
+            @media (max-width:760px) {
+              .controls {
+                gap:6px !important;
+                width:calc(100% - 18px) !important;
+                box-sizing:border-box !important;
+              }
+              .controls .btn {
+                min-width:0 !important;
+                flex:1 1 auto !important;
+                padding:0 8px !important;
+                font-size:12px !important;
+              }
+              .controls .btn.native-hangup {
+                flex:0 0 46px !important;
+                width:46px !important;
+              }
+              .video-grid { padding:6px 6px 80px !important; }
+            }
           `;
           document.getElementById(nativeStyle.id)?.remove();
           document.head.appendChild(nativeStyle);
@@ -867,6 +1046,155 @@ public sealed class MainWindow : Window
             } catch {
               return null;
             }
+          };
+
+          const showNativeToast = (message) => {
+            let toast = document.getElementById('confgts-native-toast');
+            if (!toast) {
+              toast = document.createElement('div');
+              toast.id = 'confgts-native-toast';
+              document.getElementById('conference')?.appendChild(toast);
+            }
+            toast.textContent = String(message || '');
+            toast.hidden = false;
+            clearTimeout(window.__confgtsToastTimer);
+            window.__confgtsToastTimer = setTimeout(() => { toast.hidden = true; }, 4200);
+          };
+
+          const currentParticipants = () => {
+            const ps = Array.isArray(roomState?.participants) ? roomState.participants : [];
+            return ps.map(p => p?.display_name || p?.username || 'Участник').filter(Boolean);
+          };
+
+          const refreshParticipantsPanel = () => {
+            const panel = document.getElementById('confgts-native-participants');
+            if (!panel || panel.hidden) return;
+            const list = panel.querySelector('[data-list]');
+            const names = currentParticipants();
+            list.innerHTML = names.length
+              ? names.map(name => '<div class="confgts-participant-row"></div>').join('')
+              : '<div class="confgts-participant-row">Нет участников</div>';
+            if (names.length) {
+              [...list.children].forEach((row, index) => { row.textContent = names[index]; });
+            }
+          };
+
+          const syncMediaButtons = () => {
+            const micBtn = document.getElementById('muteBtn');
+            const camBtn = document.getElementById('camBtn');
+            const micTrack = localStream?.getAudioTracks?.()[0];
+            const camTrack = localStream?.getVideoTracks?.()[0];
+
+            if (micBtn) {
+              const enabled = !!micTrack?.enabled;
+              micBtn.textContent = enabled ? '🎙 Микрофон' : '🔇 Микрофон';
+              micBtn.classList.toggle('native-disabled', !enabled);
+              micBtn.title = micTrack ? (enabled ? 'Выключить микрофон' : 'Включить микрофон') : 'Микрофон не найден';
+            }
+
+            if (camBtn) {
+              const enabled = !!camTrack?.enabled;
+              camBtn.textContent = enabled ? '▣ Камера' : '▢ Камера';
+              camBtn.classList.toggle('native-disabled', !enabled);
+              camBtn.title = camTrack ? (enabled ? 'Выключить камеру' : 'Включить камеру') : 'Камера не найдена';
+            }
+          };
+
+          const installNativeControls = () => {
+            const controls = document.querySelector('#conference .controls');
+            if (!controls || controls.dataset.nativeReady === '1') return;
+            controls.dataset.nativeReady = '1';
+
+            const micBtn = document.getElementById('muteBtn');
+            if (micBtn) {
+              micBtn.onclick = () => {
+                const track = localStream?.getAudioTracks?.()[0];
+                if (!track) {
+                  showNativeToast('Микрофон не найден или недоступен.');
+                  syncMediaButtons();
+                  return;
+                }
+                track.enabled = !track.enabled;
+                syncMediaButtons();
+              };
+            }
+
+            const camBtn = document.getElementById('camBtn');
+            if (camBtn) {
+              camBtn.onclick = () => {
+                const track = localStream?.getVideoTracks?.()[0];
+                if (!track) {
+                  showNativeToast('Камера не найдена или недоступна.');
+                  syncMediaButtons();
+                  return;
+                }
+                track.enabled = !track.enabled;
+                syncMediaButtons();
+              };
+            }
+
+            const shareBtn = [...controls.querySelectorAll('button')].find(
+              b => b !== micBtn && b !== camBtn && /Экран/i.test(b.textContent || '')
+            );
+            if (shareBtn) {
+              shareBtn.textContent = '▣ Экран';
+              shareBtn.onclick = async () => {
+                try {
+                  if (typeof shareScreen !== 'function') {
+                    throw new Error('Демонстрация экрана недоступна в этой версии сервера.');
+                  }
+                  await shareScreen();
+                } catch (e) {
+                  console.error('ConfGTS screen share failed', e);
+                  showNativeToast('Не удалось включить демонстрацию экрана: ' + (e?.message || e));
+                }
+              };
+            }
+
+            const participantsBtn = document.createElement('button');
+            participantsBtn.type = 'button';
+            participantsBtn.className = 'btn native-participants';
+            participantsBtn.textContent = '👥 Участники';
+            participantsBtn.onclick = () => {
+              const panel = document.getElementById('confgts-native-participants');
+              if (!panel) return;
+              panel.hidden = !panel.hidden;
+              refreshParticipantsPanel();
+            };
+            controls.appendChild(participantsBtn);
+
+            const hangupBtn = document.createElement('button');
+            hangupBtn.type = 'button';
+            hangupBtn.className = 'btn native-hangup';
+            hangupBtn.title = 'Выйти из конференции';
+            hangupBtn.setAttribute('aria-label', 'Выйти из конференции');
+            hangupBtn.textContent = '☎';
+            hangupBtn.onclick = () => {
+              try {
+                if (window.chrome?.webview) {
+                  window.chrome.webview.postMessage('leave-conference');
+                } else if (typeof leaveRoom === 'function') {
+                  leaveRoom();
+                }
+              } catch (e) {
+                console.error('ConfGTS hangup failed', e);
+              }
+            };
+            controls.appendChild(hangupBtn);
+
+            const participantPanel = document.createElement('div');
+            participantPanel.id = 'confgts-native-participants';
+            participantPanel.hidden = true;
+            participantPanel.innerHTML = '<div class="confgts-participants-title"><span>Участники</span><span>×</span></div><div data-list></div>';
+            participantPanel.querySelector('.confgts-participants-title span:last-child').style.cursor = 'pointer';
+            participantPanel.querySelector('.confgts-participants-title span:last-child').onclick = () => {
+              participantPanel.hidden = true;
+            };
+            document.getElementById('conference')?.appendChild(participantPanel);
+
+            window.__confgtsParticipantsTimer && clearInterval(window.__confgtsParticipantsTimer);
+            window.__confgtsParticipantsTimer = setInterval(refreshParticipantsPanel, 1500);
+            syncMediaButtons();
           };
 
           const applyOutputSettings = async () => {
@@ -1012,13 +1340,12 @@ public sealed class MainWindow : Window
 
             await selectRoom(roomId);
             await joinRoom();
+            installNativeControls();
+            syncMediaButtons();
             await applyOutputSettings();
           })().catch(err => {
             console.error('ConfGTS native conference join failed', err);
-            const box = document.createElement('div');
-            box.style.cssText = 'margin:20px;padding:16px;border-radius:12px;background:#fff8e8;color:#8a5a00';
-            box.textContent = 'Не удалось полностью открыть конференцию: ' + (err?.message || err);
-            document.body.prepend(box);
+            showNativeToast('Не удалось полностью открыть конференцию: ' + (err?.message || err));
           });
         })();
         """;
