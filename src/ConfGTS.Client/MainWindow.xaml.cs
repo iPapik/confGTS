@@ -1516,17 +1516,27 @@ public sealed class MainWindow : Window
 
     private async Task CheckServerAsync()
     {
-        try
+        for (var attempt = 0; attempt < 3; attempt++)
         {
-            var ok = await _api.HealthAsync();
-            _serverText.Text = ok ? "Сервер доступен" : "Сервер недоступен";
-            _serverDot.Fill = Brush(ok ? "#31B657" : "#D14343");
+            try
+            {
+                if (await _api.HealthAsync())
+                {
+                    _serverText.Text = "Сервер доступен";
+                    _serverDot.Fill = Brush("#31B657");
+                    return;
+                }
+            }
+            catch
+            {
+            }
+
+            if (attempt < 2)
+                await Task.Delay(350);
         }
-        catch
-        {
-            _serverText.Text = "Сервер недоступен";
-            _serverDot.Fill = Brush("#D14343");
-        }
+
+        _serverText.Text = "Сервер недоступен";
+        _serverDot.Fill = Brush("#D14343");
     }
 
     private async void LoginButton_Click(object sender, RoutedEventArgs e) =>
