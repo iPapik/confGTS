@@ -172,6 +172,48 @@ if ($apiAuthRegex.IsMatch($web)) {
 } elseif (-not $web.Contains('authType := strings.ToLower(strings.TrimSpace(in.AuthType))')) {
     throw "ConfGTS API login authentication block was not found."
 }
+# After an administrator stops a room, allow the elected recorder a short
+# grace period to upload the final MediaRecorder chunk that was already being
+# captured. The finished recording remains stored only on the server.
+if (-not $web.Contains('"time"')) {
+    $web = [regex]::Replace(
+        $web,
+        'import\s*\(',
+        'import (' + [Environment]::NewLine + [char]9 + '"time"',
+        1)
+}
+
+$recordAuthOld = @'
+	sess, _, recorder := a.store.RoomStatus(roomID)
+	if sess == nil || sess.ID != sessionID || recorder != normUser(u.Username) {
+		http.Error(w, "not recorder", 403)
+		return
+	}
+'@
+$recordAuthNew = @'
+	sess, _, recorder := a.store.RoomStatus(roomID)
+	authorized := sess != nil && sess.ID == sessionID && recorder == normUser(u.Username)
+	if !authorized && capture != "" {
+		if existing, ok := a.store.RecordingByCaptureID(capture); ok &&
+			existing.RoomID == roomID &&
+			existing.SessionID == sessionID &&
+			normUser(existing.Recorder) == normUser(u.Username) &&
+			existing.FinishedAt != nil &&
+			time.Since(*existing.FinishedAt) <= 30*time.Second {
+			authorized = true
+		}
+	}
+	if !authorized {
+		http.Error(w, "not recorder", 403)
+		return
+	}
+'@
+if ($web.Contains($recordAuthOld)) {
+    $web = $web.Replace($recordAuthOld, $recordAuthNew)
+} elseif (-not $web.Contains('time.Since(*existing.FinishedAt) <= 30*time.Second')) {
+    throw 'Recording upload authorization block was not found.'
+}
+
 Set-Content $webPath $web -Encoding UTF8 -NoNewline
 
 $uiPath = Join-Path $root "server\ui.go"
