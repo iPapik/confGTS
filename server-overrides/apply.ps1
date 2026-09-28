@@ -63,6 +63,20 @@ func (s *Store) RecordingByCaptureID(captureID string) (Recording, bool) {
 	return Recording{}, false
 }
 
+func (s *Store) CanUploadEndedSessionRecording(sessionID, username string, maxAge time.Duration) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, sess := range s.state.Sessions {
+		if sess.ID == sessionID &&
+			sess.EndedAt != nil &&
+			time.Since(*sess.EndedAt) <= maxAge &&
+			normUser(sess.StartedBy) == normUser(username) {
+			return true
+		}
+	}
+	return false
+}
+
 '@
     if ($store.Contains($recordingByIdAnchor)) {
         $store = $store.Replace($recordingByIdAnchor, $recordingByCapture + $recordingByIdAnchor)
@@ -194,6 +208,9 @@ $recordAuthNew = @'
 			normUser(existing.Recorder) == normUser(u.Username) &&
 			existing.FinishedAt != nil &&
 			time.Since(*existing.FinishedAt) <= 30*time.Second {
+			authorized = true
+		}
+		if !authorized && a.store.CanUploadEndedSessionRecording(sessionID, u.Username, 30*time.Second) {
 			authorized = true
 		}
 	}
