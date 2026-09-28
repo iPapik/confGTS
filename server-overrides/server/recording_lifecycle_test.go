@@ -21,7 +21,7 @@ func newRecordingTestStore(t *testing.T) (*Store, Room) {
 
 func createTestRecording(t *testing.T, s *Store, room Room, captureID string) (Recording, User) {
 	t.Helper()
-	u := User{Username: `TEPLO\\recorder`, DisplayName: "Recorder"}
+	u := User{Username: `TEPLO\recorder`, DisplayName: "Recorder"}
 	session, _, recorder, err := s.Join(room.ID, u)
 	if err != nil {
 		t.Fatalf("Join: %v", err)
