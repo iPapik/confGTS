@@ -55,7 +55,7 @@ jobs:
           if ($main -notmatch '_conferenceHost is not null' -or $main -notmatch 'StopDashboardTimer\(\);') { throw 'Conference dashboard polling guard is missing.' }
           if ($main -notmatch 'unsafely-treat-insecure-origin-as-secure') { throw 'HTTP media secure-origin compatibility flag is missing.' }
           if ($main -notmatch 'native-hangup' -or $main -notmatch 'native-participants') { throw 'Conference participant/hangup controls are missing.' }
-          if ($main -notmatch "postMessage\('leave-conference'\)" -or $main -notmatch 'ConferenceWebMessageReceived') { throw 'Native hangup bridge is missing.' }
+          if ($main -notmatch "postMessage\('leave-conference-complete'\)" -or $main -notmatch 'ConferenceWebMessageReceived') { throw 'Native hangup bridge is missing.' }
           if ($main -notmatch '#conference > \.toolbar \{ display:none' -or $main -notmatch 'overflow:hidden !important') { throw 'Responsive conference layout rules are missing.' }
           if ($main -notmatch "track\.enabled = !track\.enabled") { throw 'Native microphone/camera toggles are missing.' }
           if ($main -notmatch 'Запомнить меня' -or $remember -notmatch 'PasswordVault') { throw 'Secure remember-me login is missing.' }
