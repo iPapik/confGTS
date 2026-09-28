@@ -149,4 +149,13 @@ jobs:
         run: |
           gh release delete v0.18.5 --cleanup-tag --yes 2>$null
           if ($LASTEXITCODE -ne 0) { Write-Host 'No previous v0.18.5 release to delete.' }
-          gh release create v0.18.5 'artifacts\msi\ConfGTS-0.18.5-x64.msi' 'artifacts\setup\ConfGTS-Setup-0.18.5-x64.exe' 'artifacts\SHA256SUMS-client.txt' --target '${{ github.sha }}' --title 'ConfGTS Client 0.18.5' --notes 'Клиентская сборка 0.18.5. Исправлено отображение выбранных микрофона, динамиков и камеры: имя выбранного устройства видно сразу в закрытом поле. Поле камеры всегда отображается, а при отсутствии камеры показывает «Камера не найдена». Исправлена гонка загрузки комнаты WebView2, вызывавшая Cannot read properties of undefined (reading 'name'). Во время конференции остановлен фоновый опрос панели, который мог ошибочно менять состояние на «Сервер недоступен»; после выхода опрос возобновляется. Вход без камеры/микрофона по-прежнему поддерживается.'
+          @'
+          Клиентская сборка 0.18.5.
+
+          - Исправлено отображение выбранных микрофона, динамиков и камеры: имя выбранного устройства видно сразу в закрытом поле.
+          - Поле камеры всегда отображается; при отсутствии камеры показывается «Камера не найдена».
+          - Исправлена гонка загрузки комнаты WebView2, вызывавшая ошибку Cannot read properties of undefined (reading 'name').
+          - Во время конференции остановлен фоновый опрос панели, который мог ошибочно менять состояние на «Сервер недоступен»; после выхода опрос возобновляется.
+          - Вход без камеры и микрофона по-прежнему поддерживается.
+          '@ | Set-Content 'artifacts\RELEASE-NOTES-client.md' -Encoding utf8
+          gh release create v0.18.5 'artifacts\msi\ConfGTS-0.18.5-x64.msi' 'artifacts\setup\ConfGTS-Setup-0.18.5-x64.exe' 'artifacts\SHA256SUMS-client.txt' --target '${{ github.sha }}' --title 'ConfGTS Client 0.18.5' --notes-file 'artifacts\RELEASE-NOTES-client.md'
