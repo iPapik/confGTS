@@ -56,6 +56,16 @@ jobs:
           }
           Write-Host 'Conference can join without local media and room selection is race-safe.' -ForegroundColor Green
 
+      - name: Print recording implementation
+        shell: pwsh
+        run: |
+          Write-Host '=== UI APP JS ==='
+          Get-Content '.\server\ui.go' | Select-Object -First 55
+          Write-Host '=== RECORDING STORE ==='
+          Select-String -Path '.\server\store.go' -Pattern 'StartOrGetRecording|AppendRecording|FinalizeRecording|RecordingPath|RoomStatus|Join\(|Leave\(|Heartbeat\(' -Context 5,80
+          Write-Host '=== RECORDING TYPES ==='
+          Select-String -Path '.\server\types.go' -Pattern 'type Recording|type RoomSession|type Participant|type LiveRoom' -Context 0,35
+
       - name: Print route and LDAP structure
         shell: pwsh
         run: |
