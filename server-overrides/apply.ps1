@@ -2,7 +2,7 @@ $ErrorActionPreference = "Stop"
 
 $root = Split-Path -Parent $PSScriptRoot
 
-Write-Host "Applying ConfGTS Server 0.18.2 overlays..." -ForegroundColor Cyan
+Write-Host "Applying ConfGTS Server 0.18.7 overlays..." -ForegroundColor Cyan
 
 Copy-Item (Join-Path $PSScriptRoot "src\*") (Join-Path $root "src") -Recurse -Force
 Copy-Item (Join-Path $PSScriptRoot "server\*") (Join-Path $root "server") -Recurse -Force
@@ -20,12 +20,34 @@ if ($patchedStore -ne $store) {
 } else {
     Write-Host "Legacy loopback migration block was not present; continuing." -ForegroundColor Yellow
 }
+
+# When the final participant leaves (or expires by TTL), close any open recording
+# metadata for the conference session. Client-side MediaRecorder normally calls
+# /api/recordings/finalize, but this server-side guard prevents an unfinished
+# archive entry after a crash, power loss, or abrupt client termination.
+$sessionEndPattern = '(?m)^(\t)lr\.Session = nil\r?\n\1lr\.Recorder = ""'
+$sessionEndReplacement = @'
+	for i := range s.state.Recordings {
+		if s.state.Recordings[i].SessionID == id && s.state.Recordings[i].FinishedAt == nil {
+			s.state.Recordings[i].FinishedAt = &now
+		}
+	}
+	lr.Session = nil
+	lr.Recorder = ""
+'@
+$sessionEndRegex = [regex]::new($sessionEndPattern)
+$sessionEndMatches = $sessionEndRegex.Matches($store)
+if ($sessionEndMatches.Count -ne 1) {
+    throw "Expected exactly one ConfGTS room-session end anchor, found $($sessionEndMatches.Count)."
+}
+$store = $sessionEndRegex.Replace($store, $sessionEndReplacement.TrimEnd("`r","`n"), 1)
+
 Set-Content $storePath $store -Encoding UTF8 -NoNewline
 
 $mainPath = Join-Path $root "server\main.go"
 $main = Get-Content $mainPath -Raw -Encoding UTF8
-$main = $main.Replace('const Version = "0.16.0"', 'const Version = "0.18.2"')
-$main = $main.Replace('const Version = "0.16.1"', 'const Version = "0.18.2"')
+$main = $main.Replace('const Version = "0.16.0"', 'const Version = "0.18.7"')
+$main = $main.Replace('const Version = "0.16.1"', 'const Version = "0.18.7"')
 $main = $main.Replace('cfg.ListenAddr == ":8090" {', 'cfg.ListenAddr == ":8090" || cfg.ListenAddr == "0.0.0.0:8090" {')
 $main = $main.Replace('cfg.ListenAddr = "127.0.0.1:" + strconv.Itoa(n)', 'cfg.ListenAddr = "0.0.0.0:" + strconv.Itoa(n)')
 $main = $main.Replace('addr = "127.0.0.1:8090"', 'addr = "0.0.0.0:8090"')
@@ -177,6 +199,33 @@ if ($joinRoomRegex.IsMatch($ui)) {
     throw 'ConfGTS joinRoom media blocking logic was not replaced.'
 }
 
+# Flush and finalize the active MediaRecorder before telling the server that
+# this participant left. The recording upload endpoint only accepts the currently
+# elected recorder, so sending /leave first could reject the final WebM chunk.
+$stopRecordingPattern = '(?s)function stopRecording\(\)\{.*?\}\r?\nwindow\.addEventListener'
+$stopRecordingReplacement = @'
+async function stopRecording(){let active=recorder;if(active&&active.state!=='inactive'){await new Promise(resolve=>{let done=false;let settle=()=>{if(done)return;done=true;Promise.resolve(recordQueue).catch(()=>{}).finally(resolve)};let previous=active.onstop;active.onstop=()=>{try{if(previous)previous()}finally{setTimeout(settle,0)}};try{active.requestData()}catch{};try{active.stop()}catch{settle()};setTimeout(settle,6500)})}else{await Promise.resolve(recordQueue).catch(()=>{})}}
+window.addEventListener
+'@
+$stopRecordingRegex = [regex]::new($stopRecordingPattern)
+if ($stopRecordingRegex.IsMatch($ui)) {
+    $ui = $stopRecordingRegex.Replace($ui, $stopRecordingReplacement.TrimEnd("`r","`n"), 1)
+} elseif (-not $ui.Contains("async function stopRecording(){let active=recorder")) {
+    throw 'ConfGTS stopRecording function was not found.'
+}
+
+$leaveRecordingPattern = '(?s)async function leaveRoom\(\)\{.*?\}\r?\nfunction addVideoPreviewHome'
+$leaveRecordingReplacement = @'
+async function leaveRoom(){if(!currentRoom)return;await stopRecording();try{await api('/api/rooms/'+currentRoom+'/leave',{method:'POST'})}catch{};stopLoops(false);for(let [k,p] of peers){p.close()}peers.clear();document.querySelectorAll('.video-tile').forEach(x=>x.remove());addVideoPreviewHome();roomState=null;$('#conference').style.display='none';$('#joinBtn').style.display='inline-flex';$('#leaveBtn').style.display='none';await loadRooms()}
+function addVideoPreviewHome
+'@
+$leaveRecordingRegex = [regex]::new($leaveRecordingPattern)
+if ($leaveRecordingRegex.IsMatch($ui)) {
+    $ui = $leaveRecordingRegex.Replace($ui, $leaveRecordingReplacement.TrimEnd("`r","`n"), 1)
+} elseif (-not $ui.Contains("async function leaveRoom(){if(!currentRoom)return;await stopRecording();")) {
+    throw 'ConfGTS leaveRoom recording flush patch was not applied.'
+}
+
 # The native client can request a room immediately after WebView navigation.
 # Harden the server page against that startup race: selectRoom must not dereference
 # an undefined room while loadRooms() is still in flight.
@@ -213,13 +262,13 @@ $versionTargets = @(
 foreach ($target in $versionTargets) {
     if (Test-Path $target -PathType Leaf) {
         $text = Get-Content $target -Raw -Encoding UTF8
-        $text = $text.Replace("0.16.0", "0.18.2").Replace("0.16.1", "0.18.2").Replace("0.17.0", "0.18.2").Replace("0.18.0", "0.18.2").Replace("0.18.1", "0.18.2").Replace("0.18.0", "0.18.2").Replace("0.18.1", "0.18.2")
+        $text = $text.Replace("0.16.0", "0.18.7").Replace("0.16.1", "0.18.7").Replace("0.17.0", "0.18.7").Replace("0.18.0", "0.18.7").Replace("0.18.1", "0.18.7").Replace("0.18.0", "0.18.7").Replace("0.18.1", "0.18.7")
         Set-Content $target $text -Encoding UTF8 -NoNewline
     } elseif (Test-Path $target -PathType Container) {
         Get-ChildItem $target -Recurse -File -Include *.go,*.cs,*.xaml,*.csproj,*.wxs,*.wixproj,*.ps1 | ForEach-Object {
             $text = Get-Content $_.FullName -Raw -Encoding UTF8
             if ($text.Contains("0.16.0") -or $text.Contains("0.16.1") -or $text.Contains("0.17.0") -or $text.Contains("0.18.0") -or $text.Contains("0.18.1")) {
-                $text = $text.Replace("0.16.0", "0.18.2").Replace("0.16.1", "0.18.2").Replace("0.17.0", "0.18.2")
+                $text = $text.Replace("0.16.0", "0.18.7").Replace("0.16.1", "0.18.7").Replace("0.17.0", "0.18.7")
                 Set-Content $_.FullName $text -Encoding UTF8 -NoNewline
             }
         }
@@ -257,7 +306,7 @@ $serverBundle = Join-Path $root "Installer\Server\Bootstrapper\Bundle.wxs"
 if (Test-Path $serverBundle) {
     $bundle = Get-Content $serverBundle -Raw -Encoding UTF8
     if (-not $bundle.Contains('IconSourceFile=')) {
-        $bundle = $bundle.Replace('          Version="0.18.2"', '          Version="0.18.2"' + [Environment]::NewLine + '          IconSourceFile="!(bindpath.assets)\ConfGTS.ico"')
+        $bundle = $bundle.Replace('          Version="0.18.7"', '          Version="0.18.7"' + [Environment]::NewLine + '          IconSourceFile="!(bindpath.assets)\ConfGTS.ico"')
     }
     Set-Content $serverBundle $bundle -Encoding UTF8 -NoNewline
 }
