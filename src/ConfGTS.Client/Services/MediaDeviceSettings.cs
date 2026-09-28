@@ -5,10 +5,16 @@ namespace ConfGTS.Client.Services;
 public sealed class MediaDeviceSettings
 {
     public string MicrophoneId { get; set; } = "";
+    public string MicrophoneName { get; set; } = "";
     public string SpeakerId { get; set; } = "";
+    public string SpeakerName { get; set; } = "";
     public string CameraId { get; set; } = "";
+    public string CameraName { get; set; } = "";
     public double MicrophoneVolume { get; set; } = 100;
     public double SpeakerVolume { get; set; } = 70;
+    public bool MicrophoneEnabled { get; set; } = true;
+    public bool SpeakerEnabled { get; set; } = true;
+    public bool CameraEnabled { get; set; } = true;
 
     private static string SettingsPath =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
