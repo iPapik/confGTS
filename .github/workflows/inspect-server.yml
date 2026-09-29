@@ -100,6 +100,18 @@ jobs:
           if ($ui -notmatch 'ConfGTS recording audio mix unavailable') {
             throw 'Recorder no-audio fallback is missing.'
           }
+          if ($ui -notmatch 'pc\.__confgtsVideoSender' -or $ui -notmatch 'pc\.addTransceiver' -or $ui -notmatch 'direction:\x27sendrecv\x27') {
+            throw 'Permanent audio/video peer transceivers are missing.'
+          }
+          if ($ui -notmatch 'pc\.__confgtsPendingIce' -or $ui -notmatch 'flushPeerIce' -or $ui -notmatch 'else pc\.__confgtsPendingIce\.push') {
+            throw 'ICE candidates are not queued before remote descriptions.'
+          }
+          if ($ui -notmatch 'window\.__confgtsScreenTrack=nt' -or $ui -notmatch 'Камера выключена') {
+            throw 'No-camera screen sharing or participant placeholder support is missing.'
+          }
+          if ($ui -notmatch "ctx\.fillText\('Без видео'" -or $ui -notmatch "document\.querySelectorAll\('\.video-tile'\)") {
+            throw 'Full-conference recording compositor is missing.'
+          }
           if ($ui -notmatch 'recordingContext=ctx' -or $ui -notmatch 'recording context missing' -or $ui -notmatch 'attempt<4') {
             throw 'Stable recording context or retry upload hardening is missing.'
           }

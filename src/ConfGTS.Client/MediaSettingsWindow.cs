@@ -43,10 +43,10 @@ public sealed class MediaSettingsPanel : Grid
 
     public MediaSettingsPanel()
     {
-        StartupDiagnostics.Log("MediaSettingsPanel 0.18.10 constructor started.");
+        StartupDiagnostics.Log("MediaSettingsPanel 0.18.11 constructor started.");
         Background = Brush(Bg);
         Children.Add(BuildUi());
-        StartupDiagnostics.Log("MediaSettingsPanel 0.18.10 constructor completed.");
+        StartupDiagnostics.Log("MediaSettingsPanel 0.18.11 constructor completed.");
     }
 
     public async Task InitializeAsync()
@@ -127,7 +127,7 @@ public sealed class MediaSettingsPanel : Grid
         _refreshButton.Click += async (_, _) => await RefreshDevicesAsync();
         actions.Children.Add(_refreshButton);
 
-        var back = SecondaryButton("← К конференциям");
+        var back = SecondaryButton("← Вернуться");
         back.Click += (_, _) => CloseRequested?.Invoke(this, EventArgs.Empty);
         actions.Children.Add(back);
 

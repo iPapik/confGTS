@@ -1,4 +1,4 @@
-name: Build ConfGTS Client 0.18.10
+name: Build ConfGTS Client 0.18.11
 
 on:
   push:
@@ -34,8 +34,8 @@ jobs:
         run: |
           $required = @(
             'artifacts\publish\ConfGTS.Client.exe',
-            'artifacts\msi\ConfGTS-0.18.10-x64.msi',
-            'artifacts\setup\ConfGTS-Setup-0.18.10-x64.exe'
+            'artifacts\msi\ConfGTS-0.18.11-x64.msi',
+            'artifacts\setup\ConfGTS-Setup-0.18.11-x64.exe'
           )
           foreach ($file in $required) { if (!(Test-Path $file)) { throw "Missing artifact: $file" } }
           foreach ($dll in @('vcruntime140.dll','vcruntime140_1.dll','msvcp140.dll')) {
@@ -65,8 +65,9 @@ jobs:
           if ($main -notmatch 'await _api\.LogoutAsync\(\)' -or $main -notmatch '_dashboardFailureCount >= 3') { throw 'Logout/session or connection-state stabilization is missing.' }
           if ($main -notmatch 'Text = "Запомнить меня"') { throw 'Visible remember-me label is missing.' }
           if ($main -notmatch '_rememberMeBox\.MinWidth = 0' -or $main -notmatch 'ColumnSpacing = 7') { throw 'Compact remember-me alignment fix is missing.' }
-          if ($main -notmatch "postMessage\('toggle-sidebar'\)" -or $main -notmatch 'SetConferenceSidebarVisible' -or $main -notmatch 'native-sidebar') { throw 'Conference sidebar toggle bridge is missing.' }
-          if ($main -notmatch '_settingsOpenedFromConference' -or $main -notmatch 'Returned from device settings to active conference' -or $main -notmatch '_conferenceHost\.Visibility = Visibility\.Collapsed') { throw 'Settings do not preserve the active conference.' }
+          if ($main -match "☰ Панель" -or $main -match "postMessage\('toggle-sidebar'\)" -or $main -match 'native-sidebar') { throw 'Removed conference Panel button is still present.' }
+          if ($main -notmatch "postMessage\('open-media-settings'\)" -or $main -notmatch 'native-settings' -or $main -notmatch '__confgtsApplyMediaSettings' -or $main -notmatch 'ApplyConferenceMediaSettingsAsync') { throw 'In-conference live device settings bridge is missing.' }
+          if ($main -notmatch '_settingsOpenedFromConference' -or $main -notmatch 'Returned from device settings to active conference' -or $main -notmatch 'true in-conference overlay' -or $main -match '_conferenceHost\.Visibility = Visibility\.Collapsed') { throw 'Settings do not remain an overlay over the active conference.' }
           if ($settings -match 'Камера, микрофон и звук настраиваются внутри ConfGTS' -or $settings -match 'Устройства обновлены\. Выбранные устройства') { throw 'Removed device-settings text is still present.' }
           Get-Item $required | Select-Object Name,Length | Format-Table -AutoSize
 
@@ -79,7 +80,7 @@ jobs:
           $p = Start-Process $exe -ArgumentList '--self-test-settings' -PassThru
           Start-Sleep -Seconds 10
           $log = if (Test-Path $startupLog) { Get-Content $startupLog -Raw } else { '' }
-          if ($p.HasExited -or $log -notmatch 'Settings smoke test completed\.' -or $log -notmatch 'MediaSettingsPanel 0.18.10 constructor completed\.' -or $log -notmatch 'In-app media settings initialized\.' -or $log -match 'Fatal error|Settings smoke test failed|XAML parsing failed') {
+          if ($p.HasExited -or $log -notmatch 'Settings smoke test completed\.' -or $log -notmatch 'MediaSettingsPanel 0.18.11 constructor completed\.' -or $log -notmatch 'In-app media settings initialized\.' -or $log -match 'Fatal error|Settings smoke test failed|XAML parsing failed') {
             if (Test-Path $startupLog) { Get-Content $startupLog -Tail 160 }
             Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
             throw 'Published client failed the settings navigation smoke test.'
@@ -89,7 +90,7 @@ jobs:
       - name: Test client MSI installation and settings
         shell: pwsh
         run: |
-          $msi = (Resolve-Path 'artifacts\msi\ConfGTS-0.18.10-x64.msi').Path
+          $msi = (Resolve-Path 'artifacts\msi\ConfGTS-0.18.11-x64.msi').Path
           $installedExe = Join-Path $env:ProgramFiles 'ГТС\ConfGTS\ConfGTS.Client.exe'
           $startMenu = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\ConfGTS\ConfGTS.lnk'
           $desktop = Join-Path ([Environment]::GetFolderPath('CommonDesktopDirectory')) 'ConfGTS.lnk'
@@ -114,7 +115,7 @@ jobs:
       - name: Test client EXE installation and settings
         shell: pwsh
         run: |
-          $setup = (Resolve-Path 'artifacts\setup\ConfGTS-Setup-0.18.10-x64.exe').Path
+          $setup = (Resolve-Path 'artifacts\setup\ConfGTS-Setup-0.18.11-x64.exe').Path
           $installedExe = Join-Path $env:ProgramFiles 'ГТС\ConfGTS\ConfGTS.Client.exe'
           $startupLog = "$env:LOCALAPPDATA\ConfGTS\logs\startup.log"
           $p = Start-Process $setup -ArgumentList @('/quiet','/norestart') -Wait -PassThru
@@ -137,7 +138,7 @@ jobs:
       - name: Generate SHA-256
         shell: pwsh
         run: |
-          $files = @('artifacts\msi\ConfGTS-0.18.10-x64.msi','artifacts\setup\ConfGTS-Setup-0.18.10-x64.exe')
+          $files = @('artifacts\msi\ConfGTS-0.18.11-x64.msi','artifacts\setup\ConfGTS-Setup-0.18.11-x64.exe')
           $lines = foreach ($file in $files) {
             $hash = Get-FileHash $file -Algorithm SHA256
             "$($hash.Hash.ToLower())  $([IO.Path]::GetFileName($file))"
@@ -148,13 +149,13 @@ jobs:
       - name: Upload tested client packages
         uses: actions/upload-artifact@v4
         with:
-          name: ConfGTS-Client-0.18.10-tested
+          name: ConfGTS-Client-0.18.11-tested
           if-no-files-found: error
           retention-days: 30
           compression-level: 0
           path: |
-            artifacts/msi/ConfGTS-0.18.10-x64.msi
-            artifacts/setup/ConfGTS-Setup-0.18.10-x64.exe
+            artifacts/msi/ConfGTS-0.18.11-x64.msi
+            artifacts/setup/ConfGTS-Setup-0.18.11-x64.exe
             artifacts/SHA256SUMS-client.txt
 
       - name: Publish client GitHub Release
@@ -163,14 +164,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release delete v0.18.10 --cleanup-tag --yes 2>$null
-          if ($LASTEXITCODE -ne 0) { Write-Host 'No previous v0.18.10 release to delete.' }
+          gh release delete v0.18.11 --cleanup-tag --yes 2>$null
+          if ($LASTEXITCODE -ne 0) { Write-Host 'No previous v0.18.11 release to delete.' }
           @'
-          Клиентская сборка 0.18.10.
+          Клиентская сборка 0.18.11.
 
-          - «Настройки устройств», открытые из боковой панели конференции, больше не завершают активную конференцию.
-          - После закрытия настроек пользователь возвращается в ту же конференцию; WebView2/WebRTC-сессия и запись не пересоздаются.
-          - Восстанавливается состояние боковой панели конференции.
-          - Сохранены исправления «Запомнить меня», управления устройствами, панели конференции и стабильности входа.
+          - Кнопка «Панель» удалена из конференции.
+          - В нижнюю панель конференции добавлена кнопка «⚙ Настройки» для выбора камеры, микрофона и динамиков, а также регулировки уровней звука без выхода из конференции.
+          - После закрытия настроек новые устройства применяются к уже существующим WebRTC-соединениям через replaceTrack(), конференция и запись не перезапускаются.
+          - Настройки динамиков и громкости сразу применяются к уже открытым удалённым потокам.
           '@ | Set-Content 'artifacts\RELEASE-NOTES-client.md' -Encoding utf8
-          gh release create v0.18.10 'artifacts\msi\ConfGTS-0.18.10-x64.msi' 'artifacts\setup\ConfGTS-Setup-0.18.10-x64.exe' 'artifacts\SHA256SUMS-client.txt' --target '${{ github.sha }}' --title 'ConfGTS Client 0.18.10' --notes-file 'artifacts\RELEASE-NOTES-client.md'
+          gh release create v0.18.11 'artifacts\msi\ConfGTS-0.18.11-x64.msi' 'artifacts\setup\ConfGTS-Setup-0.18.11-x64.exe' 'artifacts\SHA256SUMS-client.txt' --target '${{ github.sha }}' --title 'ConfGTS Client 0.18.11' --notes-file 'artifacts\RELEASE-NOTES-client.md'
