@@ -66,6 +66,7 @@ jobs:
           if ($main -notmatch 'Text = "Запомнить меня"') { throw 'Visible remember-me label is missing.' }
           if ($main -notmatch '_rememberMeBox\.MinWidth = 0' -or $main -notmatch 'ColumnSpacing = 7') { throw 'Compact remember-me alignment fix is missing.' }
           if ($main -notmatch "postMessage\('toggle-sidebar'\)" -or $main -notmatch 'SetConferenceSidebarVisible' -or $main -notmatch 'native-sidebar') { throw 'Conference sidebar toggle bridge is missing.' }
+          if ($main -notmatch '_settingsOpenedFromConference' -or $main -notmatch 'Returned from device settings to active conference' -or $main -notmatch '_conferenceHost\.Visibility = Visibility\.Collapsed') { throw 'Settings do not preserve the active conference.' }
           if ($settings -match 'Камера, микрофон и звук настраиваются внутри ConfGTS' -or $settings -match 'Устройства обновлены\. Выбранные устройства') { throw 'Removed device-settings text is still present.' }
           Get-Item $required | Select-Object Name,Length | Format-Table -AutoSize
 
