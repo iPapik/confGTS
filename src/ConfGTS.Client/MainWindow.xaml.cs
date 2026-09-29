@@ -53,6 +53,7 @@ public sealed class MainWindow : Window
     private MediaSettingsPanel? _mediaSettingsPanel;
     private WebView2? _conferenceWebView;
     private Grid? _conferenceHost;
+    private bool _conferenceSidebarVisible;
     private string _activeRoomId = "";
 
     public MainWindow()
@@ -214,24 +215,36 @@ public sealed class MainWindow : Window
         panel.Children.Add(passwordHost);
 
         _rememberMeBox.Content = null;
+        _rememberMeBox.MinWidth = 0;
         _rememberMeBox.Width = 20;
+        _rememberMeBox.MaxWidth = 20;
         _rememberMeBox.Height = 20;
+        _rememberMeBox.Padding = new Thickness(0);
         _rememberMeBox.Margin = new Thickness(0);
+        _rememberMeBox.HorizontalAlignment = HorizontalAlignment.Left;
 
-        var rememberRow = new StackPanel
+        // Keep the check mark and its caption in adjacent fixed/auto columns.
+        // The default WinUI CheckBox template reserves additional horizontal space,
+        // which previously pushed the visible caption far away from the square.
+        var rememberRow = new Grid
         {
-            Orientation = Orientation.Horizontal,
-            Spacing = 9,
-            Margin = new Thickness(0, 3, 0, 3)
+            ColumnSpacing = 7,
+            Margin = new Thickness(0, 3, 0, 3),
+            HorizontalAlignment = HorizontalAlignment.Left
         };
+        rememberRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(20) });
+        rememberRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         rememberRow.Children.Add(_rememberMeBox);
-        rememberRow.Children.Add(new TextBlock
+
+        var rememberLabel = new TextBlock
         {
             Text = "Запомнить меня",
             FontSize = 13,
             Foreground = Brush(Text),
             VerticalAlignment = VerticalAlignment.Center
-        });
+        };
+        Grid.SetColumn(rememberLabel, 1);
+        rememberRow.Children.Add(rememberLabel);
         panel.Children.Add(rememberRow);
 
         _loginButton.Height = 54;
@@ -295,7 +308,7 @@ public sealed class MainWindow : Window
 
         panel.Children.Add(new TextBlock
         {
-            Text = "Версия 0.18.8 beta  |  © ГТС, 2026",
+            Text = "Версия 0.18.9 beta  |  © ГТС, 2026",
             FontSize = 11,
             Foreground = Brush("#8A9BAC"),
             HorizontalAlignment = HorizontalAlignment.Center,
@@ -986,6 +999,10 @@ public sealed class MainWindow : Window
               background:#40556D !important;
               border-color:#60758B !important;
             }
+            .controls .btn.native-sidebar {
+              min-width:104px !important;
+              background:#164C79 !important;
+            }
             .controls .btn.native-participants {
               min-width:118px !important;
               background:#164C79 !important;
@@ -1198,6 +1215,18 @@ public sealed class MainWindow : Window
                 }
               };
             }
+
+            const sidebarBtn = document.createElement('button');
+            sidebarBtn.type = 'button';
+            sidebarBtn.className = 'btn native-sidebar';
+            sidebarBtn.textContent = '☰ Панель';
+            sidebarBtn.title = 'Показать или скрыть боковую панель';
+            sidebarBtn.onclick = () => {
+              if (window.chrome?.webview) {
+                window.chrome.webview.postMessage('toggle-sidebar');
+              }
+            };
+            controls.appendChild(sidebarBtn);
 
             const participantsBtn = document.createElement('button');
             participantsBtn.type = 'button';
@@ -1460,7 +1489,13 @@ public sealed class MainWindow : Window
         {
             var message = e.TryGetWebMessageAsString();
             if (string.Equals(message, "leave-conference", StringComparison.Ordinal))
+            {
                 await LeaveConferenceAsync(true);
+            }
+            else if (string.Equals(message, "toggle-sidebar", StringComparison.Ordinal))
+            {
+                SetConferenceSidebarVisible(!_conferenceSidebarVisible);
+            }
         }
         catch (Exception ex)
         {
@@ -1607,6 +1642,8 @@ public sealed class MainWindow : Window
 
     private void SetConferenceLayout(bool conferenceMode)
     {
+        _conferenceSidebarVisible = false;
+
         if (_dashboardSidebar is not null)
             _dashboardSidebar.Visibility = conferenceMode ? Visibility.Collapsed : Visibility.Visible;
 
@@ -1616,6 +1653,24 @@ public sealed class MainWindow : Window
 
         Grid.SetColumn(_mainContentHost, conferenceMode ? 0 : 1);
         Grid.SetColumnSpan(_mainContentHost, conferenceMode ? 2 : 1);
+    }
+
+    private void SetConferenceSidebarVisible(bool visible)
+    {
+        if (_conferenceHost is null)
+            return;
+
+        _conferenceSidebarVisible = visible;
+
+        if (_dashboardSidebar is not null)
+            _dashboardSidebar.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+
+        _dashboardSidebarColumn.Width = visible
+            ? new GridLength(330)
+            : new GridLength(0);
+
+        Grid.SetColumn(_mainContentHost, visible ? 1 : 0);
+        Grid.SetColumnSpan(_mainContentHost, visible ? 1 : 2);
     }
 
     internal async Task RunSettingsSmokeTestAsync()
