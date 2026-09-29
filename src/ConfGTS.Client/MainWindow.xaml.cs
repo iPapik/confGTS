@@ -1708,7 +1708,9 @@ public sealed class MainWindow : Window
 
             _mediaSettingsPanel = null;
             if (_dashboardMainScroll is not null)
-                _dashboardMainScroll.Visibility = Visibility.Visible;
+                _dashboardMainScroll.Visibility = _conferenceHost is null
+                    ? Visibility.Visible
+                    : Visibility.Collapsed;
 
             _dashboardServerText.Text = "Не удалось открыть настройки устройств: " + ex.Message;
             _dashboardServerText.Foreground = Brush("#B54242");
