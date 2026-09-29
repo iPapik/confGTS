@@ -69,7 +69,10 @@ jobs:
           if ($ui -notmatch 'recorder\.start\(2000\)') {
             throw "Recording chunk interval is not 2 seconds."
           }
-          if ($ui -notmatch 'norm\(roomState\.recorder\)===norm\(ME\.username\)') {
+
+          if ($ui -notmatch 'recorder\.start\(2000\);drawRecording\(\)') {
+            throw 'Recorder canvas draw loop is not started after MediaRecorder.'
+          }          if ($ui -notmatch 'norm\(roomState\.recorder\)===norm\(ME\.username\)') {
             throw "Domain username normalization for recorder election is missing."
           }
           if ($ui -notmatch 'handleConferenceStopped' -or $ui -notmatch "postMessage\('leave-conference'\)") {
