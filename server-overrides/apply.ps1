@@ -244,6 +244,22 @@ if ($recordAuthRegex.IsMatch($web)) {
     throw 'Recording upload authorization block was not found.'
 }
 
+# Old 0.18.9 clients send an empty part=-1 request before MediaRecorder has
+# produced any bytes. Do not turn that handshake into a zero-byte archive entry.
+$recordingStartAnchor = 'rec, err := a.store.StartOrGetRecording(roomID, sessionID, capture, u.Username, r.Header.Get("Content-Type"))'
+if ($web.Contains($recordingStartAnchor) -and -not $web.Contains('zero-byte recording upload ignored')) {
+    $emptyUploadGuard = @'
+	if len(data) == 0 {
+		// zero-byte recording upload ignored
+		writeJSON(w, map[string]any{"ok": true, "ignored": true})
+		return
+	}
+'@
+    $web = $web.Replace($recordingStartAnchor, $emptyUploadGuard.TrimEnd() + [Environment]::NewLine + [char]9 + $recordingStartAnchor)
+} elseif (-not $web.Contains('zero-byte recording upload ignored')) {
+    throw 'Zero-byte recording upload guard was not applied.'
+}
+
 Set-Content $webPath $web -Encoding UTF8 -NoNewline
 
 $uiPath = Join-Path $root "server\ui.go"
