@@ -67,7 +67,7 @@ jobs:
           if ($main -notmatch '_rememberMeBox\.MinWidth = 0' -or $main -notmatch 'ColumnSpacing = 7') { throw 'Compact remember-me alignment fix is missing.' }
           if ($main -match "☰ Панель" -or $main -match "postMessage\('toggle-sidebar'\)" -or $main -match 'native-sidebar') { throw 'Removed conference Panel button is still present.' }
           if ($main -notmatch "postMessage\('open-media-settings'\)" -or $main -notmatch 'native-settings' -or $main -notmatch '__confgtsApplyMediaSettings' -or $main -notmatch 'ApplyConferenceMediaSettingsAsync') { throw 'In-conference live device settings bridge is missing.' }
-          if ($main -notmatch '_settingsOpenedFromConference' -or $main -notmatch 'Returned from device settings to active conference' -or $main -notmatch '_conferenceHost\.Visibility = Visibility\.Collapsed') { throw 'Settings do not preserve the active conference.' }
+          if ($main -notmatch '_settingsOpenedFromConference' -or $main -notmatch 'Returned from device settings to active conference' -or $main -notmatch 'true in-conference overlay' -or $main -match '_conferenceHost\.Visibility = Visibility\.Collapsed') { throw 'Settings do not remain an overlay over the active conference.' }
           if ($settings -match 'Камера, микрофон и звук настраиваются внутри ConfGTS' -or $settings -match 'Устройства обновлены\. Выбранные устройства') { throw 'Removed device-settings text is still present.' }
           Get-Item $required | Select-Object Name,Length | Format-Table -AutoSize
 
