@@ -1,8 +1,8 @@
-name: Build ConfGTS Client 0.18.8
+name: Build ConfGTS Client 0.18.9
 
 on:
   push:
-    branches: [ main, 'beta-*', 'fix/client-*' ]
+    branches: [ main, 'beta-*', 'fix/*' ]
   workflow_dispatch:
 
 permissions:
@@ -34,8 +34,8 @@ jobs:
         run: |
           $required = @(
             'artifacts\publish\ConfGTS.Client.exe',
-            'artifacts\msi\ConfGTS-0.18.8-x64.msi',
-            'artifacts\setup\ConfGTS-Setup-0.18.8-x64.exe'
+            'artifacts\msi\ConfGTS-0.18.9-x64.msi',
+            'artifacts\setup\ConfGTS-Setup-0.18.9-x64.exe'
           )
           foreach ($file in $required) { if (!(Test-Path $file)) { throw "Missing artifact: $file" } }
           foreach ($dll in @('vcruntime140.dll','vcruntime140_1.dll','msvcp140.dll')) {
@@ -64,6 +64,8 @@ jobs:
           if ($main -notmatch 'window\.__confgtsMediaReady' -or $main -notmatch 'native-pending') { throw 'Immediate conference media-control state is missing.' }
           if ($main -notmatch 'await _api\.LogoutAsync\(\)' -or $main -notmatch '_dashboardFailureCount >= 3') { throw 'Logout/session or connection-state stabilization is missing.' }
           if ($main -notmatch 'Text = "Запомнить меня"') { throw 'Visible remember-me label is missing.' }
+          if ($main -notmatch '_rememberMeBox\.MinWidth = 0' -or $main -notmatch 'ColumnSpacing = 7') { throw 'Compact remember-me alignment fix is missing.' }
+          if ($main -notmatch "postMessage\('toggle-sidebar'\)" -or $main -notmatch 'SetConferenceSidebarVisible' -or $main -notmatch 'native-sidebar') { throw 'Conference sidebar toggle bridge is missing.' }
           if ($settings -match 'Камера, микрофон и звук настраиваются внутри ConfGTS' -or $settings -match 'Устройства обновлены\. Выбранные устройства') { throw 'Removed device-settings text is still present.' }
           Get-Item $required | Select-Object Name,Length | Format-Table -AutoSize
 
@@ -76,7 +78,7 @@ jobs:
           $p = Start-Process $exe -ArgumentList '--self-test-settings' -PassThru
           Start-Sleep -Seconds 10
           $log = if (Test-Path $startupLog) { Get-Content $startupLog -Raw } else { '' }
-          if ($p.HasExited -or $log -notmatch 'Settings smoke test completed\.' -or $log -notmatch 'MediaSettingsPanel 0.18.8 constructor completed\.' -or $log -notmatch 'In-app media settings initialized\.' -or $log -match 'Fatal error|Settings smoke test failed|XAML parsing failed') {
+          if ($p.HasExited -or $log -notmatch 'Settings smoke test completed\.' -or $log -notmatch 'MediaSettingsPanel 0.18.9 constructor completed\.' -or $log -notmatch 'In-app media settings initialized\.' -or $log -match 'Fatal error|Settings smoke test failed|XAML parsing failed') {
             if (Test-Path $startupLog) { Get-Content $startupLog -Tail 160 }
             Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
             throw 'Published client failed the settings navigation smoke test.'
@@ -86,7 +88,7 @@ jobs:
       - name: Test client MSI installation and settings
         shell: pwsh
         run: |
-          $msi = (Resolve-Path 'artifacts\msi\ConfGTS-0.18.8-x64.msi').Path
+          $msi = (Resolve-Path 'artifacts\msi\ConfGTS-0.18.9-x64.msi').Path
           $installedExe = Join-Path $env:ProgramFiles 'ГТС\ConfGTS\ConfGTS.Client.exe'
           $startMenu = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\ConfGTS\ConfGTS.lnk'
           $desktop = Join-Path ([Environment]::GetFolderPath('CommonDesktopDirectory')) 'ConfGTS.lnk'
@@ -111,7 +113,7 @@ jobs:
       - name: Test client EXE installation and settings
         shell: pwsh
         run: |
-          $setup = (Resolve-Path 'artifacts\setup\ConfGTS-Setup-0.18.8-x64.exe').Path
+          $setup = (Resolve-Path 'artifacts\setup\ConfGTS-Setup-0.18.9-x64.exe').Path
           $installedExe = Join-Path $env:ProgramFiles 'ГТС\ConfGTS\ConfGTS.Client.exe'
           $startupLog = "$env:LOCALAPPDATA\ConfGTS\logs\startup.log"
           $p = Start-Process $setup -ArgumentList @('/quiet','/norestart') -Wait -PassThru
@@ -134,7 +136,7 @@ jobs:
       - name: Generate SHA-256
         shell: pwsh
         run: |
-          $files = @('artifacts\msi\ConfGTS-0.18.8-x64.msi','artifacts\setup\ConfGTS-Setup-0.18.8-x64.exe')
+          $files = @('artifacts\msi\ConfGTS-0.18.9-x64.msi','artifacts\setup\ConfGTS-Setup-0.18.9-x64.exe')
           $lines = foreach ($file in $files) {
             $hash = Get-FileHash $file -Algorithm SHA256
             "$($hash.Hash.ToLower())  $([IO.Path]::GetFileName($file))"
@@ -145,13 +147,13 @@ jobs:
       - name: Upload tested client packages
         uses: actions/upload-artifact@v4
         with:
-          name: ConfGTS-Client-0.18.8-tested
+          name: ConfGTS-Client-0.18.9-tested
           if-no-files-found: error
           retention-days: 30
           compression-level: 0
           path: |
-            artifacts/msi/ConfGTS-0.18.8-x64.msi
-            artifacts/setup/ConfGTS-Setup-0.18.8-x64.exe
+            artifacts/msi/ConfGTS-0.18.9-x64.msi
+            artifacts/setup/ConfGTS-Setup-0.18.9-x64.exe
             artifacts/SHA256SUMS-client.txt
 
       - name: Publish client GitHub Release
@@ -160,16 +162,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release delete v0.18.8 --cleanup-tag --yes 2>$null
-          if ($LASTEXITCODE -ne 0) { Write-Host 'No previous v0.18.8 release to delete.' }
+          gh release delete v0.18.9 --cleanup-tag --yes 2>$null
+          if ($LASTEXITCODE -ne 0) { Write-Host 'No previous v0.18.9 release to delete.' }
           @'
-          Клиентская сборка 0.18.8.
+          Клиентская сборка 0.18.9.
 
-          - Кнопки управления конференцией создаются сразу, без ожидания инициализации камеры/микрофона.
-          - Микрофон и камера больше не показываются как активные до завершения проверки устройств.
-          - Исправлено отображение подписи «Запомнить меня».
-          - При выходе клиент завершает серверную сессию авторизации и очищает cookie, поэтому быстрый повторный вход работает стабильно.
-          - Индикатор сервера не переключается в «недоступен» из-за единичного кратковременного сбоя.
-          - Удалены лишние подписи и статусный текст со страницы настроек устройств.
+          - Галочка и подпись «Запомнить меня» теперь расположены рядом и не разъезжаются из-за шаблона WinUI.
+          - В панели управления конференцией добавлена кнопка «Панель», которая показывает и скрывает штатную боковую панель ConfGTS без выхода из конференции.
+          - Сохранены исправления стабильности входа, индикации устройств и выхода из конференции из 0.18.8.
           '@ | Set-Content 'artifacts\RELEASE-NOTES-client.md' -Encoding utf8
-          gh release create v0.18.8 'artifacts\msi\ConfGTS-0.18.8-x64.msi' 'artifacts\setup\ConfGTS-Setup-0.18.8-x64.exe' 'artifacts\SHA256SUMS-client.txt' --target '${{ github.sha }}' --title 'ConfGTS Client 0.18.8' --notes-file 'artifacts\RELEASE-NOTES-client.md'
+          gh release create v0.18.9 'artifacts\msi\ConfGTS-0.18.9-x64.msi' 'artifacts\setup\ConfGTS-Setup-0.18.9-x64.exe' 'artifacts\SHA256SUMS-client.txt' --target '${{ github.sha }}' --title 'ConfGTS Client 0.18.9' --notes-file 'artifacts\RELEASE-NOTES-client.md'
