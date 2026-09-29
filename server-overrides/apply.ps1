@@ -338,6 +338,53 @@ if ($selectRoomRegex.IsMatch($ui)) {
     throw 'ConfGTS selectRoom startup-race guard was not applied.'
 }
 
+# Keep a permanent audio and video transceiver for every peer. This is
+# important when a participant joins without a camera or microphone: screen
+# sharing and later device selection can then use replaceTrack() without a new
+# SDP negotiation. Peer keys are normalized the same way as the server.
+$peerPattern = '(?s)function pcFor\(user\)\{.*?\}\r?\nasync function reconcilePeers\(\)\{.*?\}\r?\nasync function sendSignal'
+$peerReplacement = @'
+const peerKey=u=>{u=String(u||'').trim().toLowerCase();if(u.includes('\\'))u=u.split('\\').pop();if(u.endsWith('@teplo.local'))u=u.slice(0,-'@teplo.local'.length);return u};
+function participantFor(user){let key=peerKey(user);return (roomState?.participants||[]).find(p=>peerKey(p?.username)===key)||null}
+function pcFor(user){let key=peerKey(user);if(!key)throw new Error('peer username missing');if(peers.has(key))return peers.get(key);let pc=new RTCPeerConnection({iceServers:[]});peers.set(key,pc);let videoTrack=window.__confgtsScreenTrack?.readyState==='live'?window.__confgtsScreenTrack:(localStream?.getVideoTracks?.()[0]||null);let audioTrack=localStream?.getAudioTracks?.()[0]||null;let vi={direction:'sendrecv'},ai={direction:'sendrecv'};if(videoTrack&&localStream)vi.streams=[localStream];if(audioTrack&&localStream)ai.streams=[localStream];let vtx=pc.addTransceiver(videoTrack||'video',vi),atx=pc.addTransceiver(audioTrack||'audio',ai);pc.__confgtsVideoSender=vtx.sender;pc.__confgtsAudioSender=atx.sender;pc.__confgtsRemoteStream=new MediaStream();pc.__confgtsSignalUser=user;pc.__confgtsLabel=participantFor(user)?.display_name||user;pc.onicecandidate=e=>{if(e.candidate)sendSignal(pc.__confgtsSignalUser,'ice',e.candidate)};pc.ontrack=e=>{let st=e.streams?.[0]||pc.__confgtsRemoteStream;if(!e.streams?.[0]&&e.track&&!st.getTracks().some(t=>t.id===e.track.id))st.addTrack(e.track);pc.__confgtsRemoteStream=st;let p=participantFor(user);pc.__confgtsLabel=p?.display_name||p?.username||pc.__confgtsLabel||user;addVideo(key,st,pc.__confgtsLabel,false);if(audioDest)addAudioStream(st)};pc.onconnectionstatechange=()=>{if(['failed','closed','disconnected'].includes(pc.connectionState)){setTimeout(()=>{if(pc.connectionState!=='connected'){pc.close();peers.delete(key);removeVideo(key)}},3000)}};return pc}
+async function reconcilePeers(){if(!roomState)return;let me=peerKey(ME.username),wanted=new Set();for(let p of roomState.participants||[]){let u=peerKey(p.username);if(!u||u===me)continue;wanted.add(u);let label=p.display_name||p.username;addVideo(u,null,label,false);let pc=pcFor(p.username);pc.__confgtsSignalUser=p.username;pc.__confgtsLabel=label;if(me<u&&pc.signalingState==='stable'&&!pc.localDescription){try{let off=await pc.createOffer();await pc.setLocalDescription(off);await sendSignal(p.username,'offer',off)}catch(e){console.warn('ConfGTS offer',e)}}}for(let [u,pc]of peers){if(!wanted.has(u)){pc.close();peers.delete(u);removeVideo(u)}}}
+async function sendSignal
+'@
+$peerRegex = [regex]::new($peerPattern)
+if ($peerRegex.IsMatch($ui)) {
+    $ui = $peerRegex.Replace($ui, $peerReplacement.Trim(), 1)
+} elseif (-not $ui.Contains('pc.__confgtsVideoSender')) {
+    throw 'Permanent peer transceiver patch was not applied.'
+}
+
+# Always show every conference participant, even before a remote media track is
+# available. A placeholder is replaced by the actual camera/screen stream as
+# soon as WebRTC delivers frames.
+$addVideoPattern = '(?s)function addVideo\(id,stream,label,muted\)\{.*?\}\r?\nfunction removeVideo'
+$addVideoReplacement = @'
+function addVideo(id,stream,label,muted){let key=id==='me'?'me':peerKey(id);let el=document.getElementById('tile-'+key);if(!el){el=document.createElement('div');el.className='video-tile';el.id='tile-'+key;el.innerHTML='<video autoplay playsinline></video><div class="video-empty" style="position:absolute;inset:0;display:grid;place-items:center;text-align:center;padding:20px;background:#17222d;color:#d9e7f1;font:600 18px/1.35 Segoe UI,sans-serif"></div><div class="video-label"></div>';$('#videoGrid').appendChild(el)}let v=el.querySelector('video'),empty=el.querySelector('.video-empty'),labelNode=el.querySelector('.video-label');if(stream&&v.srcObject!==stream)v.srcObject=stream;v.muted=!!muted;let p=mediaPrefs();if(!muted){v.volume=Math.max(0,Math.min(1,Number(p.speakerVolume??1)));if(p.audioOutput&&v.setSinkId)v.setSinkId(p.audioOutput).catch(()=>{})}labelNode.textContent=label||key;empty.textContent=(label||key)+'\nКамера выключена';let sync=()=>{let hasFrames=!!(v.srcObject&&v.readyState>=2&&v.videoWidth>0&&v.videoHeight>0);empty.style.display=hasFrames?'none':'grid'};v.onloadeddata=sync;v.onplaying=sync;v.onemptied=sync;v.onresize=sync;sync();if(stream&&audioDest)addAudioStream(stream)}
+function removeVideo
+'@
+$addVideoRegex = [regex]::new($addVideoPattern)
+if ($addVideoRegex.IsMatch($ui)) {
+    $ui = $addVideoRegex.Replace($ui, $addVideoReplacement.Trim(), 1)
+} elseif (-not $ui.Contains('Камера выключена')) {
+    throw 'Conference participant placeholder patch was not applied.'
+}
+
+# Screen sharing must work even when the participant joined with no camera.
+$shareScreenPattern = '(?s)async function shareScreen\(\)\{.*?\}\r?\nfunction addAudioStream'
+$shareScreenReplacement = @'
+async function shareScreen(){try{if(!navigator.mediaDevices?.getDisplayMedia)throw new Error('Демонстрация экрана недоступна');let s=await navigator.mediaDevices.getDisplayMedia({video:true,audio:false});let nt=s.getVideoTracks()[0];if(!nt)throw new Error('Не получен видеопоток экрана');window.__confgtsScreenTrack=nt;for(let [,pc]of peers){let sender=pc.__confgtsVideoSender||pc.getTransceivers?.().find(t=>t.receiver?.track?.kind==='video')?.sender||pc.getSenders().find(x=>x.track?.kind==='video');if(sender)await sender.replaceTrack(nt)}addVideo('me',new MediaStream([nt,...(localStream?.getAudioTracks?.()||[])]),ME.display_name+' · экран',true);nt.onended=async()=>{if(window.__confgtsScreenTrack===nt)window.__confgtsScreenTrack=null;let cam=localStream?.getVideoTracks?.()[0]||null;for(let [,pc]of peers){let sender=pc.__confgtsVideoSender||pc.getTransceivers?.().find(t=>t.receiver?.track?.kind==='video')?.sender||pc.getSenders().find(x=>x.track?.kind==='video');if(sender)await sender.replaceTrack(cam)}addVideo('me',localStream||new MediaStream(),ME.display_name+' (Вы)',true)}}catch(e){console.warn('ConfGTS screen share',e);throw e}}
+function addAudioStream
+'@
+$shareScreenRegex = [regex]::new($shareScreenPattern)
+if ($shareScreenRegex.IsMatch($ui)) {
+    $ui = $shareScreenRegex.Replace($ui, $shareScreenReplacement.Trim(), 1)
+} elseif (-not $ui.Contains('window.__confgtsScreenTrack=nt')) {
+    throw 'Screen sharing without camera patch was not applied.'
+}
+
 # Recording is assigned to the first participant by Store.Join. The elected
 # recorder composites every visible video/screen stream plus all audio into a
 # WebM stream and uploads chunks to the server. Flush and finalize the recording
