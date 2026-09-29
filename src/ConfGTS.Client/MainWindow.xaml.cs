@@ -1001,8 +1001,8 @@ public sealed class MainWindow : Window
               background:#40556D !important;
               border-color:#60758B !important;
             }
-            .controls .btn.native-sidebar {
-              min-width:104px !important;
+            .controls .btn.native-settings {
+              min-width:118px !important;
               background:#164C79 !important;
             }
             .controls .btn.native-participants {
@@ -1090,7 +1090,7 @@ public sealed class MainWindow : Window
           document.head.appendChild(nativeStyle);
 
           const roomId = __CONFGTS_ROOM_JSON__;
-          const nativePrefs = __CONFGTS_MEDIA_JSON__;
+          let nativePrefs = __CONFGTS_MEDIA_JSON__;
           const emptyStream = () => new MediaStream();
 
           const findBrowserDevice = async (kind, wantedName) => {
@@ -1218,17 +1218,17 @@ public sealed class MainWindow : Window
               };
             }
 
-            const sidebarBtn = document.createElement('button');
-            sidebarBtn.type = 'button';
-            sidebarBtn.className = 'btn native-sidebar';
-            sidebarBtn.textContent = '☰ Панель';
-            sidebarBtn.title = 'Показать или скрыть боковую панель';
-            sidebarBtn.onclick = () => {
+            const settingsBtn = document.createElement('button');
+            settingsBtn.type = 'button';
+            settingsBtn.className = 'btn native-settings';
+            settingsBtn.textContent = '⚙ Настройки';
+            settingsBtn.title = 'Камера, микрофон, динамики и громкость';
+            settingsBtn.onclick = () => {
               if (window.chrome?.webview) {
-                window.chrome.webview.postMessage('toggle-sidebar');
+                window.chrome.webview.postMessage('open-media-settings');
               }
             };
-            controls.appendChild(sidebarBtn);
+            controls.appendChild(settingsBtn);
 
             const participantsBtn = document.createElement('button');
             participantsBtn.type = 'button';
@@ -1393,6 +1393,60 @@ public sealed class MainWindow : Window
             window.ensureMedia = nativeEnsureMedia;
           }
 
+          // Apply settings saved by the native device-settings panel without
+          // leaving the conference. Existing RTCPeerConnections stay alive; only
+          // their outgoing microphone/camera tracks and audio output are changed.
+          window.__confgtsApplyMediaSettings = async (nextPrefs) => {
+            nativePrefs = { ...nativePrefs, ...(nextPrefs || {}) };
+
+            const oldLocal = localStream;
+            const oldRaw = rawStream;
+            const oldAudioContext = mediaAudioCtx;
+
+            localStream = null;
+            rawStream = null;
+            mediaAudioCtx = null;
+            window.__confgtsMediaReady = false;
+            syncMediaButtons();
+
+            const nextStream = await nativeEnsureMedia();
+            const screenTrack = window.__confgtsScreenTrack?.readyState === 'live'
+              ? window.__confgtsScreenTrack
+              : null;
+            const videoTrack = screenTrack || nextStream?.getVideoTracks?.()[0] || null;
+            const audioTrack = nextStream?.getAudioTracks?.()[0] || null;
+
+            for (const [, pc] of peers) {
+              const videoSender =
+                pc.__confgtsVideoSender ||
+                pc.getTransceivers?.().find(t => t.receiver?.track?.kind === 'video')?.sender ||
+                pc.getSenders().find(s => s.track?.kind === 'video');
+              const audioSender =
+                pc.__confgtsAudioSender ||
+                pc.getTransceivers?.().find(t => t.receiver?.track?.kind === 'audio')?.sender ||
+                pc.getSenders().find(s => s.track?.kind === 'audio');
+
+              try { if (videoSender) await videoSender.replaceTrack(videoTrack); } catch (e) { console.warn('ConfGTS video device switch', e); }
+              try { if (audioSender) await audioSender.replaceTrack(audioTrack); } catch (e) { console.warn('ConfGTS audio device switch', e); }
+            }
+
+            try { oldLocal?.getTracks?.().forEach(t => t.stop()); } catch {}
+            try { oldRaw?.getTracks?.().forEach(t => t.stop()); } catch {}
+            try { if (oldAudioContext && oldAudioContext !== mediaAudioCtx) await oldAudioContext.close(); } catch {}
+
+            const ownPreview = screenTrack
+              ? new MediaStream([screenTrack, ...(nextStream?.getAudioTracks?.() || [])])
+              : nextStream;
+            if (typeof addVideo === 'function') {
+              addVideo('me', ownPreview || emptyStream(), ME.display_name + (screenTrack ? ' · экран' : ' (Вы)'), true);
+            }
+
+            window.__confgtsMediaReady = true;
+            syncMediaButtons();
+            await applyOutputSettings();
+            showNativeToast('Настройки устройств применены.');
+          };
+
           // Apply speaker level/output to remote media elements as they appear.
           const outputObserver = new MutationObserver(() => { applyOutputSettings().catch(() => {}); });
           outputObserver.observe(document.documentElement, { childList:true, subtree:true });
@@ -1452,6 +1506,39 @@ public sealed class MainWindow : Window
         await web.ExecuteScriptAsync(script);
     }
 
+    private async Task ApplyConferenceMediaSettingsAsync()
+    {
+        var web = _conferenceWebView;
+        if (web?.CoreWebView2 is null || _conferenceHost is null || string.IsNullOrWhiteSpace(_activeRoomId))
+            return;
+
+        var media = MediaDeviceSettings.Load();
+        var mediaJson = JsonSerializer.Serialize(new
+        {
+            microphoneName = media.MicrophoneName,
+            speakerName = media.SpeakerName,
+            cameraName = media.CameraName,
+            microphoneEnabled = media.MicrophoneEnabled,
+            speakerEnabled = media.SpeakerEnabled,
+            cameraEnabled = media.CameraEnabled,
+            microphoneVolume = Math.Clamp(media.MicrophoneVolume / 100.0, 0, 1),
+            speakerVolume = Math.Clamp(media.SpeakerVolume / 100.0, 0, 1)
+        });
+
+        try
+        {
+            var script = "(async()=>{if(typeof window.__confgtsApplyMediaSettings==='function'){await window.__confgtsApplyMediaSettings(" +
+                         mediaJson +
+                         ");}})()";
+            await web.ExecuteScriptAsync(script);
+            StartupDiagnostics.Log("Active conference media settings applied.");
+        }
+        catch (Exception ex)
+        {
+            StartupDiagnostics.Log("Failed to apply media settings to the active conference.", ex);
+        }
+    }
+
     private async Task LeaveConferenceAsync(bool showDashboard)
     {
         var web = _conferenceWebView;
@@ -1494,9 +1581,9 @@ public sealed class MainWindow : Window
             {
                 await LeaveConferenceAsync(true);
             }
-            else if (string.Equals(message, "toggle-sidebar", StringComparison.Ordinal))
+            else if (string.Equals(message, "open-media-settings", StringComparison.Ordinal))
             {
-                SetConferenceSidebarVisible(!_conferenceSidebarVisible);
+                await ShowInlineSettingsAsync();
             }
         }
         catch (Exception ex)
@@ -1802,6 +1889,7 @@ public sealed class MainWindow : Window
 
         if (returnToConference && _conferenceHost is not null)
         {
+            await ApplyConferenceMediaSettingsAsync();
             _conferenceHost.Visibility = Visibility.Visible;
             if (_dashboardMainScroll is not null)
                 _dashboardMainScroll.Visibility = Visibility.Collapsed;
