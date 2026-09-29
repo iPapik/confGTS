@@ -81,7 +81,7 @@ jobs:
           if ($ui -notmatch 'stopLoops\(false\);await stopRecording\(\);try\{await api') {
             throw 'Recording is not flushed before the recorder leaves.'
           }
-          if ($ui -notmatch 'recorder\.start\(5000\)') {
+          if ($ui -notmatch 'recorder\.start\(2000\)') {
             throw 'Recording chunk interval hardening is missing.'
           }
           if ($store -notmatch 'if lr\.Recorder == ""' -or $store -notmatch 'lr\.Recorder = key') {
@@ -96,6 +96,12 @@ jobs:
           if ($ui -notmatch 'ConfGTS recording audio mix unavailable') {
             throw 'Recorder no-audio fallback is missing.'
           }
+          if ($ui -notmatch 'recordingContext=ctx' -or $ui -notmatch 'recording context missing' -or $ui -notmatch 'attempt<4') {
+            throw 'Stable recording context or retry upload hardening is missing.'
+          }
+          if ($ui -notmatch 'new Blob\(\[\],\{type:mime\}\)' -or $ui -notmatch 'cache:\x27no-store\x27') {
+            throw 'Immediate recording handshake or no-cache upload is missing.'
+          }
           if ($ui -notmatch 'handleConferenceStopped' -or $ui -notmatch "postMessage\('leave-conference'\)") {
             throw 'Administrative stop is not propagated to conference clients.'
           }
@@ -109,7 +115,11 @@ jobs:
           if ($web -notmatch 'CanUploadEndedSessionRecording' -or $store -notmatch 'func \(s \*Store\) CanUploadEndedSessionRecording') {
             throw 'Immediate-admin-stop final-chunk authorization is missing.'
           }
-          Write-Host 'Automatic recording lifecycle validated.' -ForegroundColor Green
+          $admin = Get-Content '.\server\admin.go' -Raw -Encoding UTF8
+          if ($admin -notmatch 'confgts-live-participants' -or $admin -notmatch 'setInterval\(refreshParticipants,1500\)') {
+            throw 'Live server participant refresh is missing.'
+          }
+          Write-Host 'Automatic recording lifecycle and live participant refresh validated.' -ForegroundColor Green
 
       - name: Print route and LDAP structure
         shell: pwsh
