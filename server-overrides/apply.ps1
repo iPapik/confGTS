@@ -431,12 +431,12 @@ $versionTargets = @(
 foreach ($target in $versionTargets) {
     if (Test-Path $target -PathType Leaf) {
         $text = Get-Content $target -Raw -Encoding UTF8
-        $text = $text.Replace("0.16.0", "0.18.9").Replace("0.16.1", "0.18.9").Replace("0.17.0", "0.18.9").Replace("0.18.7", "0.18.9").Replace("0.18.0", "0.18.9").Replace("0.18.1", "0.18.9").Replace("0.18.0", "0.18.9").Replace("0.18.1", "0.18.9")
+        $text = $text.Replace("0.16.0", "0.18.9").Replace("0.16.1", "0.18.9").Replace("0.17.0", "0.18.9").Replace("0.18.7", "0.18.9").Replace("0.18.0", "0.18.9").Replace("0.18.1", "0.18.9").Replace("0.18.2", "0.18.9").Replace("0.18.0", "0.18.9").Replace("0.18.1", "0.18.9").Replace("0.18.2", "0.18.9")
         Set-Content $target $text -Encoding UTF8 -NoNewline
     } elseif (Test-Path $target -PathType Container) {
         Get-ChildItem $target -Recurse -File -Include *.go,*.cs,*.xaml,*.csproj,*.wxs,*.wixproj,*.ps1 | ForEach-Object {
             $text = Get-Content $_.FullName -Raw -Encoding UTF8
-            if ($text.Contains("0.16.0") -or $text.Contains("0.16.1") -or $text.Contains("0.17.0") -or $text.Contains("0.18.0") -or $text.Contains("0.18.1") -or $text.Contains("0.18.7")) {
+            if ($text.Contains("0.16.0") -or $text.Contains("0.16.1") -or $text.Contains("0.17.0") -or $text.Contains("0.18.0") -or $text.Contains("0.18.1") -or $text.Contains("0.18.2") -or $text.Contains("0.18.7")) {
                 $text = $text.Replace("0.16.0", "0.18.9").Replace("0.16.1", "0.18.9").Replace("0.17.0", "0.18.9")
                 Set-Content $_.FullName $text -Encoding UTF8 -NoNewline
             }
