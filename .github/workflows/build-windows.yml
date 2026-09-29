@@ -44,11 +44,11 @@ jobs:
           [IO.File]::WriteAllBytes($zip, [Convert]::FromBase64String($builder.ToString()))
           Expand-Archive $zip -DestinationPath '.' -Force
 
-      - name: Apply ConfGTS Server 0.18.9 overlays
+      - name: Apply ConfGTS Server 0.18.10 overlays
         shell: pwsh
         run: .\server-overrides\apply.ps1
 
-      - name: Validate 0.18.9 server UI changes
+      - name: Validate 0.18.10 server UI changes
         shell: pwsh
         run: |
           $admin = Get-Content '.\server\admin.go' -Raw -Encoding UTF8
@@ -85,14 +85,24 @@ jobs:
           if ($ui -notmatch 'recordingContext=ctx' -or $ui -notmatch 'recording context missing' -or $ui -notmatch 'attempt<4') {
             throw "Stable recording context or retry upload hardening is missing."
           }
-          if ($ui -notmatch 'new Blob\(\[\],\{type:mime\}\)') {
-            throw "Immediate server-side recording handshake is missing."
+          if ($ui -notmatch 'video/mp4' -or $ui -notmatch 'video/webm' -or $ui -notmatch 'ctx\.bytes\+=chunk\.size') {
+            throw "MP4-first recording with MKV fallback or real-chunk tracking is missing."
+          }
+          if ($ui -match 'new Blob\(\[\]') {
+            throw "Zero-byte recording handshake must not create empty archive entries."
+          }
+          $store = Get-Content '.\server\store.go' -Raw -Encoding UTF8
+          if ($store -notmatch 'ext := "\.mkv"' -or $store -notmatch 'ext = "\.mp4"') {
+            throw "Server MP4/MKV filename selection is missing."
+          }
+          $web = Get-Content '.\server\web.go' -Raw -Encoding UTF8
+          if ($web -notmatch 'zero-byte recording upload ignored' -or $web -notmatch 'if len\(data\) == 0') {
+            throw "Server still allows empty recording uploads to create archive entries."
           }
           $admin = Get-Content '.\server\admin.go' -Raw -Encoding UTF8
           if ($admin -notmatch 'confgts-live-participants' -or $admin -notmatch 'setInterval\(refreshParticipants,1500\)') {
             throw "Live conference participant refresh is missing from server admin UI."
           }
-          $store = Get-Content '.\server\store.go' -Raw -Encoding UTF8
           if ($store -notmatch 'Finalize unfinished recordings for the stopped session' -or $store -notmatch 'Finalize unfinished recordings when the room becomes empty') {
             throw "Server recording finalization guards are missing."
           }
@@ -115,7 +125,7 @@ jobs:
       - name: Package server source
         shell: pwsh
         run: |
-          $stage = Join-Path $env:RUNNER_TEMP 'ConfGTS-Server-0.18.9-Source'
+          $stage = Join-Path $env:RUNNER_TEMP 'ConfGTS-Server-0.18.10-Source'
           Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Force -Path $stage | Out-Null
           Copy-Item '.\go.mod' $stage -Force
@@ -126,7 +136,7 @@ jobs:
           Copy-Item '.\Installer\Server' (Join-Path $stage 'Installer\Server') -Recurse -Force
           Copy-Item '.\build-server.ps1' $stage -Force
           New-Item -ItemType Directory -Force -Path '.\artifacts' | Out-Null
-          Compress-Archive -Path "$stage\*" -DestinationPath '.\artifacts\ConfGTS-Server-0.18.9-Source.zip' -Force
+          Compress-Archive -Path "$stage\*" -DestinationPath '.\artifacts\ConfGTS-Server-0.18.10-Source.zip' -Force
 
       - name: Build client MSI and EXE
         shell: pwsh
@@ -141,13 +151,13 @@ jobs:
         run: |
           $required = @(
             'artifacts\publish\ConfGTS.Client.exe',
-            'artifacts\msi\ConfGTS-0.18.9-x64.msi',
-            'artifacts\setup\ConfGTS-Setup-0.18.9-x64.exe',
+            'artifacts\msi\ConfGTS-0.18.10-x64.msi',
+            'artifacts\setup\ConfGTS-Setup-0.18.10-x64.exe',
             'artifacts\server-publish\ConfGTSServer.exe',
             'artifacts\server-publish\ConfGTS.Server.Settings.exe',
-            'artifacts\server-msi\ConfGTS-Server-0.18.9-x64.msi',
-            'artifacts\server-setup\ConfGTS-Server-Setup-0.18.9-x64.exe',
-            'artifacts\ConfGTS-Server-0.18.9-Source.zip'
+            'artifacts\server-msi\ConfGTS-Server-0.18.10-x64.msi',
+            'artifacts\server-setup\ConfGTS-Server-Setup-0.18.10-x64.exe',
+            'artifacts\ConfGTS-Server-0.18.10-Source.zip'
           )
           foreach ($file in $required) {
             if (!(Test-Path $file)) { throw "Missing artifact: $file" }
@@ -176,7 +186,7 @@ jobs:
       - name: Test client MSI installation, shortcuts and startup
         shell: pwsh
         run: |
-          $msi = (Resolve-Path 'artifacts\msi\ConfGTS-0.18.9-x64.msi').Path
+          $msi = (Resolve-Path 'artifacts\msi\ConfGTS-0.18.10-x64.msi').Path
           $installedExe = Join-Path $env:ProgramFiles 'ГТС\ConfGTS\ConfGTS.Client.exe'
           $startMenu = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\ConfGTS\ConfGTS.lnk'
           $desktop = Join-Path ([Environment]::GetFolderPath('CommonDesktopDirectory')) 'ConfGTS.lnk'
@@ -206,7 +216,7 @@ jobs:
       - name: Test client EXE installation, shortcuts and startup
         shell: pwsh
         run: |
-          $setup = (Resolve-Path 'artifacts\setup\ConfGTS-Setup-0.18.9-x64.exe').Path
+          $setup = (Resolve-Path 'artifacts\setup\ConfGTS-Setup-0.18.10-x64.exe').Path
           $installedExe = Join-Path $env:ProgramFiles 'ГТС\ConfGTS\ConfGTS.Client.exe'
           $startMenu = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\ConfGTS\ConfGTS.lnk'
           $desktop = Join-Path ([Environment]::GetFolderPath('CommonDesktopDirectory')) 'ConfGTS.lnk'
@@ -248,7 +258,7 @@ jobs:
             throw "ConfGTS Server health endpoint did not become ready: $Uri"
           }
 
-          $msi = (Resolve-Path 'artifacts\server-msi\ConfGTS-Server-0.18.9-x64.msi').Path
+          $msi = (Resolve-Path 'artifacts\server-msi\ConfGTS-Server-0.18.10-x64.msi').Path
           $serverDir = Join-Path $env:ProgramFiles 'ГТС\ConfGTS Server'
           $serverExe = Join-Path $serverDir 'ConfGTSServer.exe'
           $settingsExe = Join-Path $serverDir 'ConfGTS.Server.Settings.exe'
@@ -269,7 +279,7 @@ jobs:
           if ($svc.Status -ne 'Running') { Start-Service 'ConfGTSServer' }
 
           $health = Wait-Server 'http://127.0.0.1:8090/health'
-          if ($health.version -ne '0.18.9') { throw "Unexpected server version: $($health.version)" }
+          if ($health.version -ne '0.18.10') { throw "Unexpected server version: $($health.version)" }
 
           $nameHealth = Wait-Server ("http://{0}:8090/health" -f $env:COMPUTERNAME)
           if ($nameHealth.ok -ne $true) { throw "Server is not reachable by Windows computer name." }
@@ -349,7 +359,7 @@ jobs:
             throw "ConfGTS Server health endpoint did not become ready: $Uri"
           }
 
-          $setup = (Resolve-Path 'artifacts\server-setup\ConfGTS-Server-Setup-0.18.9-x64.exe').Path
+          $setup = (Resolve-Path 'artifacts\server-setup\ConfGTS-Server-Setup-0.18.10-x64.exe').Path
           $serverDir = Join-Path $env:ProgramFiles 'ГТС\ConfGTS Server'
           $serverExe = Join-Path $serverDir 'ConfGTSServer.exe'
           $settingsExe = Join-Path $serverDir 'ConfGTS.Server.Settings.exe'
@@ -362,7 +372,7 @@ jobs:
           }
 
           $health = Wait-Server 'http://127.0.0.1:8090/health'
-          if ($health.version -ne '0.18.9') { throw "Unexpected server version: $($health.version)" }
+          if ($health.version -ne '0.18.10') { throw "Unexpected server version: $($health.version)" }
           [void](Wait-Server ("http://{0}:8090/health" -f $env:COMPUTERNAME))
 
           $web = Invoke-WebRequest -Uri 'http://127.0.0.1:8090/server-login' -UseBasicParsing -TimeoutSec 5
@@ -377,11 +387,11 @@ jobs:
         shell: pwsh
         run: |
           $files = @(
-            'artifacts\msi\ConfGTS-0.18.9-x64.msi',
-            'artifacts\setup\ConfGTS-Setup-0.18.9-x64.exe',
-            'artifacts\server-msi\ConfGTS-Server-0.18.9-x64.msi',
-            'artifacts\server-setup\ConfGTS-Server-Setup-0.18.9-x64.exe',
-            'artifacts\ConfGTS-Server-0.18.9-Source.zip'
+            'artifacts\msi\ConfGTS-0.18.10-x64.msi',
+            'artifacts\setup\ConfGTS-Setup-0.18.10-x64.exe',
+            'artifacts\server-msi\ConfGTS-Server-0.18.10-x64.msi',
+            'artifacts\server-setup\ConfGTS-Server-Setup-0.18.10-x64.exe',
+            'artifacts\ConfGTS-Server-0.18.10-Source.zip'
           )
           $lines = foreach ($file in $files) {
             $hash = Get-FileHash $file -Algorithm SHA256
@@ -393,16 +403,16 @@ jobs:
       - name: Upload tested packages
         uses: actions/upload-artifact@v4
         with:
-          name: ConfGTS-0.18.9-tested
+          name: ConfGTS-0.18.10-tested
           if-no-files-found: error
           retention-days: 30
           compression-level: 0
           path: |
-            artifacts/msi/ConfGTS-0.18.9-x64.msi
-            artifacts/setup/ConfGTS-Setup-0.18.9-x64.exe
-            artifacts/server-msi/ConfGTS-Server-0.18.9-x64.msi
-            artifacts/server-setup/ConfGTS-Server-Setup-0.18.9-x64.exe
-            artifacts/ConfGTS-Server-0.18.9-Source.zip
+            artifacts/msi/ConfGTS-0.18.10-x64.msi
+            artifacts/setup/ConfGTS-Setup-0.18.10-x64.exe
+            artifacts/server-msi/ConfGTS-Server-0.18.10-x64.msi
+            artifacts/server-setup/ConfGTS-Server-Setup-0.18.10-x64.exe
+            artifacts/ConfGTS-Server-0.18.10-Source.zip
             artifacts/SHA256SUMS.txt
 
       - name: Publish GitHub Release
@@ -411,21 +421,21 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release delete v0.18.9 --cleanup-tag --yes 2>$null
-          if ($LASTEXITCODE -ne 0) { Write-Host 'No previous v0.18.9 release to delete.' }
+          gh release delete v0.18.10 --cleanup-tag --yes 2>$null
+          if ($LASTEXITCODE -ne 0) { Write-Host 'No previous v0.18.10 release to delete.' }
           @'
-          ConfGTS 0.18.9.
+          ConfGTS 0.18.10.
 
           Клиент:
-          - галочка и подпись «Запомнить меня» теперь находятся рядом;
-          - в панели управления конференцией добавлена кнопка «Панель» для показа/скрытия штатной боковой панели без выхода из конференции;
-          - сохранены исправления стабильности входа, индикации устройств и завершения конференции.
+          - переход в «Настройки устройств» из открытой конференции больше не завершает конференцию: WebView2/WebRTC и запись продолжают работать в фоне;
+          - после закрытия настроек клиент возвращает пользователя именно в ту конференцию, из которой были открыты настройки, и восстанавливает состояние боковой панели;
+          - сохранены исправления панели конференции, «Запомнить меня», устройств и стабильности сессии.
 
           Сервер и запись:
-          - исправлен порядок запуска записи: MediaRecorder запускается до цикла отрисовки кадров canvas, поэтому поток реально начинает формировать WebM-фрагменты;
-          - запись использует неизменяемые room/session/capture параметры, выполняет начальную регистрацию записи на сервере и повторяет временно неудачные загрузки;
-          - интервал фрагментов уменьшен до 2 секунд, а финализация использует тот же capture ID даже при выходе или административном завершении;
-          - вкладка «Участники» и счетчик участников в веб-панели сервера автоматически обновляются каждые 1,5 секунды без перезагрузки страницы;
-          - сохранена безопасная догрузка последнего фрагмента после административного завершения конференции.
+          - запись теперь выбирает MP4 (H.264/AAC) в первую очередь, если формат поддерживается WebView2; резервный WebM-поток сохраняется как MKV;
+          - удалён пустой стартовый upload: запись появляется в архиве только после первого реального ненулевого медиаблока;
+          - сервер игнорирует пустые recording-upload запросы, поэтому и старые клиенты 0.18.9 не создают фиктивные записи нулевого размера;
+          - сохранены двухсекундные фрагменты, повторы загрузки, финализация при выходе и административном завершении конференции;
+          - тесты проверяют расширения MP4/MKV и фактическое сохранение ненулевых данных на сервере.
           '@ | Set-Content 'artifacts\RELEASE-NOTES.md' -Encoding utf8
-          gh release create v0.18.9 'artifacts\msi\ConfGTS-0.18.9-x64.msi' 'artifacts\setup\ConfGTS-Setup-0.18.9-x64.exe' 'artifacts\server-msi\ConfGTS-Server-0.18.9-x64.msi' 'artifacts\server-setup\ConfGTS-Server-Setup-0.18.9-x64.exe' 'artifacts\ConfGTS-Server-0.18.9-Source.zip' 'artifacts\SHA256SUMS.txt' --target '${{ github.sha }}' --title 'ConfGTS 0.18.9' --notes-file 'artifacts\RELEASE-NOTES.md'
+          gh release create v0.18.10 'artifacts\msi\ConfGTS-0.18.10-x64.msi' 'artifacts\setup\ConfGTS-Setup-0.18.10-x64.exe' 'artifacts\server-msi\ConfGTS-Server-0.18.10-x64.msi' 'artifacts\server-setup\ConfGTS-Server-Setup-0.18.10-x64.exe' 'artifacts\ConfGTS-Server-0.18.10-Source.zip' 'artifacts\SHA256SUMS.txt' --target '${{ github.sha }}' --title 'ConfGTS 0.18.10' --notes-file 'artifacts\RELEASE-NOTES.md'

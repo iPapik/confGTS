@@ -2,7 +2,7 @@ $ErrorActionPreference = "Stop"
 
 $root = Split-Path -Parent $PSScriptRoot
 
-Write-Host "Applying ConfGTS Server 0.18.9 overlays..." -ForegroundColor Cyan
+Write-Host "Applying ConfGTS Server 0.18.10 overlays..." -ForegroundColor Cyan
 
 Copy-Item (Join-Path $PSScriptRoot "src\*") (Join-Path $root "src") -Recurse -Force
 Copy-Item (Join-Path $PSScriptRoot "server\*") (Join-Path $root "server") -Recurse -Force
@@ -85,12 +85,30 @@ func (s *Store) CanUploadEndedSessionRecording(sessionID, username string, maxAg
     }
 }
 
+# 0.18.10 stores browser MP4 directly. If MP4 recording is unavailable,
+# Chromium falls back to WebM; WebM is a Matroska subset and is stored as .mkv.
+$recordingContainerPattern = '(?ms)^\s*fn := sessionID \+ "_" \+ safe \+ "\.webm"\r?\n\s*r := Recording\{ID: newID\("rec_"\), RoomID: roomID, SessionID: sessionID, CaptureID: safe, Recorder: recorder, FileName: fn, StartedAt: time\.Now\(\), ContentType: contentType\}'
+$recordingContainerReplacement = @'
+	ext := ".mkv"
+	if strings.Contains(strings.ToLower(contentType), "mp4") {
+		ext = ".mp4"
+	}
+	fn := sessionID + "_" + safe + ext
+	r := Recording{ID: newID("rec_"), RoomID: roomID, SessionID: sessionID, CaptureID: safe, Recorder: recorder, FileName: fn, StartedAt: time.Now(), ContentType: contentType}
+'@
+$recordingContainerRegex = [regex]::new($recordingContainerPattern)
+if ($recordingContainerRegex.IsMatch($store)) {
+    $store = $recordingContainerRegex.Replace($store, $recordingContainerReplacement.Trim(), 1)
+} elseif (-not $store.Contains('ext := ".mkv"')) {
+    throw 'Recording container selection patch was not applied.'
+}
+
 Set-Content $storePath $store -Encoding UTF8 -NoNewline
 
 $mainPath = Join-Path $root "server\main.go"
 $main = Get-Content $mainPath -Raw -Encoding UTF8
-$main = $main.Replace('const Version = "0.16.0"', 'const Version = "0.18.9"')
-$main = $main.Replace('const Version = "0.16.1"', 'const Version = "0.18.9"')
+$main = $main.Replace('const Version = "0.16.0"', 'const Version = "0.18.10"')
+$main = $main.Replace('const Version = "0.16.1"', 'const Version = "0.18.10"')
 $main = $main.Replace('cfg.ListenAddr == ":8090" {', 'cfg.ListenAddr == ":8090" || cfg.ListenAddr == "0.0.0.0:8090" {')
 $main = $main.Replace('cfg.ListenAddr = "127.0.0.1:" + strconv.Itoa(n)', 'cfg.ListenAddr = "0.0.0.0:" + strconv.Itoa(n)')
 $main = $main.Replace('addr = "127.0.0.1:8090"', 'addr = "0.0.0.0:8090"')
@@ -226,6 +244,22 @@ if ($recordAuthRegex.IsMatch($web)) {
     throw 'Recording upload authorization block was not found.'
 }
 
+# Old 0.18.9 clients send an empty part=-1 request before MediaRecorder has
+# produced any bytes. Do not turn that handshake into a zero-byte archive entry.
+$recordingStartAnchor = 'rec, err := a.store.StartOrGetRecording(roomID, sessionID, capture, u.Username, r.Header.Get("Content-Type"))'
+if ($web.Contains($recordingStartAnchor) -and -not $web.Contains('zero-byte recording upload ignored')) {
+    $emptyUploadGuard = @'
+	if len(data) == 0 {
+		// zero-byte recording upload ignored
+		writeJSON(w, map[string]any{"ok": true, "ignored": true})
+		return
+	}
+'@
+    $web = $web.Replace($recordingStartAnchor, $emptyUploadGuard.TrimEnd() + [Environment]::NewLine + [char]9 + $recordingStartAnchor)
+} elseif (-not $web.Contains('zero-byte recording upload ignored')) {
+    throw 'Zero-byte recording upload guard was not applied.'
+}
+
 Set-Content $webPath $web -Encoding UTF8 -NoNewline
 
 $uiPath = Join-Path $root "server\ui.go"
@@ -352,7 +386,7 @@ if ($ui.Contains($updateStateOld.Trim())) {
 # server still receives the conference video/screen composition without audio.
 $startRecordingPattern = '(?s)async function startRecording\(\)\{.*?\}\r?\nfunction drawRecording'
 $startRecordingReplacement = @'
-async function startRecording(){if(recorder||!roomState?.session)return;if(typeof MediaRecorder==='undefined'){console.warn('ConfGTS: MediaRecorder unavailable');return}let ctx={room:String(currentRoom||''),session:String(roomState.session.id||''),capture:'cap_'+Date.now()+'_'+Math.random().toString(16).slice(2)};if(!ctx.room||!ctx.session)return;recordingContext=ctx;captureId=ctx.capture;recordPart=0;recordQueue=Promise.resolve();recorderCanvas=document.createElement('canvas');recorderCanvas.width=1280;recorderCanvas.height=720;recorderCtx=recorderCanvas.getContext('2d');audioCtx=null;audioDest=null;audioSeen=new WeakSet();let cs=recorderCanvas.captureStream(15);try{let AC=window.AudioContext||window.webkitAudioContext;if(AC){audioCtx=new AC();audioDest=audioCtx.createMediaStreamDestination();document.querySelectorAll('.video-tile video').forEach(v=>{if(v.srcObject)addAudioStream(v.srcObject)});audioDest.stream.getAudioTracks().forEach(t=>cs.addTrack(t))}}catch(e){console.warn('ConfGTS recording audio mix unavailable',e);audioCtx=null;audioDest=null}let mime=MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus')?'video/webm;codecs=vp8,opus':'video/webm';try{recorder=new MediaRecorder(cs,{mimeType:mime,videoBitsPerSecond:1800000})}catch(e){console.error('ConfGTS recorder start failed',e);recordingContext=null;recorder=null;return}let active=recorder;recordQueue=recordQueue.then(()=>uploadChunk(new Blob([],{type:mime}),-1,ctx)).catch(e=>console.warn('ConfGTS recording handshake failed',e));recorder.ondataavailable=e=>{if(e.data&&e.data.size>0){let part=recordPart++,chunk=e.data;recordQueue=recordQueue.then(()=>uploadChunk(chunk,part,ctx)).catch(e=>console.warn('ConfGTS recording chunk failed',e))}};recorder.onstop=()=>{recordQueue=recordQueue.then(()=>api('/api/recordings/finalize',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({capture_id:ctx.capture})})).catch(e=>console.warn('ConfGTS recording finalize failed',e));if(audioCtx)audioCtx.close();audioCtx=null;audioDest=null;if(recorder===active)recorder=null;if(recordingContext===ctx)recordingContext=null};recorder.start(2000);drawRecording();setTimeout(()=>{try{if(active.state==='recording')active.requestData()}catch{}},500)}
+async function startRecording(){if(recorder||!roomState?.session)return;if(typeof MediaRecorder==='undefined'){console.warn('ConfGTS: MediaRecorder unavailable');return}let ctx={room:String(currentRoom||''),session:String(roomState.session.id||''),capture:'cap_'+Date.now()+'_'+Math.random().toString(16).slice(2),startedAt:Date.now(),bytes:0,mime:''};if(!ctx.room||!ctx.session)return;recordingContext=ctx;captureId=ctx.capture;recordPart=0;recordQueue=Promise.resolve();recorderCanvas=document.createElement('canvas');recorderCanvas.width=1280;recorderCanvas.height=720;recorderCtx=recorderCanvas.getContext('2d');audioCtx=null;audioDest=null;audioSeen=new WeakSet();let cs=recorderCanvas.captureStream(15);try{let AC=window.AudioContext||window.webkitAudioContext;if(AC){audioCtx=new AC();audioDest=audioCtx.createMediaStreamDestination();document.querySelectorAll('.video-tile video').forEach(v=>{if(v.srcObject)addAudioStream(v.srcObject)});audioDest.stream.getAudioTracks().forEach(t=>cs.addTrack(t))}}catch(e){console.warn('ConfGTS recording audio mix unavailable',e);audioCtx=null;audioDest=null}let hasAudio=cs.getAudioTracks().length>0;let candidates=hasAudio?['video/mp4;codecs=avc1.42E01E,mp4a.40.2','video/mp4','video/webm;codecs=vp8,opus','video/webm']:['video/mp4;codecs=avc1.42E01E','video/mp4','video/webm;codecs=vp8','video/webm'];let mime=candidates.find(x=>MediaRecorder.isTypeSupported(x))||'';try{let opts={videoBitsPerSecond:1800000};if(mime)opts.mimeType=mime;recorder=new MediaRecorder(cs,opts)}catch(e){console.error('ConfGTS recorder start failed',e);recordingContext=null;recorder=null;return}ctx.mime=recorder.mimeType||mime||'video/webm';console.info('ConfGTS recording started',ctx.mime);let active=recorder;recorder.onerror=e=>console.error('ConfGTS MediaRecorder error',e?.error||e);recorder.ondataavailable=e=>{if(e.data&&e.data.size>0){let part=recordPart++,chunk=e.data;ctx.bytes+=chunk.size;recordQueue=recordQueue.then(()=>uploadChunk(chunk,part,ctx)).catch(e=>console.warn('ConfGTS recording chunk failed',e))}};recorder.onstop=()=>{recordQueue=recordQueue.then(()=>api('/api/recordings/finalize',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({capture_id:ctx.capture})})).catch(e=>console.warn('ConfGTS recording finalize failed',e));if(ctx.bytes===0)console.error('ConfGTS recording produced no media chunks');if(audioCtx)audioCtx.close();audioCtx=null;audioDest=null;if(recorder===active)recorder=null;if(recordingContext===ctx)recordingContext=null};recorder.start(2000);drawRecording();setTimeout(()=>{try{if(active.state==='recording')active.requestData()}catch{}},1000)}
 function drawRecording
 '@
 $startRecordingRegex = [regex]::new($startRecordingPattern)
@@ -367,7 +401,7 @@ if ($startRecordingRegex.IsMatch($ui)) {
 # silently remove the whole recording from the server archive.
 $uploadChunkPattern = '(?s)async function uploadChunk\(blob,part\)\{.*?\}\r?\nasync function stopRecording'
 $uploadChunkReplacement = @'
-async function uploadChunk(blob,part,ctx=recordingContext){if(!ctx?.room||!ctx?.session||!ctx?.capture)throw new Error('recording context missing');let u='/api/recordings/upload?room='+encodeURIComponent(ctx.room)+'&session='+encodeURIComponent(ctx.session)+'&capture='+encodeURIComponent(ctx.capture)+'&part='+part;let lastError=null;for(let attempt=0;attempt<4;attempt++){try{let r=await fetch(u,{method:'POST',credentials:'same-origin',cache:'no-store',headers:{'Content-Type':blob.type||'video/webm'},body:blob});if(r.ok)return;let detail='';try{detail=await r.text()}catch{}lastError=new Error(('record upload '+r.status+' '+detail).trim());if(r.status>=400&&r.status<500&&r.status!==403&&r.status!==408&&r.status!==429)break}catch(e){lastError=e}if(attempt<3)await new Promise(resolve=>setTimeout(resolve,250*Math.pow(2,attempt)))}throw lastError||new Error('record upload failed')}
+async function uploadChunk(blob,part,ctx=recordingContext){if(!ctx?.room||!ctx?.session||!ctx?.capture)throw new Error('recording context missing');let u='/api/recordings/upload?room='+encodeURIComponent(ctx.room)+'&session='+encodeURIComponent(ctx.session)+'&capture='+encodeURIComponent(ctx.capture)+'&part='+part;let lastError=null;for(let attempt=0;attempt<4;attempt++){try{let r=await fetch(u,{method:'POST',credentials:'same-origin',cache:'no-store',headers:{'Content-Type':blob.type||ctx.mime||'video/webm'},body:blob});if(r.ok)return;let detail='';try{detail=await r.text()}catch{}lastError=new Error(('record upload '+r.status+' '+detail).trim());if(r.status>=400&&r.status<500&&r.status!==403&&r.status!==408&&r.status!==429)break}catch(e){lastError=e}if(attempt<3)await new Promise(resolve=>setTimeout(resolve,250*Math.pow(2,attempt)))}throw lastError||new Error('record upload failed')}
 async function stopRecording
 '@
 $uploadChunkRegex = [regex]::new($uploadChunkPattern)
@@ -431,13 +465,13 @@ $versionTargets = @(
 foreach ($target in $versionTargets) {
     if (Test-Path $target -PathType Leaf) {
         $text = Get-Content $target -Raw -Encoding UTF8
-        $text = $text.Replace("0.16.0", "0.18.9").Replace("0.16.1", "0.18.9").Replace("0.17.0", "0.18.9").Replace("0.18.7", "0.18.9").Replace("0.18.0", "0.18.9").Replace("0.18.1", "0.18.9").Replace("0.18.2", "0.18.9").Replace("0.18.0", "0.18.9").Replace("0.18.1", "0.18.9").Replace("0.18.2", "0.18.9")
+        $text = $text.Replace("0.16.0", "0.18.10").Replace("0.16.1", "0.18.10").Replace("0.17.0", "0.18.10").Replace("0.18.7", "0.18.10").Replace("0.18.0", "0.18.10").Replace("0.18.1", "0.18.10").Replace("0.18.2", "0.18.10").Replace("0.18.0", "0.18.10").Replace("0.18.1", "0.18.10").Replace("0.18.2", "0.18.10")
         Set-Content $target $text -Encoding UTF8 -NoNewline
     } elseif (Test-Path $target -PathType Container) {
         Get-ChildItem $target -Recurse -File -Include *.go,*.cs,*.xaml,*.csproj,*.wxs,*.wixproj,*.ps1 | ForEach-Object {
             $text = Get-Content $_.FullName -Raw -Encoding UTF8
             if ($text.Contains("0.16.0") -or $text.Contains("0.16.1") -or $text.Contains("0.17.0") -or $text.Contains("0.18.0") -or $text.Contains("0.18.1") -or $text.Contains("0.18.2") -or $text.Contains("0.18.7")) {
-                $text = $text.Replace("0.16.0", "0.18.9").Replace("0.16.1", "0.18.9").Replace("0.17.0", "0.18.9")
+                $text = $text.Replace("0.16.0", "0.18.10").Replace("0.16.1", "0.18.10").Replace("0.17.0", "0.18.10")
                 Set-Content $_.FullName $text -Encoding UTF8 -NoNewline
             }
         }
@@ -475,7 +509,7 @@ $serverBundle = Join-Path $root "Installer\Server\Bootstrapper\Bundle.wxs"
 if (Test-Path $serverBundle) {
     $bundle = Get-Content $serverBundle -Raw -Encoding UTF8
     if (-not $bundle.Contains('IconSourceFile=')) {
-        $bundle = $bundle.Replace('          Version="0.18.9"', '          Version="0.18.9"' + [Environment]::NewLine + '          IconSourceFile="!(bindpath.assets)\ConfGTS.ico"')
+        $bundle = $bundle.Replace('          Version="0.18.10"', '          Version="0.18.10"' + [Environment]::NewLine + '          IconSourceFile="!(bindpath.assets)\ConfGTS.ico"')
     }
     Set-Content $serverBundle $bundle -Encoding UTF8 -NoNewline
 }

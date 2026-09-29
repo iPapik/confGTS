@@ -38,6 +38,9 @@ func createTestRecording(t *testing.T, s *Store, room Room, captureID string) (R
 	if err != nil {
 		t.Fatalf("StartOrGetRecording: %v", err)
 	}
+	if ext := filepath.Ext(rec.FileName); ext != ".mkv" {
+		t.Fatalf("WebM fallback must be stored as MKV: got %q", rec.FileName)
+	}
 	if err := s.AppendRecording(rec, []byte("confgts-recording-test")); err != nil {
 		t.Fatalf("AppendRecording: %v", err)
 	}
@@ -102,5 +105,28 @@ func TestImmediateAdminStopAllowsStarterFinalChunk(t *testing.T) {
 	}
 	if !s.CanUploadEndedSessionRecording(session.ID, u.Username, 30*time.Second) {
 		t.Fatal("session starter was not allowed to upload the final chunk after immediate admin stop")
+	}
+}
+
+func TestRecordingUsesMP4Extension(t *testing.T) {
+	s, room := newRecordingTestStore(t)
+	u := User{Username: `TEPLO\recorder`, DisplayName: "Recorder"}
+	session, _, _, err := s.Join(room.ID, u)
+	if err != nil {
+		t.Fatalf("Join: %v", err)
+	}
+	rec, err := s.StartOrGetRecording(room.ID, session.ID, "cap_mp4_test", u.Username, "video/mp4;codecs=avc1.42E01E,mp4a.40.2")
+	if err != nil {
+		t.Fatalf("StartOrGetRecording: %v", err)
+	}
+	if ext := filepath.Ext(rec.FileName); ext != ".mp4" {
+		t.Fatalf("MP4 recording must use .mp4 extension: got %q", rec.FileName)
+	}
+	if err := s.AppendRecording(rec, []byte("mp4-media-bytes")); err != nil {
+		t.Fatalf("AppendRecording: %v", err)
+	}
+	stored, ok := s.RecordingByCaptureID("cap_mp4_test")
+	if !ok || stored.SizeBytes == 0 {
+		t.Fatalf("MP4 recording bytes were not persisted: ok=%v size=%d", ok, stored.SizeBytes)
 	}
 }

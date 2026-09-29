@@ -103,8 +103,18 @@ jobs:
           if ($ui -notmatch 'recordingContext=ctx' -or $ui -notmatch 'recording context missing' -or $ui -notmatch 'attempt<4') {
             throw 'Stable recording context or retry upload hardening is missing.'
           }
-          if ($ui -notmatch 'new Blob\(\[\],\{type:mime\}\)' -or $ui -notmatch 'cache:\x27no-store\x27') {
-            throw 'Immediate recording handshake or no-cache upload is missing.'
+          if ($ui -notmatch 'video/mp4' -or $ui -notmatch 'video/webm' -or $ui -notmatch 'ctx\.bytes\+=chunk\.size') {
+            throw 'MP4-first recording with WebM/MKV fallback or real-chunk tracking is missing.'
+          }
+          if ($ui -match 'new Blob\(\[\]' -or $ui -notmatch 'cache:\x27no-store\x27') {
+            throw 'Zero-byte recording handshake is still present or no-cache upload is missing.'
+          }
+          if ($store -notmatch 'ext := "\.mkv"' -or $store -notmatch 'ext = "\.mp4"') {
+            throw 'Server recording container selection is missing.'
+          }
+          $web = Get-Content '.\server\web.go' -Raw -Encoding UTF8
+          if ($web -notmatch 'zero-byte recording upload ignored' -or $web -notmatch 'if len\(data\) == 0') {
+            throw 'Server still allows empty recording uploads to create archive entries.'
           }
           if ($ui -notmatch 'handleConferenceStopped' -or $ui -notmatch "postMessage\('leave-conference'\)") {
             throw 'Administrative stop is not propagated to conference clients.'
