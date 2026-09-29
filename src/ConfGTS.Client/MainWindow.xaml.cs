@@ -940,6 +940,7 @@ public sealed class MainWindow : Window
               background:#111418 !important;
             }
             .video-tile {
+              position:relative !important;
               width:100% !important;
               height:100% !important;
               min-width:0 !important;
