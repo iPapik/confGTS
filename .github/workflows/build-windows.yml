@@ -95,6 +95,10 @@ jobs:
           if ($store -notmatch 'ext := "\.mkv"' -or $store -notmatch 'ext = "\.mp4"') {
             throw "Server MP4/MKV filename selection is missing."
           }
+          $web = Get-Content '.\server\web.go' -Raw -Encoding UTF8
+          if ($web -notmatch 'zero-byte recording upload ignored' -or $web -notmatch 'if len\(data\) == 0') {
+            throw "Server still allows empty recording uploads to create archive entries."
+          }
           $admin = Get-Content '.\server\admin.go' -Raw -Encoding UTF8
           if ($admin -notmatch 'confgts-live-participants' -or $admin -notmatch 'setInterval\(refreshParticipants,1500\)') {
             throw "Live conference participant refresh is missing from server admin UI."
