@@ -103,6 +103,9 @@ jobs:
           if ($ui -notmatch 'pc\.__confgtsVideoSender' -or $ui -notmatch 'pc\.addTransceiver' -or $ui -notmatch 'direction:\x27sendrecv\x27') {
             throw 'Permanent audio/video peer transceivers are missing.'
           }
+          if ($ui -notmatch 'pc\.__confgtsPendingIce' -or $ui -notmatch 'flushPeerIce' -or $ui -notmatch 'else pc\.__confgtsPendingIce\.push') {
+            throw 'ICE candidates are not queued before remote descriptions.'
+          }
           if ($ui -notmatch 'window\.__confgtsScreenTrack=nt' -or $ui -notmatch 'Камера выключена') {
             throw 'No-camera screen sharing or participant placeholder support is missing.'
           }
