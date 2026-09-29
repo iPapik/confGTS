@@ -385,6 +385,23 @@ if ($shareScreenRegex.IsMatch($ui)) {
     throw 'Screen sharing without camera patch was not applied.'
 }
 
+# ICE candidates can arrive before the offer/answer because setLocalDescription
+# starts candidate gathering immediately. Queue those candidates until a remote
+# description exists instead of dropping them; otherwise one side of a peer
+# connection can remain without video/audio or screen sharing.
+$signalPattern = '(?s)async function onSignal\(m\)\{.*?\}\r?\nfunction addVideo'
+$signalReplacement = @'
+async function flushPeerIce(pc){if(!pc?.remoteDescription)return;let q=pc.__confgtsPendingIce||[];pc.__confgtsPendingIce=[];for(let c of q){try{await pc.addIceCandidate(c)}catch(e){console.warn('ConfGTS queued ICE',e)}}}
+async function onSignal(m){let pc=pcFor(m.from);pc.__confgtsPendingIce=pc.__confgtsPendingIce||[];try{if(m.kind==='offer'){await pc.setRemoteDescription(m.data);await flushPeerIce(pc);let ans=await pc.createAnswer();await pc.setLocalDescription(ans);await sendSignal(m.from,'answer',ans)}else if(m.kind==='answer'){if(pc.signalingState==='have-local-offer'){await pc.setRemoteDescription(m.data);await flushPeerIce(pc)}}else if(m.kind==='ice'){if(pc.remoteDescription)await pc.addIceCandidate(m.data);else pc.__confgtsPendingIce.push(m.data)}}catch(e){console.warn('ConfGTS signal',m.kind,e)}}
+function addVideo
+'@
+$signalRegex = [regex]::new($signalPattern)
+if ($signalRegex.IsMatch($ui)) {
+    $ui = $signalRegex.Replace($ui, $signalReplacement.Trim(), 1)
+} elseif (-not $ui.Contains('pc.__confgtsPendingIce')) {
+    throw 'ICE candidate queue patch was not applied.'
+}
+
 # Recording is assigned to the first participant by Store.Join. The elected
 # recorder composites every visible video/screen stream plus all audio into a
 # WebM stream and uploads chunks to the server. Flush and finalize the recording
