@@ -84,7 +84,10 @@ jobs:
           if ($ui -notmatch 'recorder\.start\(2000\)') {
             throw 'Recording chunk interval hardening is missing.'
           }
-          if ($store -notmatch 'if lr\.Recorder == ""' -or $store -notmatch 'lr\.Recorder = key') {
+
+          if ($ui -notmatch 'recorder\.start\(2000\);drawRecording\(\)') {
+            throw 'Recorder canvas starts drawing before MediaRecorder is active.'
+          }          if ($store -notmatch 'if lr\.Recorder == ""' -or $store -notmatch 'lr\.Recorder = key') {
             throw 'First-participant recorder election is missing.'
           }
           if ($store -notmatch 'endIfEmptyLocked' -or $store -notmatch 'len\(lr\.Participants\) != 0') {
