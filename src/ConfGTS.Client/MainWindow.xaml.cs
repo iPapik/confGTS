@@ -44,6 +44,7 @@ public sealed class MainWindow : Window
 
     private bool _passwordVisible;
     private bool _dashboardRefreshRunning;
+    private int _dashboardFailureCount;
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _dashboardTimer;
     private readonly Grid _mainContentHost = new();
     private readonly ColumnDefinition _dashboardSidebarColumn = new() { Width = new GridLength(330) };
@@ -212,11 +213,26 @@ public sealed class MainWindow : Window
         passwordHost.Children.Add(revealButton);
         panel.Children.Add(passwordHost);
 
-        _rememberMeBox.Content = "Запомнить меня";
-        _rememberMeBox.FontSize = 13;
-        _rememberMeBox.Foreground = Brush(Text);
-        _rememberMeBox.Margin = new Thickness(0, 2, 0, 2);
-        panel.Children.Add(_rememberMeBox);
+        _rememberMeBox.Content = null;
+        _rememberMeBox.Width = 20;
+        _rememberMeBox.Height = 20;
+        _rememberMeBox.Margin = new Thickness(0);
+
+        var rememberRow = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 9,
+            Margin = new Thickness(0, 3, 0, 3)
+        };
+        rememberRow.Children.Add(_rememberMeBox);
+        rememberRow.Children.Add(new TextBlock
+        {
+            Text = "Запомнить меня",
+            FontSize = 13,
+            Foreground = Brush(Text),
+            VerticalAlignment = VerticalAlignment.Center
+        });
+        panel.Children.Add(rememberRow);
 
         _loginButton.Height = 54;
         _loginButton.HorizontalAlignment = HorizontalAlignment.Stretch;
@@ -279,7 +295,7 @@ public sealed class MainWindow : Window
 
         panel.Children.Add(new TextBlock
         {
-            Text = "Версия 0.18.7 beta  |  © ГТС, 2026",
+            Text = "Версия 0.18.8 beta  |  © ГТС, 2026",
             FontSize = 11,
             Foreground = Brush("#8A9BAC"),
             HorizontalAlignment = HorizontalAlignment.Center,
@@ -473,14 +489,19 @@ public sealed class MainWindow : Window
             RenderConferences(rooms);
             RenderMainConference(rooms);
 
+            _dashboardFailureCount = 0;
             _dashboardServerText.Text = "●  Подключено";
             _dashboardServerText.Foreground = Brush("#278E55");
         }
         catch (Exception ex)
         {
             StartupDiagnostics.Log("Dashboard refresh failed.", ex);
-            _dashboardServerText.Text = "●  Сервер недоступен";
-            _dashboardServerText.Foreground = Brush("#B54242");
+            _dashboardFailureCount++;
+            if (_dashboardFailureCount >= 3)
+            {
+                _dashboardServerText.Text = "●  Сервер недоступен";
+                _dashboardServerText.Foreground = Brush("#B54242");
+            }
         }
         finally
         {
@@ -961,6 +982,10 @@ public sealed class MainWindow : Window
               background:#7A3440 !important;
               border-color:#A5525C !important;
             }
+            .controls .btn.native-pending {
+              background:#40556D !important;
+              border-color:#60758B !important;
+            }
             .controls .btn.native-participants {
               min-width:118px !important;
               background:#164C79 !important;
@@ -1098,19 +1123,28 @@ public sealed class MainWindow : Window
             const camBtn = document.getElementById('camBtn');
             const micTrack = localStream?.getAudioTracks?.()[0];
             const camTrack = localStream?.getVideoTracks?.()[0];
+            const mediaReady = window.__confgtsMediaReady === true;
 
             if (micBtn) {
+              const configured = !!nativePrefs.microphoneEnabled;
               const enabled = !!micTrack?.enabled;
+              micBtn.classList.toggle('native-pending', configured && !mediaReady);
+              micBtn.classList.toggle('native-disabled', !configured || (mediaReady && !enabled));
               micBtn.textContent = enabled ? '🎙 Микрофон' : '🔇 Микрофон';
-              micBtn.classList.toggle('native-disabled', !enabled);
-              micBtn.title = micTrack ? (enabled ? 'Выключить микрофон' : 'Включить микрофон') : 'Микрофон не найден';
+              micBtn.title = !configured
+                ? 'Микрофон отключён в настройках'
+                : (!mediaReady ? 'Проверка микрофона…' : (micTrack ? (enabled ? 'Выключить микрофон' : 'Включить микрофон') : 'Микрофон не найден'));
             }
 
             if (camBtn) {
+              const configured = !!nativePrefs.cameraEnabled;
               const enabled = !!camTrack?.enabled;
+              camBtn.classList.toggle('native-pending', configured && !mediaReady);
+              camBtn.classList.toggle('native-disabled', !configured || (mediaReady && !enabled));
               camBtn.textContent = enabled ? '▣ Камера' : '▢ Камера';
-              camBtn.classList.toggle('native-disabled', !enabled);
-              camBtn.title = camTrack ? (enabled ? 'Выключить камеру' : 'Включить камеру') : 'Камера не найдена';
+              camBtn.title = !configured
+                ? 'Камера отключена в настройках'
+                : (!mediaReady ? 'Проверка камеры…' : (camTrack ? (enabled ? 'Выключить камеру' : 'Включить камеру') : 'Камера не найдена'));
             }
           };
 
@@ -1183,6 +1217,7 @@ public sealed class MainWindow : Window
             hangupBtn.title = 'Выйти из конференции';
             hangupBtn.setAttribute('aria-label', 'Выйти из конференции');
             hangupBtn.textContent = '☎ Выйти';
+            hangupBtn.disabled = true;
             hangupBtn.onclick = async () => {
               try {
                 if (typeof leaveRoom === 'function') {
@@ -1240,6 +1275,8 @@ public sealed class MainWindow : Window
             // an insecure HTTP origin must never prevent joining the room.
             if ((!useAudio && !useVideo) || !devices || typeof devices.getUserMedia !== 'function') {
               localStream = emptyStream();
+              window.__confgtsMediaReady = true;
+              syncMediaButtons();
               console.info('ConfGTS: joining without local media.');
               return localStream;
             }
@@ -1304,6 +1341,8 @@ public sealed class MainWindow : Window
               }
 
               localStream = new MediaStream(tracks);
+              window.__confgtsMediaReady = true;
+              syncMediaButtons();
               await applyOutputSettings();
               return localStream;
             } catch (e) {
@@ -1311,6 +1350,8 @@ public sealed class MainWindow : Window
               try { rawStream?.getTracks?.().forEach(t => t.stop()); } catch {}
               rawStream = null;
               localStream = emptyStream();
+              window.__confgtsMediaReady = true;
+              syncMediaButtons();
               return localStream;
             }
           };
@@ -1355,8 +1396,17 @@ public sealed class MainWindow : Window
             }
 
             await selectRoom(roomId);
-            await joinRoom();
+            window.__confgtsMediaReady = false;
+            const conferenceNode = document.getElementById('conference');
+            if (conferenceNode) conferenceNode.style.display = 'block';
             installNativeControls();
+            syncMediaButtons();
+
+            await joinRoom();
+
+            const hangupBtn = document.querySelector('.controls .native-hangup');
+            if (hangupBtn) hangupBtn.disabled = false;
+            window.__confgtsMediaReady = true;
             syncMediaButtons();
             await applyOutputSettings();
           })().catch(err => {
@@ -1466,17 +1516,27 @@ public sealed class MainWindow : Window
 
     private async Task CheckServerAsync()
     {
-        try
+        for (var attempt = 0; attempt < 3; attempt++)
         {
-            var ok = await _api.HealthAsync();
-            _serverText.Text = ok ? "Сервер доступен" : "Сервер недоступен";
-            _serverDot.Fill = Brush(ok ? "#31B657" : "#D14343");
+            try
+            {
+                if (await _api.HealthAsync())
+                {
+                    _serverText.Text = "Сервер доступен";
+                    _serverDot.Fill = Brush("#31B657");
+                    return;
+                }
+            }
+            catch
+            {
+            }
+
+            if (attempt < 2)
+                await Task.Delay(350);
         }
-        catch
-        {
-            _serverText.Text = "Сервер недоступен";
-            _serverDot.Fill = Brush("#D14343");
-        }
+
+        _serverText.Text = "Сервер недоступен";
+        _serverDot.Fill = Brush("#D14343");
     }
 
     private async void LoginButton_Click(object sender, RoutedEventArgs e) =>
@@ -1572,6 +1632,7 @@ public sealed class MainWindow : Window
         StopDashboardTimer();
         await CloseInlineSettingsAsync();
         await LeaveConferenceAsync(false);
+        await _api.LogoutAsync();
         _dashboardView.Visibility = Visibility.Collapsed;
         _loginView.Visibility = Visibility.Visible;
         if (_rememberMeBox.IsChecked != true)

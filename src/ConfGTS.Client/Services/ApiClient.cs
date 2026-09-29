@@ -19,6 +19,8 @@ public sealed class ApiClient
 
     private readonly CookieContainer _cookies = new();
     private readonly HttpClient _http;
+    private readonly SemaphoreSlim _endpointGate = new(1, 1);
+    private DateTimeOffset _lastEndpointOk = DateTimeOffset.MinValue;
     private string _configuredBaseUrl;
     private string _effectiveBaseUrl;
 
@@ -46,6 +48,7 @@ public sealed class ApiClient
         {
             _configuredBaseUrl = NormalizeServerAddress(value);
             _effectiveBaseUrl = _configuredBaseUrl;
+            _lastEndpointOk = DateTimeOffset.MinValue;
             SaveServer(_configuredBaseUrl);
         }
     }
@@ -100,31 +103,94 @@ public sealed class ApiClient
 
     public async Task LoginAsync(string login, string password, CancellationToken ct = default)
     {
-        if (!await EnsureEffectiveEndpointAsync(ct))
+        Exception? lastTransportError = null;
+
+        for (var attempt = 0; attempt < 2; attempt++)
         {
-            throw new InvalidOperationException(
-                "Сервер недоступен. Проверьте имя/IP, протокол, порт и сетевое подключение.");
+            if (!await EnsureEffectiveEndpointAsync(ct))
+            {
+                throw new InvalidOperationException(
+                    "Сервер недоступен. Проверьте имя/IP, протокол, порт и сетевое подключение.");
+            }
+
+            try
+            {
+                using var response = await _http.PostAsJsonAsync(
+                    UriFor("/api/login"),
+                    new
+                    {
+                        username = login,
+                        password
+                    },
+                    ct);
+
+                if (response.IsSuccessStatusCode)
+                {
+                    _lastEndpointOk = DateTimeOffset.UtcNow;
+                    return;
+                }
+
+                if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+                    throw new InvalidOperationException("Неверный логин или пароль.");
+
+                var detail = await response.Content.ReadAsStringAsync(ct);
+                throw new InvalidOperationException(string.IsNullOrWhiteSpace(detail)
+                    ? $"Сервер вернул HTTP {(int)response.StatusCode}."
+                    : detail.Trim());
+            }
+            catch (HttpRequestException ex) when (attempt == 0)
+            {
+                lastTransportError = ex;
+                _lastEndpointOk = DateTimeOffset.MinValue;
+                await Task.Delay(300, ct);
+            }
+            catch (TaskCanceledException ex) when (!ct.IsCancellationRequested && attempt == 0)
+            {
+                lastTransportError = ex;
+                _lastEndpointOk = DateTimeOffset.MinValue;
+                await Task.Delay(300, ct);
+            }
         }
 
-        using var response = await _http.PostAsJsonAsync(
-            UriFor("/api/login"),
-            new
+        throw new InvalidOperationException(
+            "Не удалось связаться с сервером ConfGTS. Повторите вход через несколько секунд.",
+            lastTransportError);
+    }
+
+    public async Task LogoutAsync(CancellationToken ct = default)
+    {
+        try
+        {
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            linked.CancelAfter(TimeSpan.FromSeconds(3));
+            using var response = await _http.PostAsync(UriFor("/api/logout"), content: null, linked.Token);
+        }
+        catch
+        {
+            // Logout is best-effort. The local session cookie is always cleared below.
+        }
+        finally
+        {
+            ClearSessionCookie();
+        }
+    }
+
+    private void ClearSessionCookie()
+    {
+        try
+        {
+            var uri = new Uri(_effectiveBaseUrl);
+            var expired = new Cookie("vc_session", "", "/", uri.Host)
             {
-                username = login,
-                password
-            },
-            ct);
-
-        if (response.IsSuccessStatusCode)
-            return;
-
-        if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
-            throw new InvalidOperationException("Неверный логин или пароль.");
-
-        var detail = await response.Content.ReadAsStringAsync(ct);
-        throw new InvalidOperationException(string.IsNullOrWhiteSpace(detail)
-            ? $"Сервер вернул HTTP {(int)response.StatusCode}."
-            : detail.Trim());
+                Expires = DateTime.UtcNow.AddDays(-1),
+                Expired = true,
+                HttpOnly = true
+            };
+            _cookies.Add(uri, expired);
+        }
+        catch
+        {
+        }
     }
 
     public async Task<IReadOnlyList<RoomInfo>> RoomsAsync(CancellationToken ct = default)
@@ -192,40 +258,60 @@ public sealed class ApiClient
 
     private async Task<bool> EnsureEffectiveEndpointAsync(CancellationToken ct)
     {
-        if (await ProbeAsync(_effectiveBaseUrl, ct))
+        if (DateTimeOffset.UtcNow - _lastEndpointOk < TimeSpan.FromSeconds(5))
             return true;
 
-        if (!string.Equals(_effectiveBaseUrl, _configuredBaseUrl, StringComparison.OrdinalIgnoreCase) &&
-            await ProbeAsync(_configuredBaseUrl, ct))
+        await _endpointGate.WaitAsync(ct);
+        try
         {
-            _effectiveBaseUrl = _configuredBaseUrl;
-            return true;
-        }
+            if (DateTimeOffset.UtcNow - _lastEndpointOk < TimeSpan.FromSeconds(5))
+                return true;
 
-        var configuredUri = new Uri(_configuredBaseUrl);
-
-        if (!IPAddress.TryParse(configuredUri.Host, out _) && !configuredUri.Host.Contains('.'))
-        {
-            var suffix = IPGlobalProperties.GetIPGlobalProperties().DomainName?.Trim('.');
-            if (!string.IsNullOrWhiteSpace(suffix))
+            if (await ProbeAsync(_effectiveBaseUrl, ct))
             {
-                var fqdn = ReplaceHost(configuredUri, configuredUri.Host + "." + suffix);
-                if (await ProbeAsync(fqdn, ct))
+                _lastEndpointOk = DateTimeOffset.UtcNow;
+                return true;
+            }
+
+            if (!string.Equals(_effectiveBaseUrl, _configuredBaseUrl, StringComparison.OrdinalIgnoreCase) &&
+                await ProbeAsync(_configuredBaseUrl, ct))
+            {
+                _effectiveBaseUrl = _configuredBaseUrl;
+                _lastEndpointOk = DateTimeOffset.UtcNow;
+                return true;
+            }
+
+            var configuredUri = new Uri(_configuredBaseUrl);
+
+            if (!IPAddress.TryParse(configuredUri.Host, out _) && !configuredUri.Host.Contains('.'))
+            {
+                var suffix = IPGlobalProperties.GetIPGlobalProperties().DomainName?.Trim('.');
+                if (!string.IsNullOrWhiteSpace(suffix))
                 {
-                    _effectiveBaseUrl = fqdn;
-                    return true;
+                    var fqdn = ReplaceHost(configuredUri, configuredUri.Host + "." + suffix);
+                    if (await ProbeAsync(fqdn, ct))
+                    {
+                        _effectiveBaseUrl = fqdn;
+                        _lastEndpointOk = DateTimeOffset.UtcNow;
+                        return true;
+                    }
                 }
             }
-        }
 
-        var discovered = await DiscoverAsync(configuredUri.Host, ct);
-        if (!string.IsNullOrWhiteSpace(discovered) && await ProbeAsync(discovered, ct))
+            var discovered = await DiscoverAsync(configuredUri.Host, ct);
+            if (!string.IsNullOrWhiteSpace(discovered) && await ProbeAsync(discovered, ct))
+            {
+                _effectiveBaseUrl = discovered;
+                _lastEndpointOk = DateTimeOffset.UtcNow;
+                return true;
+            }
+
+            return false;
+        }
+        finally
         {
-            _effectiveBaseUrl = discovered;
-            return true;
+            _endpointGate.Release();
         }
-
-        return false;
     }
 
     private async Task<bool> ProbeAsync(string baseUrl, CancellationToken ct)

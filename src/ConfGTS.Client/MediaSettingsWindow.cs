@@ -30,7 +30,6 @@ public sealed class MediaSettingsPanel : Grid
     private readonly TextBlock _microphoneStatus = new();
     private readonly TextBlock _speakerStatus = new();
     private readonly TextBlock _cameraStatus = new();
-    private readonly TextBlock _status = new();
     private readonly Button _refreshButton = new();
 
     private List<DeviceChoice> _microphoneDevices = [];
@@ -44,10 +43,10 @@ public sealed class MediaSettingsPanel : Grid
 
     public MediaSettingsPanel()
     {
-        StartupDiagnostics.Log("MediaSettingsPanel 0.18.7 constructor started.");
+        StartupDiagnostics.Log("MediaSettingsPanel 0.18.8 constructor started.");
         Background = Brush(Bg);
         Children.Add(BuildUi());
-        StartupDiagnostics.Log("MediaSettingsPanel 0.18.7 constructor completed.");
+        StartupDiagnostics.Log("MediaSettingsPanel 0.18.8 constructor completed.");
     }
 
     public async Task InitializeAsync()
@@ -91,21 +90,6 @@ public sealed class MediaSettingsPanel : Grid
 
         outer.Children.Add(BuildHeader());
 
-        _status.FontSize = 13;
-        _status.Foreground = Brush(Muted);
-        _status.TextWrapping = TextWrapping.Wrap;
-        _status.Text = "Загрузка устройств…";
-
-        outer.Children.Add(new Border
-        {
-            Background = Brush("#F7FCFF"),
-            BorderBrush = Brush("#C9E4EF"),
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(12),
-            Padding = new Thickness(16, 12, 16, 12),
-            Child = _status
-        });
-
         outer.Children.Add(BuildMicrophoneCard());
         outer.Children.Add(BuildSpeakerCard());
         outer.Children.Add(BuildCameraCard());
@@ -128,12 +112,6 @@ public sealed class MediaSettingsPanel : Grid
             FontSize = 28,
             FontWeight = FontWeights.Bold,
             Foreground = Brush(Navy)
-        });
-        title.Children.Add(new TextBlock
-        {
-            Text = "Камера, микрофон и звук настраиваются внутри ConfGTS",
-            FontSize = 13,
-            Foreground = Brush(Muted)
         });
         grid.Children.Add(title);
 
@@ -338,8 +316,6 @@ public sealed class MediaSettingsPanel : Grid
 
         _loading = true;
         _refreshButton.IsEnabled = false;
-        _status.Text = "Поиск устройств…";
-        _status.Foreground = Brush(Muted);
 
         try
         {
@@ -386,8 +362,6 @@ public sealed class MediaSettingsPanel : Grid
                 : $"Найдено камер: {_cameraDevices.Count}.";
 
             SyncSelectedValues();
-            _status.Text = "Устройства обновлены. Выбранные устройства отображаются в полях и сохраняются автоматически.";
-            _status.Foreground = Brush("#278E55");
         }
         catch (Exception ex)
         {
@@ -395,8 +369,6 @@ public sealed class MediaSettingsPanel : Grid
             EnsureEmptyPlaceholder(_microphone, "Микрофон не найден");
             EnsureEmptyPlaceholder(_speaker, "Динамики / наушники не найдены");
             EnsureEmptyPlaceholder(_camera, "Камера не найдена");
-            _status.Text = "Не удалось получить часть устройств. Это не мешает входу в конференцию.";
-            _status.Foreground = Brush("#B25C28");
         }
         finally
         {
