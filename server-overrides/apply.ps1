@@ -443,6 +443,22 @@ if ($startRecordingRegex.IsMatch($ui)) {
     throw 'ConfGTS startRecording patch was not applied.'
 }
 
+# Record the whole conference composition. The recorder draws every
+# participant tile on every animation frame, so newly joined users and screen
+# sharing are included automatically. Users without video are kept as named
+# placeholders instead of disappearing from the recording.
+$drawRecordingPattern = '(?s)function drawRecording\(\)\{.*?\}\r?\nasync function uploadChunk'
+$drawRecordingReplacement = @'
+function drawRecording(){if(!recorder||recorder.state==='inactive'||!recorderCtx)return;let ctx=recorderCtx,w=recorderCanvas.width,h=recorderCanvas.height;ctx.fillStyle='#111820';ctx.fillRect(0,0,w,h);let tiles=[...document.querySelectorAll('.video-tile')];let n=Math.max(1,tiles.length),cols=Math.ceil(Math.sqrt(n)),rows=Math.ceil(n/cols),cw=w/cols,ch=h/rows;tiles.forEach((tile,i)=>{let x=(i%cols)*cw,y=Math.floor(i/cols)*ch,v=tile.querySelector('video'),label=tile.querySelector('.video-label')?.textContent||'Участник';ctx.fillStyle='#17222d';ctx.fillRect(x+2,y+2,cw-4,ch-4);if(v&&v.srcObject&&v.readyState>=2&&v.videoWidth>0&&v.videoHeight>0){let vr=v.videoWidth/v.videoHeight,cr=cw/ch,dw,dh;if(vr>cr){dw=cw;dh=cw/vr}else{dh=ch;dw=ch*vr}try{ctx.drawImage(v,x+(cw-dw)/2,y+(ch-dh)/2,dw,dh)}catch{}}else{ctx.fillStyle='#cfe0ea';ctx.font='600 24px Segoe UI';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText('Без видео',x+cw/2,y+ch/2)}ctx.font='600 16px Segoe UI';let labelWidth=Math.max(120,Math.min(cw-16,ctx.measureText(label).width+28));ctx.fillStyle='rgba(0,0,0,.68)';ctx.fillRect(x+8,y+ch-46,labelWidth,32);ctx.fillStyle='#fff';ctx.textAlign='left';ctx.textBaseline='middle';ctx.fillText(label,x+20,y+ch-30)});ctx.fillStyle='#168CB8';ctx.fillRect(0,0,w,6);requestAnimationFrame(drawRecording)}
+async function uploadChunk
+'@
+$drawRecordingRegex = [regex]::new($drawRecordingPattern)
+if ($drawRecordingRegex.IsMatch($ui)) {
+    $ui = $drawRecordingRegex.Replace($ui, $drawRecordingReplacement.Trim(), 1)
+} elseif (-not $ui.Contains("ctx.fillText('Без видео'")) {
+    throw 'Full-conference recording compositor patch was not applied.'
+}
+
 # Upload every chunk against the room/session/capture snapshot taken when the
 # recorder starts. Retry transient failures so a short network hiccup does not
 # silently remove the whole recording from the server archive.
