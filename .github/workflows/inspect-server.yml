@@ -112,6 +112,10 @@ jobs:
           if ($store -notmatch 'ext := "\.mkv"' -or $store -notmatch 'ext = "\.mp4"') {
             throw 'Server recording container selection is missing.'
           }
+          $web = Get-Content '.\server\web.go' -Raw -Encoding UTF8
+          if ($web -notmatch 'zero-byte recording upload ignored' -or $web -notmatch 'if len\(data\) == 0') {
+            throw 'Server still allows empty recording uploads to create archive entries.'
+          }
           if ($ui -notmatch 'handleConferenceStopped' -or $ui -notmatch "postMessage\('leave-conference'\)") {
             throw 'Administrative stop is not propagated to conference clients.'
           }
