@@ -1812,14 +1812,11 @@ public sealed class MainWindow : Window
         if (_mediaSettingsPanel is not null)
             return;
 
-        // Do not leave an active conference when device settings are opened from
-        // the conference sidebar. Keep WebView2, WebRTC peers and recording alive,
-        // temporarily hide only the conference surface, and restore the exact room
-        // when the user closes settings.
+        // Keep the active WebView2 visible underneath the opaque settings panel.
+        // This avoids throttling requestAnimationFrame/MediaRecorder while settings
+        // are open and makes the panel a true in-conference overlay.
         _settingsOpenedFromConference = _conferenceHost is not null && !string.IsNullOrWhiteSpace(_activeRoomId);
         _settingsConferenceSidebarVisible = _conferenceSidebarVisible;
-        if (_settingsOpenedFromConference && _conferenceHost is not null)
-            _conferenceHost.Visibility = Visibility.Collapsed;
 
         var panel = new MediaSettingsPanel();
         panel.CloseRequested += async (_, _) =>
@@ -1856,7 +1853,6 @@ public sealed class MainWindow : Window
 
             if (_conferenceHost is not null && !string.IsNullOrWhiteSpace(_activeRoomId))
             {
-                _conferenceHost.Visibility = Visibility.Visible;
                 if (_dashboardMainScroll is not null)
                     _dashboardMainScroll.Visibility = Visibility.Collapsed;
                 SetConferenceSidebarVisible(_settingsConferenceSidebarVisible);
@@ -1891,7 +1887,6 @@ public sealed class MainWindow : Window
         if (returnToConference && _conferenceHost is not null)
         {
             await ApplyConferenceMediaSettingsAsync();
-            _conferenceHost.Visibility = Visibility.Visible;
             if (_dashboardMainScroll is not null)
                 _dashboardMainScroll.Visibility = Visibility.Collapsed;
             SetConferenceSidebarVisible(restoreSidebar);
