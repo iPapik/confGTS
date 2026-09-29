@@ -85,14 +85,20 @@ jobs:
           if ($ui -notmatch 'recordingContext=ctx' -or $ui -notmatch 'recording context missing' -or $ui -notmatch 'attempt<4') {
             throw "Stable recording context or retry upload hardening is missing."
           }
-          if ($ui -notmatch 'new Blob\(\[\],\{type:mime\}\)') {
-            throw "Immediate server-side recording handshake is missing."
+          if ($ui -notmatch 'video/mp4' -or $ui -notmatch 'video/webm' -or $ui -notmatch 'ctx\.bytes\+=chunk\.size') {
+            throw "MP4-first recording with MKV fallback or real-chunk tracking is missing."
+          }
+          if ($ui -match 'new Blob\(\[\]') {
+            throw "Zero-byte recording handshake must not create empty archive entries."
+          }
+          $store = Get-Content '.\server\store.go' -Raw -Encoding UTF8
+          if ($store -notmatch 'ext := "\.mkv"' -or $store -notmatch 'ext = "\.mp4"') {
+            throw "Server MP4/MKV filename selection is missing."
           }
           $admin = Get-Content '.\server\admin.go' -Raw -Encoding UTF8
           if ($admin -notmatch 'confgts-live-participants' -or $admin -notmatch 'setInterval\(refreshParticipants,1500\)') {
             throw "Live conference participant refresh is missing from server admin UI."
           }
-          $store = Get-Content '.\server\store.go' -Raw -Encoding UTF8
           if ($store -notmatch 'Finalize unfinished recordings for the stopped session' -or $store -notmatch 'Finalize unfinished recordings when the room becomes empty') {
             throw "Server recording finalization guards are missing."
           }
