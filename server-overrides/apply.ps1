@@ -2,7 +2,7 @@ $ErrorActionPreference = "Stop"
 
 $root = Split-Path -Parent $PSScriptRoot
 
-Write-Host "Applying ConfGTS Server 0.18.8 overlays..." -ForegroundColor Cyan
+Write-Host "Applying ConfGTS Server 0.18.9 overlays..." -ForegroundColor Cyan
 
 Copy-Item (Join-Path $PSScriptRoot "src\*") (Join-Path $root "src") -Recurse -Force
 Copy-Item (Join-Path $PSScriptRoot "server\*") (Join-Path $root "server") -Recurse -Force
@@ -89,8 +89,8 @@ Set-Content $storePath $store -Encoding UTF8 -NoNewline
 
 $mainPath = Join-Path $root "server\main.go"
 $main = Get-Content $mainPath -Raw -Encoding UTF8
-$main = $main.Replace('const Version = "0.16.0"', 'const Version = "0.18.8"')
-$main = $main.Replace('const Version = "0.16.1"', 'const Version = "0.18.8"')
+$main = $main.Replace('const Version = "0.16.0"', 'const Version = "0.18.9"')
+$main = $main.Replace('const Version = "0.16.1"', 'const Version = "0.18.9"')
 $main = $main.Replace('cfg.ListenAddr == ":8090" {', 'cfg.ListenAddr == ":8090" || cfg.ListenAddr == "0.0.0.0:8090" {')
 $main = $main.Replace('cfg.ListenAddr = "127.0.0.1:" + strconv.Itoa(n)', 'cfg.ListenAddr = "0.0.0.0:" + strconv.Itoa(n)')
 $main = $main.Replace('addr = "127.0.0.1:8090"', 'addr = "0.0.0.0:8090"')
@@ -255,6 +255,13 @@ foreach ($entry in $replacements.GetEnumerator()) {
     $ui = $ui.Replace($entry.Key, $entry.Value)
 }
 
+# The upload queue must not read mutable roomState/currentRoom values after a
+# conference leave/stop. Add one immutable context pointer for the active capture.
+$ui = $ui.Replace(
+    'captureId=null, recordPart=0;',
+    'captureId=null, recordPart=0, recordingContext=null;'
+)
+
 # A participant must be able to join even when camera/microphone APIs are
 # unavailable, permissions are denied, or the page is opened from an HTTP
 # origin where Chromium does not expose navigator.mediaDevices.
@@ -345,7 +352,7 @@ if ($ui.Contains($updateStateOld.Trim())) {
 # server still receives the conference video/screen composition without audio.
 $startRecordingPattern = '(?s)async function startRecording\(\)\{.*?\}\r?\nfunction drawRecording'
 $startRecordingReplacement = @'
-async function startRecording(){if(recorder||!roomState?.session)return;if(typeof MediaRecorder==='undefined'){console.warn('ConfGTS: MediaRecorder unavailable');return}captureId='cap_'+Date.now()+'_'+Math.random().toString(16).slice(2);recordPart=0;recorderCanvas=document.createElement('canvas');recorderCanvas.width=1280;recorderCanvas.height=720;recorderCtx=recorderCanvas.getContext('2d');audioCtx=null;audioDest=null;audioSeen=new WeakSet();let cs=recorderCanvas.captureStream(15);try{let AC=window.AudioContext||window.webkitAudioContext;if(AC){audioCtx=new AC();audioDest=audioCtx.createMediaStreamDestination();document.querySelectorAll('.video-tile video').forEach(v=>{if(v.srcObject)addAudioStream(v.srcObject)});audioDest.stream.getAudioTracks().forEach(t=>cs.addTrack(t))}}catch(e){console.warn('ConfGTS recording audio mix unavailable',e);audioCtx=null;audioDest=null}let mime=MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus')?'video/webm;codecs=vp8,opus':'video/webm';try{recorder=new MediaRecorder(cs,{mimeType:mime,videoBitsPerSecond:1800000})}catch(e){console.error('ConfGTS recorder start failed',e);recorder=null;return}drawRecording();recorder.ondataavailable=e=>{if(e.data&&e.data.size>0){let part=recordPart++;recordQueue=recordQueue.then(()=>uploadChunk(e.data,part)).catch(console.warn)}};recorder.onstop=()=>{recordQueue=recordQueue.then(()=>api('/api/recordings/finalize',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({capture_id:captureId})})).catch(()=>{});if(audioCtx)audioCtx.close();audioCtx=null;audioDest=null;recorder=null};recorder.start(5000)}
+async function startRecording(){if(recorder||!roomState?.session)return;if(typeof MediaRecorder==='undefined'){console.warn('ConfGTS: MediaRecorder unavailable');return}let ctx={room:String(currentRoom||''),session:String(roomState.session.id||''),capture:'cap_'+Date.now()+'_'+Math.random().toString(16).slice(2)};if(!ctx.room||!ctx.session)return;recordingContext=ctx;captureId=ctx.capture;recordPart=0;recordQueue=Promise.resolve();recorderCanvas=document.createElement('canvas');recorderCanvas.width=1280;recorderCanvas.height=720;recorderCtx=recorderCanvas.getContext('2d');audioCtx=null;audioDest=null;audioSeen=new WeakSet();let cs=recorderCanvas.captureStream(15);try{let AC=window.AudioContext||window.webkitAudioContext;if(AC){audioCtx=new AC();audioDest=audioCtx.createMediaStreamDestination();document.querySelectorAll('.video-tile video').forEach(v=>{if(v.srcObject)addAudioStream(v.srcObject)});audioDest.stream.getAudioTracks().forEach(t=>cs.addTrack(t))}}catch(e){console.warn('ConfGTS recording audio mix unavailable',e);audioCtx=null;audioDest=null}let mime=MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus')?'video/webm;codecs=vp8,opus':'video/webm';try{recorder=new MediaRecorder(cs,{mimeType:mime,videoBitsPerSecond:1800000})}catch(e){console.error('ConfGTS recorder start failed',e);recordingContext=null;recorder=null;return}let active=recorder;drawRecording();recordQueue=recordQueue.then(()=>uploadChunk(new Blob([],{type:mime}),-1,ctx)).catch(e=>console.warn('ConfGTS recording handshake failed',e));recorder.ondataavailable=e=>{if(e.data&&e.data.size>0){let part=recordPart++,chunk=e.data;recordQueue=recordQueue.then(()=>uploadChunk(chunk,part,ctx)).catch(e=>console.warn('ConfGTS recording chunk failed',e))}};recorder.onstop=()=>{recordQueue=recordQueue.then(()=>api('/api/recordings/finalize',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({capture_id:ctx.capture})})).catch(e=>console.warn('ConfGTS recording finalize failed',e));if(audioCtx)audioCtx.close();audioCtx=null;audioDest=null;if(recorder===active)recorder=null;if(recordingContext===ctx)recordingContext=null};recorder.start(2000);setTimeout(()=>{try{if(active.state==='recording')active.requestData()}catch{}},500)}
 function drawRecording
 '@
 $startRecordingRegex = [regex]::new($startRecordingPattern)
@@ -353,6 +360,21 @@ if ($startRecordingRegex.IsMatch($ui)) {
     $ui = $startRecordingRegex.Replace($ui, $startRecordingReplacement.Trim(), 1)
 } elseif (-not $ui.Contains('ConfGTS recording audio mix unavailable')) {
     throw 'ConfGTS startRecording patch was not applied.'
+}
+
+# Upload every chunk against the room/session/capture snapshot taken when the
+# recorder starts. Retry transient failures so a short network hiccup does not
+# silently remove the whole recording from the server archive.
+$uploadChunkPattern = '(?s)async function uploadChunk\(blob,part\)\{.*?\}\r?\nasync function stopRecording'
+$uploadChunkReplacement = @'
+async function uploadChunk(blob,part,ctx=recordingContext){if(!ctx?.room||!ctx?.session||!ctx?.capture)throw new Error('recording context missing');let u='/api/recordings/upload?room='+encodeURIComponent(ctx.room)+'&session='+encodeURIComponent(ctx.session)+'&capture='+encodeURIComponent(ctx.capture)+'&part='+part;let lastError=null;for(let attempt=0;attempt<4;attempt++){try{let r=await fetch(u,{method:'POST',credentials:'same-origin',cache:'no-store',headers:{'Content-Type':blob.type||'video/webm'},body:blob});if(r.ok)return;let detail='';try{detail=await r.text()}catch{}lastError=new Error(('record upload '+r.status+' '+detail).trim());if(r.status>=400&&r.status<500&&r.status!==403&&r.status!==408&&r.status!==429)break}catch(e){lastError=e}if(attempt<3)await new Promise(resolve=>setTimeout(resolve,250*Math.pow(2,attempt)))}throw lastError||new Error('record upload failed')}
+async function stopRecording
+'@
+$uploadChunkRegex = [regex]::new($uploadChunkPattern)
+if ($uploadChunkRegex.IsMatch($ui)) {
+    $ui = $uploadChunkRegex.Replace($ui, $uploadChunkReplacement.TrimEnd("`r","`n"), 1)
+} elseif (-not $ui.Contains('recording context missing')) {
+    throw 'ConfGTS uploadChunk reliability patch was not applied.'
 }
 
 # A server-side Stop must end the active conference on every connected client.
@@ -371,7 +393,7 @@ if ($stateLoopRegex.IsMatch($ui)) {
 }
 
 # Reduce chunk duration so an unexpected process loss can only lose a small tail.
-$ui = $ui.Replace('recorder.start(15000)', 'recorder.start(5000)')
+$ui = $ui.Replace('recorder.start(15000)', 'recorder.start(2000)').Replace('recorder.start(5000)', 'recorder.start(2000)')
 
 Set-Content $uiPath $ui -Encoding UTF8 -NoNewline
 
@@ -385,6 +407,21 @@ Get-ChildItem (Join-Path $root "server") -Filter *.go -File | ForEach-Object {
     Set-Content $_.FullName $text -Encoding UTF8 -NoNewline
 }
 
+# Keep the Participants tab on the server conference page live without forcing
+# administrators to refresh the whole page. The poller re-renders only the tab
+# counter and the participant table from the current server-side HTML snapshot.
+$adminPath = Join-Path $root "server\admin.go"
+if (Test-Path $adminPath) {
+    $admin = Get-Content $adminPath -Raw -Encoding UTF8
+    if (-not $admin.Contains('confgts-live-participants')) {
+        $liveParticipantsScript = @'
+<script id="confgts-live-participants">(function(){if(location.pathname!='/server/conferences'||!new URLSearchParams(location.search).get('room'))return;let busy=false;const findTab=root=>Array.from(root.querySelectorAll('a,button,[role="tab"]')).find(el=>/^Участники\s*\(\d+\)/i.test((el.textContent||'').trim()));const findTable=root=>Array.from(root.querySelectorAll('table')).find(t=>{let s=t.textContent||'';return s.includes('Пользователь')&&(s.includes('Вошёл')||s.includes('Вошел'))});async function refreshParticipants(){if(busy||document.hidden)return;busy=true;try{let r=await fetch(location.href,{credentials:'same-origin',cache:'no-store',headers:{'X-ConfGTS-Live':'participants'}});if(!r.ok)return;let next=new DOMParser().parseFromString(await r.text(),'text/html');let a=findTab(document),b=findTab(next);if(a&&b)a.textContent=b.textContent;let currentTable=findTable(document),nextTable=findTable(next);if(currentTable&&nextTable)currentTable.replaceWith(nextTable)}catch(e){console.debug('ConfGTS participant refresh',e)}finally{busy=false}}window.__confgtsParticipantsRefresh&&clearInterval(window.__confgtsParticipantsRefresh);window.__confgtsParticipantsRefresh=setInterval(refreshParticipants,1500);window.addEventListener('focus',refreshParticipants);refreshParticipants()})();</script>
+'@
+        $admin = $admin.Replace('</body></html>', $liveParticipantsScript.Trim() + '</body></html>')
+        Set-Content $adminPath $admin -Encoding UTF8 -NoNewline
+    }
+}
+
 $versionTargets = @(
     (Join-Path $root "server"),
     (Join-Path $root "Installer\Server"),
@@ -394,13 +431,13 @@ $versionTargets = @(
 foreach ($target in $versionTargets) {
     if (Test-Path $target -PathType Leaf) {
         $text = Get-Content $target -Raw -Encoding UTF8
-        $text = $text.Replace("0.16.0", "0.18.8").Replace("0.16.1", "0.18.8").Replace("0.17.0", "0.18.8").Replace("0.18.7", "0.18.8").Replace("0.18.0", "0.18.8").Replace("0.18.1", "0.18.8").Replace("0.18.0", "0.18.8").Replace("0.18.1", "0.18.8")
+        $text = $text.Replace("0.16.0", "0.18.9").Replace("0.16.1", "0.18.9").Replace("0.17.0", "0.18.9").Replace("0.18.7", "0.18.9").Replace("0.18.0", "0.18.9").Replace("0.18.1", "0.18.9").Replace("0.18.0", "0.18.9").Replace("0.18.1", "0.18.9")
         Set-Content $target $text -Encoding UTF8 -NoNewline
     } elseif (Test-Path $target -PathType Container) {
         Get-ChildItem $target -Recurse -File -Include *.go,*.cs,*.xaml,*.csproj,*.wxs,*.wixproj,*.ps1 | ForEach-Object {
             $text = Get-Content $_.FullName -Raw -Encoding UTF8
             if ($text.Contains("0.16.0") -or $text.Contains("0.16.1") -or $text.Contains("0.17.0") -or $text.Contains("0.18.0") -or $text.Contains("0.18.1") -or $text.Contains("0.18.7")) {
-                $text = $text.Replace("0.16.0", "0.18.8").Replace("0.16.1", "0.18.8").Replace("0.17.0", "0.18.8")
+                $text = $text.Replace("0.16.0", "0.18.9").Replace("0.16.1", "0.18.9").Replace("0.17.0", "0.18.9")
                 Set-Content $_.FullName $text -Encoding UTF8 -NoNewline
             }
         }
@@ -438,7 +475,7 @@ $serverBundle = Join-Path $root "Installer\Server\Bootstrapper\Bundle.wxs"
 if (Test-Path $serverBundle) {
     $bundle = Get-Content $serverBundle -Raw -Encoding UTF8
     if (-not $bundle.Contains('IconSourceFile=')) {
-        $bundle = $bundle.Replace('          Version="0.18.8"', '          Version="0.18.8"' + [Environment]::NewLine + '          IconSourceFile="!(bindpath.assets)\ConfGTS.ico"')
+        $bundle = $bundle.Replace('          Version="0.18.9"', '          Version="0.18.9"' + [Environment]::NewLine + '          IconSourceFile="!(bindpath.assets)\ConfGTS.ico"')
     }
     Set-Content $serverBundle $bundle -Encoding UTF8 -NoNewline
 }
