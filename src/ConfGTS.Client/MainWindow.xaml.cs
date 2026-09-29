@@ -54,6 +54,8 @@ public sealed class MainWindow : Window
     private WebView2? _conferenceWebView;
     private Grid? _conferenceHost;
     private bool _conferenceSidebarVisible;
+    private bool _settingsOpenedFromConference;
+    private bool _settingsConferenceSidebarVisible;
     private string _activeRoomId = "";
 
     public MainWindow()
@@ -1720,16 +1722,14 @@ public sealed class MainWindow : Window
         if (_mediaSettingsPanel is not null)
             return;
 
-        // Leaving a conference is best-effort here. Settings must still open even
-        // if a stale WebView2 instance throws while it is being torn down.
-        try
-        {
-            await LeaveConferenceAsync(false);
-        }
-        catch (Exception ex)
-        {
-            StartupDiagnostics.Log("Conference cleanup failed while opening settings; continuing.", ex);
-        }
+        // Do not leave an active conference when device settings are opened from
+        // the conference sidebar. Keep WebView2, WebRTC peers and recording alive,
+        // temporarily hide only the conference surface, and restore the exact room
+        // when the user closes settings.
+        _settingsOpenedFromConference = _conferenceHost is not null && !string.IsNullOrWhiteSpace(_activeRoomId);
+        _settingsConferenceSidebarVisible = _conferenceSidebarVisible;
+        if (_settingsOpenedFromConference && _conferenceHost is not null)
+            _conferenceHost.Visibility = Visibility.Collapsed;
 
         var panel = new MediaSettingsPanel();
         panel.CloseRequested += async (_, _) =>
@@ -1751,25 +1751,62 @@ public sealed class MainWindow : Window
 
         _mainContentHost.Children.Add(panel);
 
-        // This initialization is UI-only. Hardware enumeration happens only after
-        // the user explicitly presses "Обновить устройства" inside the panel.
-        await panel.InitializeAsync();
-        StartupDiagnostics.Log("Media settings opened successfully.");
+        try
+        {
+            // This initialization is UI-only. Hardware enumeration happens only after
+            // the user explicitly presses "Обновить устройства" inside the panel.
+            await panel.InitializeAsync();
+            StartupDiagnostics.Log("Media settings opened successfully.");
+        }
+        catch
+        {
+            _mediaSettingsPanel = null;
+            _mainContentHost.Children.Remove(panel);
+            _settingsOpenedFromConference = false;
+
+            if (_conferenceHost is not null && !string.IsNullOrWhiteSpace(_activeRoomId))
+            {
+                _conferenceHost.Visibility = Visibility.Visible;
+                if (_dashboardMainScroll is not null)
+                    _dashboardMainScroll.Visibility = Visibility.Collapsed;
+                SetConferenceSidebarVisible(_settingsConferenceSidebarVisible);
+            }
+            else if (_dashboardMainScroll is not null)
+            {
+                _dashboardMainScroll.Visibility = Visibility.Visible;
+            }
+
+            throw;
+        }
     }
 
     private async Task CloseInlineSettingsAsync()
     {
         var panel = _mediaSettingsPanel;
-        if (panel is null)
+        var returnToConference = _settingsOpenedFromConference &&
+                                 _conferenceHost is not null &&
+                                 !string.IsNullOrWhiteSpace(_activeRoomId);
+        var restoreSidebar = _settingsConferenceSidebarVisible;
+
+        _settingsOpenedFromConference = false;
+        _settingsConferenceSidebarVisible = false;
+
+        if (panel is not null)
         {
-            if (_dashboardMainScroll is not null)
-                _dashboardMainScroll.Visibility = Visibility.Visible;
-            return;
+            _mediaSettingsPanel = null;
+            await panel.ShutdownAsync();
+            _mainContentHost.Children.Remove(panel);
         }
 
-        _mediaSettingsPanel = null;
-        await panel.ShutdownAsync();
-        _mainContentHost.Children.Remove(panel);
+        if (returnToConference && _conferenceHost is not null)
+        {
+            _conferenceHost.Visibility = Visibility.Visible;
+            if (_dashboardMainScroll is not null)
+                _dashboardMainScroll.Visibility = Visibility.Collapsed;
+            SetConferenceSidebarVisible(restoreSidebar);
+            StartupDiagnostics.Log("Returned from device settings to active conference " + _activeRoomId + ".");
+            return;
+        }
 
         if (_dashboardMainScroll is not null)
             _dashboardMainScroll.Visibility = Visibility.Visible;
