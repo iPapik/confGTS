@@ -310,7 +310,7 @@ public sealed class MainWindow : Window
 
         panel.Children.Add(new TextBlock
         {
-            Text = "Версия 0.18.11 beta  |  © ГТС, 2026",
+            Text = "Версия 0.18.12 beta  |  © ГТС, 2026",
             FontSize = 11,
             Foreground = Brush("#8A9BAC"),
             HorizontalAlignment = HorizontalAlignment.Center,
@@ -795,18 +795,23 @@ public sealed class MainWindow : Window
                 server.Host.Replace(':', '_') + "_" + server.Port);
             Directory.CreateDirectory(webViewDataFolder);
 
-            CoreWebView2EnvironmentOptions? webViewOptions = null;
+            var origin = server.GetLeftPart(UriPartial.Authority);
+            var browserArguments =
+                "--autoplay-policy=no-user-gesture-required " +
+                "--disable-background-timer-throttling " +
+                "--disable-backgrounding-occluded-windows " +
+                "--disable-renderer-backgrounding " +
+                "--disable-features=CalculateNativeWinOcclusion";
             if (server.Scheme.Equals("http", StringComparison.OrdinalIgnoreCase))
             {
-                var origin = server.GetLeftPart(UriPartial.Authority);
-                webViewOptions = new CoreWebView2EnvironmentOptions
-                {
-                    AdditionalBrowserArguments =
-                        "--unsafely-treat-insecure-origin-as-secure=" + origin +
-                        " --autoplay-policy=no-user-gesture-required"
-                };
+                browserArguments += " --unsafely-treat-insecure-origin-as-secure=" + origin;
                 StartupDiagnostics.Log("Conference WebView will trust configured HTTP origin for media APIs: " + origin);
             }
+
+            var webViewOptions = new CoreWebView2EnvironmentOptions
+            {
+                AdditionalBrowserArguments = browserArguments
+            };
 
             var webViewEnvironment = await CoreWebView2Environment.CreateWithOptionsAsync(
                 browserExecutableFolder: null,
@@ -824,6 +829,16 @@ public sealed class MainWindow : Window
                     "WebView2 не удалось инициализировать. Проверьте установку Microsoft Edge WebView2 Runtime.");
 
             web.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
+            await web.CoreWebView2.Profile.SetPermissionStateAsync(
+                CoreWebView2PermissionKind.Microphone,
+                origin,
+                CoreWebView2PermissionState.Allow);
+            await web.CoreWebView2.Profile.SetPermissionStateAsync(
+                CoreWebView2PermissionKind.Camera,
+                origin,
+                CoreWebView2PermissionState.Allow);
+            StartupDiagnostics.Log("Conference media permissions pre-granted for device enumeration: " + origin);
+
             web.CoreWebView2.PermissionRequested += ConferencePermissionRequested;
             web.CoreWebView2.ServerCertificateErrorDetected += ConferenceCertificateErrorDetected;
             web.CoreWebView2.WebMessageReceived += ConferenceWebMessageReceived;
@@ -877,6 +892,9 @@ public sealed class MainWindow : Window
         var media = MediaDeviceSettings.Load();
         var mediaJson = JsonSerializer.Serialize(new
         {
+            microphoneId = media.MicrophoneId,
+            speakerId = media.SpeakerId,
+            cameraId = media.CameraId,
             microphoneName = media.MicrophoneName,
             speakerName = media.SpeakerName,
             cameraName = media.CameraName,
@@ -1094,15 +1112,55 @@ public sealed class MainWindow : Window
           let nativePrefs = __CONFGTS_MEDIA_JSON__;
           const emptyStream = () => new MediaStream();
 
-          const findBrowserDevice = async (kind, wantedName) => {
-            if (!wantedName || !navigator.mediaDevices?.enumerateDevices) return null;
+          const normalizeDeviceName = value => String(value || '')
+            .trim()
+            .toLocaleLowerCase()
+            .replace(/[()[\]{}]/g, ' ')
+            .replace(/\b(microphone|mic|микрофон|speakers?|динамик|динамики|headphones?|наушники|headset|гарнитура|audio|device|устройство|default|по умолчанию)\b/giu, ' ')
+            .replace(/[^a-zа-яё0-9]+/giu, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+
+          const findBrowserDevice = async (kind, wantedName, wantedId) => {
+            if (!navigator.mediaDevices?.enumerateDevices) return null;
             try {
-              const devices = await navigator.mediaDevices.enumerateDevices();
-              const normalized = String(wantedName).trim().toLocaleLowerCase();
-              return devices.find(d => d.kind === kind && String(d.label || '').trim().toLocaleLowerCase() === normalized)
-                  || devices.find(d => d.kind === kind && String(d.label || '').toLocaleLowerCase().includes(normalized))
-                  || null;
-            } catch {
+              const devices = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === kind);
+              if (wantedId) {
+                const directId = devices.find(d => d.deviceId === wantedId);
+                if (directId) return directId;
+              }
+
+              const wantedRaw = String(wantedName || '').trim().toLocaleLowerCase();
+              if (!wantedRaw) return null;
+
+              const exact = devices.find(d => String(d.label || '').trim().toLocaleLowerCase() === wantedRaw);
+              if (exact) return exact;
+
+              const contains = devices.find(d => {
+                const label = String(d.label || '').trim().toLocaleLowerCase();
+                return label && (label.includes(wantedRaw) || wantedRaw.includes(label));
+              });
+              if (contains) return contains;
+
+              const wanted = normalizeDeviceName(wantedName);
+              const wantedTokens = new Set(wanted.split(' ').filter(Boolean));
+              let best = null;
+              let bestScore = 0;
+              for (const device of devices) {
+                const label = normalizeDeviceName(device.label);
+                const tokens = new Set(label.split(' ').filter(Boolean));
+                if (!tokens.size || !wantedTokens.size) continue;
+                let common = 0;
+                for (const token of wantedTokens) if (tokens.has(token)) common++;
+                const score = common / Math.max(wantedTokens.size, tokens.size);
+                if (score > bestScore) {
+                  best = device;
+                  bestScore = score;
+                }
+              }
+              return bestScore >= 0.45 ? best : null;
+            } catch (e) {
+              console.debug('ConfGTS enumerateDevices:', e);
               return null;
             }
           };
@@ -1284,7 +1342,7 @@ public sealed class MainWindow : Window
             const volume = nativePrefs.speakerEnabled ? Number(nativePrefs.speakerVolume ?? 0.7) : 0;
             let sinkId = '';
             if (nativePrefs.speakerEnabled && nativePrefs.speakerName) {
-              const match = await findBrowserDevice('audiooutput', nativePrefs.speakerName);
+              const match = await findBrowserDevice('audiooutput', nativePrefs.speakerName, nativePrefs.speakerId);
               sinkId = match?.deviceId || '';
             }
 
@@ -1314,37 +1372,40 @@ public sealed class MainWindow : Window
             }
 
             try {
-              let capture = await devices.getUserMedia({
-                audio: useAudio ? { echoCancellation:true, noiseSuppression:true, autoGainControl:true } : false,
-                video: useVideo ? true : false
-              });
+              // Permissions are pre-granted by the native WebView2 host, so the
+              // browser can enumerate labelled devices BEFORE opening a capture
+              // stream. This avoids briefly opening the Windows default input
+              // (often a Bluetooth Hands-Free endpoint) and then switching away.
+              const mic = useAudio
+                ? await findBrowserDevice('audioinput', nativePrefs.microphoneName, nativePrefs.microphoneId)
+                : null;
+              const cam = useVideo
+                ? await findBrowserDevice('videoinput', nativePrefs.cameraName, nativePrefs.cameraId)
+                : null;
 
-              // After the first permission grant Chromium exposes device labels.
-              // Match the device names selected in native ConfGTS settings and
-              // reacquire only when a matching browser device exists.
-              try {
-                const mic = useAudio ? await findBrowserDevice('audioinput', nativePrefs.microphoneName) : null;
-                const cam = useVideo ? await findBrowserDevice('videoinput', nativePrefs.cameraName) : null;
-                if ((mic && mic.deviceId) || (cam && cam.deviceId)) {
-                  const exactCapture = await devices.getUserMedia({
-                    audio: useAudio
-                      ? {
-                          ...(mic?.deviceId ? {deviceId:{exact:mic.deviceId}} : {}),
-                          echoCancellation:true,
-                          noiseSuppression:true,
-                          autoGainControl:true
-                        }
-                      : false,
-                    video: useVideo
-                      ? (cam?.deviceId ? {deviceId:{exact:cam.deviceId}} : true)
-                      : false
-                  });
-                  capture.getTracks().forEach(t => t.stop());
-                  capture = exactCapture;
+              let audioConstraint = false;
+              if (useAudio) {
+                if (nativePrefs.microphoneName && !mic) {
+                  console.warn('ConfGTS: selected microphone not exposed by Chromium:', nativePrefs.microphoneName);
+                  showNativeToast('Выбранный микрофон не найден. Конференция продолжится без микрофона.');
+                } else {
+                  audioConstraint = {
+                    ...(mic?.deviceId ? {deviceId:{exact:mic.deviceId}} : {}),
+                    echoCancellation:true,
+                    noiseSuppression:true,
+                    autoGainControl:true
+                  };
                 }
-              } catch (e) {
-                console.debug('ConfGTS: selected device fallback to browser default:', e);
               }
+
+              const videoConstraint = useVideo
+                ? (cam?.deviceId ? {deviceId:{exact:cam.deviceId}} : true)
+                : false;
+
+              const capture = await devices.getUserMedia({
+                audio: audioConstraint,
+                video: videoConstraint
+              });
 
               rawStream = capture;
               const tracks = [];
@@ -1516,6 +1577,9 @@ public sealed class MainWindow : Window
         var media = MediaDeviceSettings.Load();
         var mediaJson = JsonSerializer.Serialize(new
         {
+            microphoneId = media.MicrophoneId,
+            speakerId = media.SpeakerId,
+            cameraId = media.CameraId,
             microphoneName = media.MicrophoneName,
             speakerName = media.SpeakerName,
             cameraName = media.CameraName,
