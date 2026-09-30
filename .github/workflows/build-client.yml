@@ -179,6 +179,7 @@ jobs:
           - USB-аудиоустройства теперь перечисляются через Windows MediaDevice endpoint selectors: отдельный микрофон USB-гарнитуры больше не теряется за playback endpoint.
           - Перед входом WebView2 получает разрешения камеры/микрофона и сразу ищет выбранный endpoint; ConfGTS больше не открывает сначала системный микрофон по умолчанию, что могло случайно переключать Bluetooth-гарнитуру в Hands-Free профиль и ронять внешний Bluetooth-адаптер.
           - Если явно выбранный микрофон временно не доступен браузеру, конференция подключается без микрофона вместо скрытого переключения на Bluetooth/default input.
+          - На новом профиле Bluetooth Hands-Free микрофон не открывается автоматически: его нужно явно выбрать в ⚙ Настройки, поэтому обычное подключение к конференции не должно переводить Bluetooth-наушники в HFP/HSP профиль.
           - Для WebView2 отключено фонового throttling/occlusion поведение, чтобы камера и конференция не зависали на последнем кадре при переключении пользователя в другое окно Windows.
           '@ | Set-Content 'artifacts\RELEASE-NOTES-client.md' -Encoding utf8
           gh release create v0.18.12 'artifacts\msi\ConfGTS-0.18.12-x64.msi' 'artifacts\setup\ConfGTS-Setup-0.18.12-x64.exe' 'artifacts\SHA256SUMS-client.txt' --target '${{ github.sha }}' --title 'ConfGTS Client 0.18.12' --notes-file 'artifacts\RELEASE-NOTES-client.md'
