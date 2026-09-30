@@ -5,6 +5,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using Windows.Devices.Enumeration;
+using Windows.Media.Devices;
 
 namespace ConfGTS.Client;
 
@@ -43,10 +44,10 @@ public sealed class MediaSettingsPanel : Grid
 
     public MediaSettingsPanel()
     {
-        StartupDiagnostics.Log("MediaSettingsPanel 0.18.11 constructor started.");
+        StartupDiagnostics.Log("MediaSettingsPanel 0.18.12 constructor started.");
         Background = Brush(Bg);
         Children.Add(BuildUi());
-        StartupDiagnostics.Log("MediaSettingsPanel 0.18.11 constructor completed.");
+        StartupDiagnostics.Log("MediaSettingsPanel 0.18.12 constructor completed.");
     }
 
     public async Task InitializeAsync()
@@ -319,11 +320,14 @@ public sealed class MediaSettingsPanel : Grid
 
         try
         {
-            _microphoneDevices = await EnumerateAsync(DeviceClass.AudioCapture, "микрофонов");
+            // Use MediaDevice endpoint selectors instead of DeviceClass for audio.
+            // This exposes endpoint-style USB headsets correctly: their playback
+            // and microphone endpoints can be separate Windows devices.
+            _microphoneDevices = await EnumerateAsync(MediaDevice.GetAudioCaptureSelector(), "микрофонов");
             if (_closed) return;
-            _speakerDevices = await EnumerateAsync(DeviceClass.AudioRender, "устройств вывода");
+            _speakerDevices = await EnumerateAsync(MediaDevice.GetAudioRenderSelector(), "устройств вывода");
             if (_closed) return;
-            _cameraDevices = await EnumerateAsync(DeviceClass.VideoCapture, "камер");
+            _cameraDevices = await EnumerateAsync(MediaDevice.GetVideoCaptureSelector(), "камер");
             if (_closed) return;
 
             BindDevices(
@@ -378,16 +382,26 @@ public sealed class MediaSettingsPanel : Grid
         }
     }
 
-    private static async Task<List<DeviceChoice>> EnumerateAsync(DeviceClass deviceClass, string label)
+    private static async Task<List<DeviceChoice>> EnumerateAsync(string selector, string label)
     {
         try
         {
-            var devices = await DeviceInformation.FindAllAsync(deviceClass);
-            return devices
-                .Where(d => d.IsEnabled)
+            var devices = await DeviceInformation.FindAllAsync(selector);
+            var result = devices
+                // Audio endpoint selectors already return usable capture/render
+                // endpoints. Do not discard a USB endpoint just because the
+                // generic DeviceInformation.IsEnabled flag is momentarily false
+                // while Windows finishes exposing a composite USB audio device.
                 .Select(d => new DeviceChoice(d.Id, string.IsNullOrWhiteSpace(d.Name) ? "Без названия" : d.Name))
+                .GroupBy(d => d.Id, StringComparer.OrdinalIgnoreCase)
+                .Select(g => g.First())
                 .OrderBy(d => d.Name, StringComparer.CurrentCultureIgnoreCase)
                 .ToList();
+
+            StartupDiagnostics.Log(
+                $"Enumerated {label}: " +
+                (result.Count == 0 ? "none" : string.Join(" | ", result.Select(d => d.Name))));
+            return result;
         }
         catch (Exception ex)
         {
