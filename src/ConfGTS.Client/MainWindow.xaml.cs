@@ -1165,6 +1165,9 @@ public sealed class MainWindow : Window
             }
           };
 
+          const isBluetoothHandsFreeLabel = label =>
+            /bluetooth|hands[ -]?free|headset|гарнитур|ag audio/i.test(String(label || ''));
+
           const showNativeToast = (message) => {
             let toast = document.getElementById('confgts-native-toast');
             if (!toast) {
@@ -1376,7 +1379,7 @@ public sealed class MainWindow : Window
               // browser can enumerate labelled devices BEFORE opening a capture
               // stream. This avoids briefly opening the Windows default input
               // (often a Bluetooth Hands-Free endpoint) and then switching away.
-              const mic = useAudio
+              let mic = useAudio
                 ? await findBrowserDevice('audioinput', nativePrefs.microphoneName, nativePrefs.microphoneId)
                 : null;
               const cam = useVideo
@@ -1385,9 +1388,27 @@ public sealed class MainWindow : Window
 
               let audioConstraint = false;
               if (useAudio) {
+                // On a fresh profile there may be no explicit microphone choice.
+                // Do not silently open a Bluetooth Hands-Free input in that case:
+                // Windows can switch the headset profile and some external USB
+                // Bluetooth adapters reset/disappear during that transition.
+                if (!nativePrefs.microphoneName) {
+                  const audioInputs = (await devices.enumerateDevices()).filter(d => d.kind === 'audioinput');
+                  const defaultMic = audioInputs.find(d => d.deviceId === 'default') || audioInputs[0] || null;
+                  if (defaultMic && isBluetoothHandsFreeLabel(defaultMic.label)) {
+                    console.warn('ConfGTS: Bluetooth Hands-Free microphone requires explicit selection:', defaultMic.label);
+                    showNativeToast('Bluetooth-микрофон не включён автоматически. Выберите его вручную в ⚙ Настройки, если он нужен.');
+                    mic = null;
+                  } else {
+                    mic = defaultMic;
+                  }
+                }
+
                 if (nativePrefs.microphoneName && !mic) {
                   console.warn('ConfGTS: selected microphone not exposed by Chromium:', nativePrefs.microphoneName);
                   showNativeToast('Выбранный микрофон не найден. Конференция продолжится без микрофона.');
+                } else if (!nativePrefs.microphoneName && !mic) {
+                  console.info('ConfGTS: no safe default microphone selected; joining without audio capture.');
                 } else {
                   audioConstraint = {
                     ...(mic?.deviceId ? {deviceId:{exact:mic.deviceId}} : {}),
