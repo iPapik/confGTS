@@ -566,19 +566,63 @@ $versionTargets = @(
     (Join-Path $root "src\ConfGTS.Server.Settings"),
     (Join-Path $root "build-server.ps1")
 )
+$versionPattern = '(?<!\d)0\.(?:16\.[01]|17\.0|18\.(?:0|1|2|7|11))(?!\d)'
 foreach ($target in $versionTargets) {
     if (Test-Path $target -PathType Leaf) {
         $text = Get-Content $target -Raw -Encoding UTF8
-        $text = $text.Replace("0.16.0", "0.18.11").Replace("0.16.1", "0.18.11").Replace("0.17.0", "0.18.11").Replace("0.18.7", "0.18.11").Replace("0.18.0", "0.18.11").Replace("0.18.1", "0.18.11").Replace("0.18.2", "0.18.11").Replace("0.18.0", "0.18.11").Replace("0.18.1", "0.18.11").Replace("0.18.2", "0.18.11")
+        $text = [regex]::Replace($text, $versionPattern, '0.18.12')
         Set-Content $target $text -Encoding UTF8 -NoNewline
     } elseif (Test-Path $target -PathType Container) {
         Get-ChildItem $target -Recurse -File -Include *.go,*.cs,*.xaml,*.csproj,*.wxs,*.wixproj,*.ps1 | ForEach-Object {
             $text = Get-Content $_.FullName -Raw -Encoding UTF8
-            if ($text.Contains("0.16.0") -or $text.Contains("0.16.1") -or $text.Contains("0.17.0") -or $text.Contains("0.18.0") -or $text.Contains("0.18.1") -or $text.Contains("0.18.2") -or $text.Contains("0.18.7")) {
-                $text = $text.Replace("0.16.0", "0.18.11").Replace("0.16.1", "0.18.11").Replace("0.17.0", "0.18.11")
-                Set-Content $_.FullName $text -Encoding UTF8 -NoNewline
+            $patched = [regex]::Replace($text, $versionPattern, '0.18.12')
+            if ($patched -ne $text) {
+                Set-Content $_.FullName $patched -Encoding UTF8 -NoNewline
             }
         }
+    }
+}
+
+# Bundle a real ffmpeg.exe beside ConfGTSServer.exe. The server uses it only
+# after recording finalization to rebuild MP4/MKV indexes. Video and audio are
+# stream-copied, so there is no quality loss and no expensive re-encode.
+$buildServerPath = Join-Path $root "build-server.ps1"
+if (Test-Path $buildServerPath) {
+    $buildServer = Get-Content $buildServerPath -Raw -Encoding UTF8
+    if (-not $buildServer.Contains('ConfGTS bundled ffmpeg')) {
+        $crtCopyAnchor = 'Copy-Item (Join-Path $crtDir "*.dll") $publish -Force'
+        $ffmpegBuildBlock = @'
+
+# ConfGTS bundled ffmpeg: required for seekable recording finalization.
+$ffmpegTarget = Join-Path $publish "ffmpeg.exe"
+$ffmpegCandidates = @()
+$ffmpegCommand = Get-Command ffmpeg.exe -ErrorAction SilentlyContinue
+if ($ffmpegCommand) { $ffmpegCandidates += $ffmpegCommand.Source }
+if ($env:ChocolateyInstall -and (Test-Path (Join-Path $env:ChocolateyInstall "lib"))) {
+    $ffmpegCandidates += Get-ChildItem (Join-Path $env:ChocolateyInstall "lib\ffmpeg*") -Recurse -Filter ffmpeg.exe -File -ErrorAction SilentlyContinue |
+        Select-Object -ExpandProperty FullName
+}
+$ffmpegSource = $ffmpegCandidates |
+    Where-Object { Test-Path $_ -PathType Leaf } |
+    Where-Object { (Get-Item $_).Length -gt 1MB } |
+    Select-Object -First 1
+if (-not $ffmpegSource) {
+    choco install ffmpeg -y --no-progress
+    if ($LASTEXITCODE -ne 0) { throw "Unable to install ffmpeg on the build runner" }
+    $ffmpegSource = Get-ChildItem (Join-Path $env:ChocolateyInstall "lib\ffmpeg*") -Recurse -Filter ffmpeg.exe -File -ErrorAction SilentlyContinue |
+        Where-Object { $_.Length -gt 1MB } |
+        Select-Object -First 1 -ExpandProperty FullName
+}
+if (-not $ffmpegSource) { throw "A portable ffmpeg.exe was not found" }
+Copy-Item $ffmpegSource $ffmpegTarget -Force
+& $ffmpegTarget -version | Select-Object -First 1
+if ($LASTEXITCODE -ne 0) { throw "Bundled ffmpeg.exe failed its startup test" }
+'@
+        if (-not $buildServer.Contains($crtCopyAnchor)) {
+            throw 'build-server.ps1 VC runtime copy anchor not found.'
+        }
+        $buildServer = $buildServer.Replace($crtCopyAnchor, $crtCopyAnchor + $ffmpegBuildBlock)
+        Set-Content $buildServerPath $buildServer -Encoding UTF8 -NoNewline
     }
 }
 
@@ -613,7 +657,7 @@ $serverBundle = Join-Path $root "Installer\Server\Bootstrapper\Bundle.wxs"
 if (Test-Path $serverBundle) {
     $bundle = Get-Content $serverBundle -Raw -Encoding UTF8
     if (-not $bundle.Contains('IconSourceFile=')) {
-        $bundle = $bundle.Replace('          Version="0.18.11"', '          Version="0.18.11"' + [Environment]::NewLine + '          IconSourceFile="!(bindpath.assets)\ConfGTS.ico"')
+        $bundle = $bundle.Replace('          Version="0.18.12"', '          Version="0.18.12"' + [Environment]::NewLine + '          IconSourceFile="!(bindpath.assets)\ConfGTS.ico"')
     }
     Set-Content $serverBundle $bundle -Encoding UTF8 -NoNewline
 }
