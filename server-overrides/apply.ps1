@@ -595,25 +595,39 @@ if (Test-Path $buildServerPath) {
 
 # ConfGTS bundled ffmpeg: required for seekable recording finalization.
 $ffmpegTarget = Join-Path $publish "ffmpeg.exe"
-$ffmpegCandidates = @()
-$ffmpegCommand = Get-Command ffmpeg.exe -ErrorAction SilentlyContinue
-if ($ffmpegCommand) { $ffmpegCandidates += $ffmpegCommand.Source }
-if ($env:ChocolateyInstall -and (Test-Path (Join-Path $env:ChocolateyInstall "lib"))) {
-    $ffmpegCandidates += Get-ChildItem (Join-Path $env:ChocolateyInstall "lib\ffmpeg*") -Recurse -Filter ffmpeg.exe -File -ErrorAction SilentlyContinue |
-        Select-Object -ExpandProperty FullName
+function Find-PortableFFmpeg {
+    $command = Get-Command ffmpeg.exe -ErrorAction SilentlyContinue
+    if ($command -and (Test-Path $command.Source -PathType Leaf) -and (Get-Item $command.Source).Length -gt 1MB) {
+        return $command.Source
+    }
+
+    $chocoRoot = if ($env:ChocolateyInstall) { $env:ChocolateyInstall } else { "C:\ProgramData\chocolatey" }
+    $libRoot = Join-Path $chocoRoot "lib"
+    if (Test-Path $libRoot -PathType Container) {
+        $hit = Get-ChildItem $libRoot -Recurse -Filter ffmpeg.exe -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Length -gt 1MB } |
+            Sort-Object Length -Descending |
+            Select-Object -First 1
+        if ($hit) { return $hit.FullName }
+    }
+
+    return $null
 }
-$ffmpegSource = $ffmpegCandidates |
-    Where-Object { Test-Path $_ -PathType Leaf } |
-    Where-Object { (Get-Item $_).Length -gt 1MB } |
-    Select-Object -First 1
+
+$ffmpegSource = Find-PortableFFmpeg
 if (-not $ffmpegSource) {
     choco install ffmpeg -y --no-progress
     if ($LASTEXITCODE -ne 0) { throw "Unable to install ffmpeg on the build runner" }
-    $ffmpegSource = Get-ChildItem (Join-Path $env:ChocolateyInstall "lib\ffmpeg*") -Recurse -Filter ffmpeg.exe -File -ErrorAction SilentlyContinue |
-        Where-Object { $_.Length -gt 1MB } |
-        Select-Object -First 1 -ExpandProperty FullName
+    $ffmpegSource = Find-PortableFFmpeg
 }
-if (-not $ffmpegSource) { throw "A portable ffmpeg.exe was not found" }
+if (-not $ffmpegSource) {
+    $chocoRoot = if ($env:ChocolateyInstall) { $env:ChocolateyInstall } else { "C:\ProgramData\chocolatey" }
+    Write-Host "ffmpeg search root: $chocoRoot" -ForegroundColor Yellow
+    Get-ChildItem (Join-Path $chocoRoot "lib") -Recurse -Filter ffmpeg.exe -File -ErrorAction SilentlyContinue |
+        Select-Object FullName,Length |
+        Format-Table -AutoSize
+    throw "A portable ffmpeg.exe was not found"
+}
 Copy-Item $ffmpegSource $ffmpegTarget -Force
 & $ffmpegTarget -version | Select-Object -First 1
 if ($LASTEXITCODE -ne 0) { throw "Bundled ffmpeg.exe failed its startup test" }
