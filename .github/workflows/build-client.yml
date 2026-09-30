@@ -1,4 +1,4 @@
-name: Build ConfGTS Client 0.18.11
+name: Build ConfGTS Client 0.18.12
 
 on:
   push:
@@ -34,8 +34,8 @@ jobs:
         run: |
           $required = @(
             'artifacts\publish\ConfGTS.Client.exe',
-            'artifacts\msi\ConfGTS-0.18.11-x64.msi',
-            'artifacts\setup\ConfGTS-Setup-0.18.11-x64.exe'
+            'artifacts\msi\ConfGTS-0.18.12-x64.msi',
+            'artifacts\setup\ConfGTS-Setup-0.18.12-x64.exe'
           )
           foreach ($file in $required) { if (!(Test-Path $file)) { throw "Missing artifact: $file" } }
           foreach ($dll in @('vcruntime140.dll','vcruntime140_1.dll','msvcp140.dll')) {
@@ -48,11 +48,17 @@ jobs:
           if ($main -match 'Идентификатор:' -or $main -match 'Text = "Постоянная конференция",') { throw 'Conference metadata is still present in the client card.' }
           if ($settings -match 'ms-settings:') { throw 'Device settings still open Windows Settings.' }
           if ($settings -notmatch 'DeviceInformation.FindAllAsync') { throw 'In-app device enumeration is missing.' }
+          if ($settings -notmatch 'MediaDevice\.GetAudioCaptureSelector' -or $settings -notmatch 'MediaDevice\.GetAudioRenderSelector' -or $settings -notmatch 'MediaDevice\.GetVideoCaptureSelector') { throw 'Endpoint-based USB audio/video enumeration is missing.' }
+          if ($settings -match 'EnumerateAsync\(DeviceClass\.AudioCapture' -or $settings -match '\.Where\(d => d\.IsEnabled\)') { throw 'Legacy audio DeviceClass filtering can hide composite USB microphone endpoints.' }
           if ($settings -notmatch 'devices\.Select\(d => d\.Name\)\.ToList\(\)') { throw 'Closed ComboBox device-name rendering fix is missing.' }
           if ($settings -notmatch 'Камера не найдена' -or $settings -notmatch 'EnsureEmptyPlaceholder') { throw 'Camera selector empty-state field is missing.' }
           if ($main -notmatch 'const waitForRoom = async \(\) =>' -or $main -notmatch 'rooms\.some\(r => r && r\.id === roomId\)') { throw 'Conference room startup-race guard is missing.' }
           if ($main -notmatch '_conferenceHost is not null' -or $main -notmatch 'StopDashboardTimer\(\);') { throw 'Conference dashboard polling guard is missing.' }
           if ($main -notmatch 'unsafely-treat-insecure-origin-as-secure') { throw 'HTTP media secure-origin compatibility flag is missing.' }
+          if ($main -notmatch 'disable-background-timer-throttling' -or $main -notmatch 'disable-backgrounding-occluded-windows' -or $main -notmatch 'disable-renderer-backgrounding' -or $main -notmatch 'CalculateNativeWinOcclusion') { throw 'WebView2 background camera/renderer keepalive flags are missing.' }
+          if ($main -notmatch 'Profile\.SetPermissionStateAsync' -or $main -notmatch 'CoreWebView2PermissionKind\.Microphone' -or $main -notmatch 'CoreWebView2PermissionKind\.Camera') { throw 'Media permissions are not pre-granted before browser device enumeration.' }
+          if ($main -notmatch 'microphoneId = media\.MicrophoneId' -or $main -notmatch 'speakerId = media\.SpeakerId' -or $main -notmatch 'cameraId = media\.CameraId') { throw 'Native endpoint IDs are not bridged into the conference.' }
+          if ($main -notmatch 'selected microphone not exposed by Chromium' -or $main -notmatch 'nativePrefs\.microphoneName && !mic' -or $main -notmatch 'audioConstraint = false') { throw 'Selected-microphone guard against accidental Bluetooth Hands-Free activation is missing.' }
           if ($main -notmatch 'native-hangup' -or $main -notmatch 'native-participants') { throw 'Conference participant/hangup controls are missing.' }
           if ($main -notmatch "postMessage\('leave-conference'\)" -or $main -notmatch 'ConferenceWebMessageReceived') { throw 'Native hangup bridge is missing.' }
           if ($main -notmatch '#conference > \.toolbar \{ display:none' -or $main -notmatch 'overflow:hidden !important') { throw 'Responsive conference layout rules are missing.' }
@@ -80,7 +86,7 @@ jobs:
           $p = Start-Process $exe -ArgumentList '--self-test-settings' -PassThru
           Start-Sleep -Seconds 10
           $log = if (Test-Path $startupLog) { Get-Content $startupLog -Raw } else { '' }
-          if ($p.HasExited -or $log -notmatch 'Settings smoke test completed\.' -or $log -notmatch 'MediaSettingsPanel 0.18.11 constructor completed\.' -or $log -notmatch 'In-app media settings initialized\.' -or $log -match 'Fatal error|Settings smoke test failed|XAML parsing failed') {
+          if ($p.HasExited -or $log -notmatch 'Settings smoke test completed\.' -or $log -notmatch 'MediaSettingsPanel 0.18.12 constructor completed\.' -or $log -notmatch 'In-app media settings initialized\.' -or $log -match 'Fatal error|Settings smoke test failed|XAML parsing failed') {
             if (Test-Path $startupLog) { Get-Content $startupLog -Tail 160 }
             Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
             throw 'Published client failed the settings navigation smoke test.'
@@ -90,7 +96,7 @@ jobs:
       - name: Test client MSI installation and settings
         shell: pwsh
         run: |
-          $msi = (Resolve-Path 'artifacts\msi\ConfGTS-0.18.11-x64.msi').Path
+          $msi = (Resolve-Path 'artifacts\msi\ConfGTS-0.18.12-x64.msi').Path
           $installedExe = Join-Path $env:ProgramFiles 'ГТС\ConfGTS\ConfGTS.Client.exe'
           $startMenu = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\ConfGTS\ConfGTS.lnk'
           $desktop = Join-Path ([Environment]::GetFolderPath('CommonDesktopDirectory')) 'ConfGTS.lnk'
@@ -115,7 +121,7 @@ jobs:
       - name: Test client EXE installation and settings
         shell: pwsh
         run: |
-          $setup = (Resolve-Path 'artifacts\setup\ConfGTS-Setup-0.18.11-x64.exe').Path
+          $setup = (Resolve-Path 'artifacts\setup\ConfGTS-Setup-0.18.12-x64.exe').Path
           $installedExe = Join-Path $env:ProgramFiles 'ГТС\ConfGTS\ConfGTS.Client.exe'
           $startupLog = "$env:LOCALAPPDATA\ConfGTS\logs\startup.log"
           $p = Start-Process $setup -ArgumentList @('/quiet','/norestart') -Wait -PassThru
@@ -138,7 +144,7 @@ jobs:
       - name: Generate SHA-256
         shell: pwsh
         run: |
-          $files = @('artifacts\msi\ConfGTS-0.18.11-x64.msi','artifacts\setup\ConfGTS-Setup-0.18.11-x64.exe')
+          $files = @('artifacts\msi\ConfGTS-0.18.12-x64.msi','artifacts\setup\ConfGTS-Setup-0.18.12-x64.exe')
           $lines = foreach ($file in $files) {
             $hash = Get-FileHash $file -Algorithm SHA256
             "$($hash.Hash.ToLower())  $([IO.Path]::GetFileName($file))"
@@ -149,13 +155,13 @@ jobs:
       - name: Upload tested client packages
         uses: actions/upload-artifact@v4
         with:
-          name: ConfGTS-Client-0.18.11-tested
+          name: ConfGTS-Client-0.18.12-tested
           if-no-files-found: error
           retention-days: 30
           compression-level: 0
           path: |
-            artifacts/msi/ConfGTS-0.18.11-x64.msi
-            artifacts/setup/ConfGTS-Setup-0.18.11-x64.exe
+            artifacts/msi/ConfGTS-0.18.12-x64.msi
+            artifacts/setup/ConfGTS-Setup-0.18.12-x64.exe
             artifacts/SHA256SUMS-client.txt
 
       - name: Publish client GitHub Release
@@ -164,14 +170,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release delete v0.18.11 --cleanup-tag --yes 2>$null
-          if ($LASTEXITCODE -ne 0) { Write-Host 'No previous v0.18.11 release to delete.' }
+          gh release delete v0.18.12 --cleanup-tag --yes 2>$null
+          if ($LASTEXITCODE -ne 0) { Write-Host 'No previous v0.18.12 release to delete.' }
           @'
-          Клиентская сборка 0.18.11.
+          Клиентская сборка 0.18.12.
 
-          - Кнопка «Панель» удалена из конференции.
-          - В нижнюю панель конференции добавлена кнопка «⚙ Настройки» для выбора камеры, микрофона и динамиков, а также регулировки уровней звука без выхода из конференции.
-          - После закрытия настроек новые устройства применяются к уже существующим WebRTC-соединениям через replaceTrack(), конференция и запись не перезапускаются.
-          - Настройки динамиков и громкости сразу применяются к уже открытым удалённым потокам.
+          - USB-аудиоустройства теперь перечисляются через Windows MediaDevice endpoint selectors: отдельный микрофон USB-гарнитуры больше не теряется за playback endpoint.
+          - Перед входом WebView2 получает разрешения камеры/микрофона и сразу ищет выбранный endpoint; ConfGTS больше не открывает сначала системный микрофон по умолчанию, что могло случайно переключать Bluetooth-гарнитуру в Hands-Free профиль и ронять внешний Bluetooth-адаптер.
+          - Если явно выбранный микрофон временно не доступен браузеру, конференция подключается без микрофона вместо скрытого переключения на Bluetooth/default input.
+          - Для WebView2 отключено фонового throttling/occlusion поведение, чтобы камера и конференция не зависали на последнем кадре при переключении пользователя в другое окно Windows.
           '@ | Set-Content 'artifacts\RELEASE-NOTES-client.md' -Encoding utf8
-          gh release create v0.18.11 'artifacts\msi\ConfGTS-0.18.11-x64.msi' 'artifacts\setup\ConfGTS-Setup-0.18.11-x64.exe' 'artifacts\SHA256SUMS-client.txt' --target '${{ github.sha }}' --title 'ConfGTS Client 0.18.11' --notes-file 'artifacts\RELEASE-NOTES-client.md'
+          gh release create v0.18.12 'artifacts\msi\ConfGTS-0.18.12-x64.msi' 'artifacts\setup\ConfGTS-Setup-0.18.12-x64.exe' 'artifacts\SHA256SUMS-client.txt' --target '${{ github.sha }}' --title 'ConfGTS Client 0.18.12' --notes-file 'artifacts\RELEASE-NOTES-client.md'
