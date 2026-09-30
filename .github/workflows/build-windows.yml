@@ -26,10 +26,8 @@
           }
           $ffmpeg = (Resolve-Path 'artifacts\server-publish\ffmpeg.exe').Path
           if ((Get-Item $ffmpeg).Length -lt 1MB) { throw "Bundled ffmpeg.exe is unexpectedly small." }
-          $ffmpegVersion = & $ffmpeg -version 2>&1
-          $ffmpegExitCode = $LASTEXITCODE
-          $ffmpegVersion | Select-Object -First 1
-          if ($ffmpegExitCode -ne 0) { throw "Bundled ffmpeg.exe failed startup with exit code $ffmpegExitCode." }
+          $ffmpegCheck = Start-Process -FilePath $ffmpeg -ArgumentList '-version' -Wait -PassThru -NoNewWindow
+          if ($ffmpegCheck.ExitCode -ne 0) { throw "Bundled ffmpeg.exe failed startup with exit code $($ffmpegCheck.ExitCode)." }
           Get-Item $required | Select-Object Name,Length | Format-Table -AutoSize
 
       - name: Launch-test published client
