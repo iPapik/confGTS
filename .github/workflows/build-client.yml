@@ -59,6 +59,7 @@ jobs:
           if ($main -notmatch 'Profile\.SetPermissionStateAsync' -or $main -notmatch 'CoreWebView2PermissionKind\.Microphone' -or $main -notmatch 'CoreWebView2PermissionKind\.Camera') { throw 'Media permissions are not pre-granted before browser device enumeration.' }
           if ($main -notmatch 'microphoneId = media\.MicrophoneId' -or $main -notmatch 'speakerId = media\.SpeakerId' -or $main -notmatch 'cameraId = media\.CameraId') { throw 'Native endpoint IDs are not bridged into the conference.' }
           if ($main -notmatch 'selected microphone not exposed by Chromium' -or $main -notmatch 'nativePrefs\.microphoneName && !mic' -or $main -notmatch 'audioConstraint = false') { throw 'Selected-microphone guard against accidental Bluetooth Hands-Free activation is missing.' }
+          if ($main -notmatch 'isBluetoothHandsFreeLabel' -or $main -notmatch 'Bluetooth Hands-Free microphone requires explicit selection' -or $main -notmatch "deviceId === 'default'") { throw 'Fresh-profile Bluetooth Hands-Free auto-capture guard is missing.' }
           if ($main -notmatch 'native-hangup' -or $main -notmatch 'native-participants') { throw 'Conference participant/hangup controls are missing.' }
           if ($main -notmatch "postMessage\('leave-conference'\)" -or $main -notmatch 'ConferenceWebMessageReceived') { throw 'Native hangup bridge is missing.' }
           if ($main -notmatch '#conference > \.toolbar \{ display:none' -or $main -notmatch 'overflow:hidden !important') { throw 'Responsive conference layout rules are missing.' }
