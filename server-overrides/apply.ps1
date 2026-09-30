@@ -2,7 +2,7 @@ $ErrorActionPreference = "Stop"
 
 $root = Split-Path -Parent $PSScriptRoot
 
-Write-Host "Applying ConfGTS Server 0.18.11 overlays..." -ForegroundColor Cyan
+Write-Host "Applying ConfGTS Server 0.18.12 overlays..." -ForegroundColor Cyan
 
 Copy-Item (Join-Path $PSScriptRoot "src\*") (Join-Path $root "src") -Recurse -Force
 Copy-Item (Join-Path $PSScriptRoot "server\*") (Join-Path $root "server") -Recurse -Force
@@ -85,7 +85,7 @@ func (s *Store) CanUploadEndedSessionRecording(sessionID, username string, maxAg
     }
 }
 
-# 0.18.11 stores browser MP4 directly. If MP4 recording is unavailable,
+# 0.18.12 stores browser MP4 directly. If MP4 recording is unavailable,
 # Chromium falls back to WebM; WebM is a Matroska subset and is stored as .mkv.
 $recordingContainerPattern = '(?ms)^\s*fn := sessionID \+ "_" \+ safe \+ "\.webm"\r?\n\s*r := Recording\{ID: newID\("rec_"\), RoomID: roomID, SessionID: sessionID, CaptureID: safe, Recorder: recorder, FileName: fn, StartedAt: time\.Now\(\), ContentType: contentType\}'
 $recordingContainerReplacement = @'
@@ -107,8 +107,8 @@ Set-Content $storePath $store -Encoding UTF8 -NoNewline
 
 $mainPath = Join-Path $root "server\main.go"
 $main = Get-Content $mainPath -Raw -Encoding UTF8
-$main = $main.Replace('const Version = "0.16.0"', 'const Version = "0.18.11"')
-$main = $main.Replace('const Version = "0.16.1"', 'const Version = "0.18.11"')
+$main = $main.Replace('const Version = "0.16.0"', 'const Version = "0.18.12"')
+$main = $main.Replace('const Version = "0.16.1"', 'const Version = "0.18.12"')
 $main = $main.Replace('cfg.ListenAddr == ":8090" {', 'cfg.ListenAddr == ":8090" || cfg.ListenAddr == "0.0.0.0:8090" {')
 $main = $main.Replace('cfg.ListenAddr = "127.0.0.1:" + strconv.Itoa(n)', 'cfg.ListenAddr = "0.0.0.0:" + strconv.Itoa(n)')
 $main = $main.Replace('addr = "127.0.0.1:8090"', 'addr = "0.0.0.0:8090"')
@@ -258,6 +258,30 @@ if ($web.Contains($recordingStartAnchor) -and -not $web.Contains('zero-byte reco
     $web = $web.Replace($recordingStartAnchor, $emptyUploadGuard.TrimEnd() + [Environment]::NewLine + [char]9 + $recordingStartAnchor)
 } elseif (-not $web.Contains('zero-byte recording upload ignored')) {
     throw 'Zero-byte recording upload guard was not applied.'
+}
+
+# Finalize browser bytes first, then rebuild the container index in the
+# background. The file endpoint also performs a synchronous lazy check, so
+# older completed recordings become seekable the first time they are opened.
+$finalizeAnchor = 'a.store.FinalizeRecording(in.CaptureID)'
+if ($web.Contains($finalizeAnchor) -and -not $web.Contains('go a.store.OptimizeRecording(in.CaptureID)')) {
+    $web = $web.Replace(
+        $finalizeAnchor,
+        $finalizeAnchor + [Environment]::NewLine + [char]9 + 'go a.store.OptimizeRecording(in.CaptureID)')
+}
+$fileRecAnchor = 'rec, ok := a.store.RecordingByID(r.URL.Query().Get("id"))'
+if ($web.Contains($fileRecAnchor) -and -not $web.Contains('a.store.OptimizeRecordingByID(rec.ID)')) {
+    $fileRecBlock = @'
+	rec, ok := a.store.RecordingByID(r.URL.Query().Get("id"))
+	if ok && rec.FinishedAt != nil {
+		a.store.OptimizeRecordingByID(rec.ID)
+		rec, ok = a.store.RecordingByID(rec.ID)
+	}
+'@
+    $web = $web.Replace($fileRecAnchor, $fileRecBlock.Trim())
+}
+if (-not $web.Contains('go a.store.OptimizeRecording(in.CaptureID)') -or -not $web.Contains('a.store.OptimizeRecordingByID(rec.ID)')) {
+    throw 'Recording seekable-remux hooks were not applied.'
 }
 
 Set-Content $webPath $web -Encoding UTF8 -NoNewline
@@ -461,12 +485,12 @@ if ($startRecordingRegex.IsMatch($ui)) {
 }
 
 # Record the whole conference composition. The recorder draws every
-# participant tile on every animation frame, so newly joined users and screen
+# participant tile on a fixed 15 fps timer, so newly joined users and screen
 # sharing are included automatically. Users without video are kept as named
 # placeholders instead of disappearing from the recording.
 $drawRecordingPattern = '(?s)function drawRecording\(\)\{.*?\}\r?\nasync function uploadChunk'
 $drawRecordingReplacement = @'
-function drawRecording(){if(!recorder||recorder.state==='inactive'||!recorderCtx)return;let ctx=recorderCtx,w=recorderCanvas.width,h=recorderCanvas.height;ctx.fillStyle='#111820';ctx.fillRect(0,0,w,h);let tiles=[...document.querySelectorAll('.video-tile')];let n=Math.max(1,tiles.length),cols=Math.ceil(Math.sqrt(n)),rows=Math.ceil(n/cols),cw=w/cols,ch=h/rows;tiles.forEach((tile,i)=>{let x=(i%cols)*cw,y=Math.floor(i/cols)*ch,v=tile.querySelector('video'),label=tile.querySelector('.video-label')?.textContent||'Участник';ctx.fillStyle='#17222d';ctx.fillRect(x+2,y+2,cw-4,ch-4);if(v&&v.srcObject&&v.readyState>=2&&v.videoWidth>0&&v.videoHeight>0){let vr=v.videoWidth/v.videoHeight,cr=cw/ch,dw,dh;if(vr>cr){dw=cw;dh=cw/vr}else{dh=ch;dw=ch*vr}try{ctx.drawImage(v,x+(cw-dw)/2,y+(ch-dh)/2,dw,dh)}catch{}}else{ctx.fillStyle='#cfe0ea';ctx.font='600 24px Segoe UI';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText('Без видео',x+cw/2,y+ch/2)}ctx.font='600 16px Segoe UI';let labelWidth=Math.max(120,Math.min(cw-16,ctx.measureText(label).width+28));ctx.fillStyle='rgba(0,0,0,.68)';ctx.fillRect(x+8,y+ch-46,labelWidth,32);ctx.fillStyle='#fff';ctx.textAlign='left';ctx.textBaseline='middle';ctx.fillText(label,x+20,y+ch-30)});ctx.fillStyle='#168CB8';ctx.fillRect(0,0,w,6);requestAnimationFrame(drawRecording)}
+function drawRecording(){if(!recorder||recorder.state==='inactive'||!recorderCtx)return;let ctx=recorderCtx,w=recorderCanvas.width,h=recorderCanvas.height;ctx.fillStyle='#111820';ctx.fillRect(0,0,w,h);let tiles=[...document.querySelectorAll('.video-tile')];let n=Math.max(1,tiles.length),cols=Math.ceil(Math.sqrt(n)),rows=Math.ceil(n/cols),cw=w/cols,ch=h/rows;tiles.forEach((tile,i)=>{let x=(i%cols)*cw,y=Math.floor(i/cols)*ch,v=tile.querySelector('video'),label=tile.querySelector('.video-label')?.textContent||'Участник';ctx.fillStyle='#17222d';ctx.fillRect(x+2,y+2,cw-4,ch-4);if(v&&v.srcObject&&v.readyState>=2&&v.videoWidth>0&&v.videoHeight>0){let vr=v.videoWidth/v.videoHeight,cr=cw/ch,dw,dh;if(vr>cr){dw=cw;dh=cw/vr}else{dh=ch;dw=ch*vr}try{ctx.drawImage(v,x+(cw-dw)/2,y+(ch-dh)/2,dw,dh)}catch{}}else{ctx.fillStyle='#cfe0ea';ctx.font='600 24px Segoe UI';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText('Без видео',x+cw/2,y+ch/2)}ctx.font='600 16px Segoe UI';let labelWidth=Math.max(120,Math.min(cw-16,ctx.measureText(label).width+28));ctx.fillStyle='rgba(0,0,0,.68)';ctx.fillRect(x+8,y+ch-46,labelWidth,32);ctx.fillStyle='#fff';ctx.textAlign='left';ctx.textBaseline='middle';ctx.fillText(label,x+20,y+ch-30)});ctx.fillStyle='#168CB8';ctx.fillRect(0,0,w,6);setTimeout(drawRecording,67)}
 async function uploadChunk
 '@
 $drawRecordingRegex = [regex]::new($drawRecordingPattern)
