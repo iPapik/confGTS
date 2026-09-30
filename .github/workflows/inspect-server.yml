@@ -88,6 +88,9 @@ jobs:
           if ($ui -notmatch 'recorder\.start\(2000\);drawRecording\(\)') {
             throw 'Recorder canvas starts drawing before MediaRecorder is active.'
           }
+          if ($ui -notmatch 'setTimeout\(drawRecording,67\)' -or $ui -match 'requestAnimationFrame\(drawRecording\)') {
+            throw 'Recording compositor still depends on requestAnimationFrame in the background.'
+          }
           if ($store -notmatch 'if lr\.Recorder == ""' -or $store -notmatch 'lr\.Recorder = key') {
             throw 'First-participant recorder election is missing.'
           }
@@ -127,6 +130,13 @@ jobs:
           $web = Get-Content '.\server\web.go' -Raw -Encoding UTF8
           if ($web -notmatch 'zero-byte recording upload ignored' -or $web -notmatch 'if len\(data\) == 0') {
             throw 'Server still allows empty recording uploads to create archive entries.'
+          }
+          $remux = Get-Content '.\server\recording_finalize.go' -Raw -Encoding UTF8
+          if ($web -notmatch 'go a\.store\.OptimizeRecording\(in\.CaptureID\)' -or $web -notmatch 'OptimizeRecordingByID\(rec\.ID\)') {
+            throw 'Recording finalize/file handlers are not connected to the seekable remux path.'
+          }
+          if ($remux -notmatch '\+faststart' -or $remux -notmatch '\.seekable' -or $remux -notmatch 'findFFmpeg') {
+            throw 'Seekable MP4/MKV remux implementation is missing.'
           }
           if ($ui -notmatch 'handleConferenceStopped' -or $ui -notmatch "postMessage\('leave-conference'\)") {
             throw 'Administrative stop is not propagated to conference clients.'
