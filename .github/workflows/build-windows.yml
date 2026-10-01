@@ -226,6 +226,7 @@ jobs:
           $serverSettings = Get-Content '.\server-overrides\src\ConfGTS.Server.Settings\SettingsWindow.cs' -Raw -Encoding UTF8
           $serverConfig = Get-Content '.\server-overrides\src\ConfGTS.Server.Settings\ConfigManager.cs' -Raw -Encoding UTF8
           $overlay = Get-Content '.\server-overrides\apply.ps1' -Raw -Encoding UTF8
+          $generatedServerBundle = Get-Content '.\Installer\Server\Bootstrapper\Bundle.wxs' -Raw -Encoding UTF8
           if ($clientPackage -notmatch 'WixUI_InstallDir' -or $clientPackage -notmatch 'InstallDirectory="INSTALLFOLDER"') {
             throw 'Client MSI install-directory UI is missing.'
           }
@@ -240,6 +241,12 @@ jobs:
           }
           if ($overlay -notmatch 'WixUI_InstallDir' -or $overlay -notmatch 'Variable Name="InstallFolder" Type="formatted"' -or $overlay -notmatch 'Value="\[ProgramFiles64Folder\]ГТС\\ConfGTS Server"' -or $overlay -notmatch 'bal:Overridable="yes"' -or $overlay -notmatch 'SuppressOptionsUI="no"') {
             throw 'Server installer formatted custom-directory overlay is missing.'
+          }
+          if ($generatedServerBundle -notmatch 'Variable Name="InstallFolder" Type="formatted"' -or
+              $generatedServerBundle -notmatch 'bal:Overridable="yes"' -or
+              $generatedServerBundle -notmatch 'MsiProperty Name="INSTALLFOLDER" Value="\[InstallFolder\]"' -or
+              $generatedServerBundle -notmatch 'LaunchTarget="\[InstallFolder\]\\ConfGTS.Server.Settings.exe"') {
+            throw 'Generated server EXE bundle does not forward an overridable InstallFolder correctly.'
           }
           Write-Host 'Custom install paths and recording storage settings are present.' -ForegroundColor Green
 
