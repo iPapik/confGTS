@@ -665,6 +665,11 @@ if (Test-Path $serverPackage) {
             '    <MediaTemplate EmbedCab="yes" />',
             '    <MediaTemplate EmbedCab="yes" />' + [Environment]::NewLine + '    <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />')
     }
+    if (-not $wxs.Contains('Codepage="1251"')) {
+        $wxs = $wxs.Replace(
+            '      Language="1049"',
+            '      Language="1049"' + [Environment]::NewLine + '      Codepage="1251"')
+    }
     Set-Content $serverPackage $wxs -Encoding UTF8 -NoNewline
 }
 
