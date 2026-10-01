@@ -709,7 +709,7 @@ if (Test-Path $serverBundle) {
     $bundle = $bundle.Replace('LaunchTarget="[InstallFolder]ConfGTS.Server.Settings.exe"', 'LaunchTarget="[InstallFolder]\ConfGTS.Server.Settings.exe"')
     $bundle = $bundle.Replace(
         'LaunchTarget="[ProgramFiles64Folder]ГТС\ConfGTS Server\ConfGTS.Server.Settings.exe"',
-        'LaunchTarget="[InstallFolder]ConfGTS.Server.Settings.exe"')
+        'LaunchTarget="[InstallFolder]\ConfGTS.Server.Settings.exe"')
     if ($bundle -notmatch '<MsiProperty Name="INSTALLFOLDER" Value="\[InstallFolder\]"') {
         $bundle = [regex]::Replace(
             $bundle,
