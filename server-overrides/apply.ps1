@@ -677,7 +677,8 @@ if (Test-Path $serverMsiProject) {
         $proj = $proj.Replace('    <BindPath Include="$(PublishDir)" BindName="publish" />', '    <BindPath Include="$(PublishDir)" BindName="publish" />' + [Environment]::NewLine + '    <BindPath Include="$(MSBuildThisFileDirectory)..\Assets" BindName="assets" />')
     }
     if (-not $proj.Contains('WixToolset.UI.wixext')) {
-        $proj = $proj.Replace(
+        $proj = [regex]::Replace(
+            $proj,
             '  <ItemGroup>',
             '  <ItemGroup>' + [Environment]::NewLine +
             '    <PackageReference Include="WixToolset.UI.wixext" Version="5.0.2" />',
