@@ -2,7 +2,7 @@ name: Build full ConfGTS client and server (manual)
 
 on:
   push:
-    branches: [ main, 'beta-full-*' ]
+    branches: [ main, 'beta-full-*', '0.*' ]
   pull_request:
     branches: [ main ]
   workflow_dispatch:
@@ -206,8 +206,8 @@ jobs:
           if ($clientPackage -notmatch 'WixUI_InstallDir' -or $clientPackage -notmatch 'InstallDirectory="INSTALLFOLDER"') {
             throw 'Client MSI install-directory UI is missing.'
           }
-          if ($clientBundle -notmatch 'Variable Name="InstallFolder"' -or $clientBundle -notmatch 'bal:Overridable="yes"' -or $clientBundle -notmatch 'SuppressOptionsUI="no"' -or $clientBundle -notmatch 'MsiProperty Name="INSTALLFOLDER"') {
-            throw 'Client EXE install-directory options are missing.'
+          if ($clientBundle -notmatch 'Variable Name="InstallFolder" Type="formatted"' -or $clientBundle -notmatch 'Value="\[ProgramFiles64Folder\]ГТС\\ConfGTS"' -or $clientBundle -notmatch 'bal:Overridable="yes"' -or $clientBundle -notmatch 'SuppressOptionsUI="no"' -or $clientBundle -notmatch 'MsiProperty Name="INSTALLFOLDER"') {
+            throw 'Client EXE formatted install-directory options are missing.'
           }
           if ($serverSettings -notmatch 'Хранение записей' -or $serverSettings -notmatch 'PickRecordingsFolderAsync') {
             throw 'Server recording directory UI is missing.'
@@ -215,8 +215,8 @@ jobs:
           if ($serverConfig -notmatch 'ApplyRecordingDirectoryAsync' -or $serverConfig -notmatch 'root\["recording_dir"\]' -or $serverConfig -match 'mklink /J') {
             throw 'Server native recording_dir storage selection is missing.'
           }
-          if ($overlay -notmatch 'WixUI_InstallDir' -or $overlay -notmatch 'Variable Name="InstallFolder"' -or $overlay -notmatch 'bal:Overridable="yes"' -or $overlay -notmatch 'SuppressOptionsUI="no"') {
-            throw 'Server installer custom-directory overlay is missing.'
+          if ($overlay -notmatch 'WixUI_InstallDir' -or $overlay -notmatch 'Variable Name="InstallFolder" Type="formatted"' -or $overlay -notmatch 'Value="\[ProgramFiles64Folder\]ГТС\\ConfGTS Server"' -or $overlay -notmatch 'bal:Overridable="yes"' -or $overlay -notmatch 'SuppressOptionsUI="no"') {
+            throw 'Server installer formatted custom-directory overlay is missing.'
           }
           Write-Host 'Custom install paths and recording storage settings are present.' -ForegroundColor Green
 
@@ -313,7 +313,24 @@ jobs:
           $remove = Start-Process msiexec.exe -ArgumentList @('/x', "`"$msi`"", '/qn', '/norestart') -Wait -PassThru
           if ($remove.ExitCode -ne 0) { throw "Client MSI uninstall failed: $($remove.ExitCode)" }
 
-      - name: Test client EXE installation, shortcuts and startup
+      - name: Test client EXE default Program Files path
+        shell: pwsh
+        run: |
+          $setup = (Resolve-Path 'artifacts\setup\ConfGTS-Setup-0.18.14-x64.exe').Path
+          $defaultDir = Join-Path $env:ProgramFiles 'ГТС\ConfGTS'
+          $installedExe = Join-Path $defaultDir 'ConfGTS.Client.exe'
+
+          Remove-Item $defaultDir -Recurse -Force -ErrorAction SilentlyContinue
+          $p = Start-Process $setup -ArgumentList @('/quiet','/norestart') -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "Client EXE default-path install failed: $($p.ExitCode)" }
+          if (!(Test-Path $installedExe)) {
+            throw "Client EXE did not expand ProgramFiles64Folder. Expected: $installedExe"
+          }
+
+          $p = Start-Process $setup -ArgumentList @('/uninstall','/quiet','/norestart') -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "Client EXE default-path uninstall failed: $($p.ExitCode)" }
+
+      - name: Test client EXE custom installation, shortcuts and startup
         shell: pwsh
         run: |
           $setup = (Resolve-Path 'artifacts\setup\ConfGTS-Setup-0.18.14-x64.exe').Path
@@ -446,7 +463,25 @@ jobs:
           $remove = Start-Process msiexec.exe -ArgumentList @('/x', "`"$msi`"", '/qn', '/norestart') -Wait -PassThru
           if ($remove.ExitCode -ne 0) { throw "Server MSI uninstall failed: $($remove.ExitCode)" }
 
-      - name: Test server EXE installer, service, name access and web interface
+      - name: Test server EXE default Program Files path
+        shell: pwsh
+        run: |
+          $setup = (Resolve-Path 'artifacts\server-setup\ConfGTS-Server-Setup-0.18.14-x64.exe').Path
+          $defaultDir = Join-Path $env:ProgramFiles 'ГТС\ConfGTS Server'
+          $serverExe = Join-Path $defaultDir 'ConfGTSServer.exe'
+
+          Remove-Item "$env:ProgramData\ConfGTS" -Recurse -Force -ErrorAction SilentlyContinue
+          Remove-Item $defaultDir -Recurse -Force -ErrorAction SilentlyContinue
+          $p = Start-Process $setup -ArgumentList @('/quiet','/norestart') -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "Server EXE default-path install failed: $($p.ExitCode)" }
+          if (!(Test-Path $serverExe)) {
+            throw "Server EXE did not expand ProgramFiles64Folder. Expected: $serverExe"
+          }
+
+          $p = Start-Process $setup -ArgumentList @('/uninstall','/quiet','/norestart') -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "Server EXE default-path uninstall failed: $($p.ExitCode)" }
+
+      - name: Test server EXE custom installer, service, name access and web interface
         shell: pwsh
         run: |
           function Wait-Server {
@@ -543,6 +578,8 @@ jobs:
           - ФИО из AD формата «Фамилия Имя Отчество» отображается компактно как «Имя О. Фамилия.».
 
           Установка:
+          - исправлен критический дефект EXE 0.18.14: [ProgramFiles64Folder] больше не передаётся в MSI как буквальный текст; Burn-переменная InstallFolder теперь имеет тип formatted;
+          - CI отдельно устанавливает оба EXE по стандартному пути Program Files, чтобы этот дефект не повторился;
           - клиентский и серверный MSI получили страницу выбора каталога установки;
           - EXE-установщики показывают Options и передают выбранный InstallFolder в MSI;
           - установка в нестандартный каталог проверяется Windows CI.
