@@ -330,7 +330,7 @@ jobs:
           $p = Start-Process $setup -ArgumentList @('/uninstall','/quiet','/norestart') -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw "Client EXE default-path uninstall failed: $($p.ExitCode)" }
 
-      - name: Test client EXE custom installation, shortcuts and startup
+      - name: Test client EXE custom install folder
         shell: pwsh
         run: |
           $setup = (Resolve-Path 'artifacts\setup\ConfGTS-Setup-0.18.14-x64.exe').Path
@@ -338,28 +338,19 @@ jobs:
           $installedExe = Join-Path $customClientDir 'ConfGTS.Client.exe'
           $startMenu = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\ConfGTS\ConfGTS.lnk'
           $desktop = Join-Path ([Environment]::GetFolderPath('CommonDesktopDirectory')) 'ConfGTS.lnk'
-          $startupLog = "$env:LOCALAPPDATA\ConfGTS\logs\startup.log"
 
-          $p = Start-Process $setup -ArgumentList @('/quiet','/norestart',("InstallFolder=" + $customClientDir + "\")) -Wait -PassThru
-          if ($p.ExitCode -ne 0) { throw "Client EXE install failed: $($p.ExitCode)" }
+          Remove-Item $customClientDir -Recurse -Force -ErrorAction SilentlyContinue
+          $p = Start-Process $setup -ArgumentList @('/quiet','/norestart',("InstallFolder=" + $customClientDir)) -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "Client EXE custom-path install failed: $($p.ExitCode)" }
           foreach ($path in @($installedExe,$startMenu,$desktop)) {
-            if (!(Test-Path $path)) { throw "Client EXE expected path missing: $path" }
+            if (!(Test-Path $path)) { throw "Client EXE custom-path expected path missing: $path" }
           }
 
-          Remove-Item $startupLog -Force -ErrorAction SilentlyContinue
-          $app = Start-Process $installedExe -PassThru
-          Start-Sleep -Seconds 8
-          $log = if (Test-Path $startupLog) { Get-Content $startupLog -Raw } else { '' }
-          if ($app.HasExited -or $log -notmatch 'Main window activated\.' -or $log -notmatch 'System tray icon initialized\.' -or $log -match 'Fatal error|Unhandled WinUI exception|XAML parsing failed') {
-            if (Test-Path $startupLog) { Get-Content $startupLog -Tail 120 }
-            Stop-Process -Id $app.Id -Force -ErrorAction SilentlyContinue
-            throw "EXE-installed client failed startup."
-          }
-          Stop-Process -Id $app.Id -Force -ErrorAction SilentlyContinue
-          Start-Sleep -Seconds 2
-
+          # Startup from a non-default directory is already covered by the MSI
+          # custom-path test above. This step isolates the Burn -> MSI InstallFolder
+          # handoff so a bootstrapper-path regression is diagnosed precisely.
           $p = Start-Process $setup -ArgumentList @('/uninstall','/quiet','/norestart') -Wait -PassThru
-          if ($p.ExitCode -ne 0) { throw "Client EXE uninstall failed: $($p.ExitCode)" }
+          if ($p.ExitCode -ne 0) { throw "Client EXE custom-path uninstall failed: $($p.ExitCode)" }
 
       - name: Test server MSI, service, name access, settings app and web interface
         shell: pwsh
@@ -503,7 +494,7 @@ jobs:
           $ffmpegExe = Join-Path $serverDir 'ffmpeg.exe'
 
           Remove-Item "$env:ProgramData\ConfGTS" -Recurse -Force -ErrorAction SilentlyContinue
-          $p = Start-Process $setup -ArgumentList @('/quiet','/norestart',("InstallFolder=" + $serverDir + "\")) -Wait -PassThru
+          $p = Start-Process $setup -ArgumentList @('/quiet','/norestart',("InstallFolder=" + $serverDir)) -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw "Server EXE install failed: $($p.ExitCode)" }
           foreach ($path in @($serverExe,$settingsExe,$ffmpegExe)) {
             if (!(Test-Path $path)) { throw "Server EXE expected path missing: $path" }
