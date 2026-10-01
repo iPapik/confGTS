@@ -127,8 +127,16 @@ internal static class ConfigManager
         root["server_name"] = settings.ServerName;
         root["public_url"] = settings.PublicUrl;
 
+        var previousRecordingDirectory = root["recording_dir"]?.GetValue<string>()?.Trim();
+        if (string.IsNullOrWhiteSpace(previousRecordingDirectory))
+            previousRecordingDirectory = Path.Combine(DataDirectory, "Recordings");
+
         var recordingDirectory = Path.GetFullPath(settings.RecordingDirectory.Trim());
         Directory.CreateDirectory(recordingDirectory);
+
+        if (!PathsEqual(previousRecordingDirectory, recordingDirectory))
+            MigrateRecordingDirectory(previousRecordingDirectory, recordingDirectory);
+
         root["recording_dir"] = recordingDirectory;
 
         File.WriteAllText(ServerNamePath, settings.ServerName);
@@ -238,6 +246,42 @@ internal static class ConfigManager
             $"Automatic HTTPS certificate generated. Name={configuredName}; Cert={AutoCertificatePath}");
     }
 
+    private static void MigrateRecordingDirectory(string source, string destination)
+    {
+        try
+        {
+            var sourcePath = Path.GetFullPath(source);
+            var destinationPath = Path.GetFullPath(destination);
+
+            if (PathsEqual(sourcePath, destinationPath) || !Directory.Exists(sourcePath))
+                return;
+
+            Directory.CreateDirectory(destinationPath);
+
+            // Copy first, delete only after every file has been copied. That keeps
+            // the old archive intact if another disk is temporarily unavailable.
+            var files = Directory.GetFiles(sourcePath, "*", SearchOption.TopDirectoryOnly);
+            foreach (var file in files)
+            {
+                var target = Path.Combine(destinationPath, Path.GetFileName(file));
+                File.Copy(file, target, overwrite: true);
+            }
+
+            foreach (var file in files)
+                File.Delete(file);
+
+            Diagnostics.Log($"Recording archive moved from {sourcePath} to {destinationPath}");
+        }
+        catch (Exception ex)
+        {
+            Diagnostics.Log("Recording directory migration failed", ex);
+            throw new InvalidOperationException(
+                "Не удалось перенести существующие записи в новый каталог. " +
+                "Каталог в настройках не изменён. " + ex.Message,
+                ex);
+        }
+    }
+
     private static bool PathsEqual(string left, string right)
     {
         try
@@ -321,11 +365,21 @@ internal static class ConfigManager
         }
     }
 
-    public static async Task RestartServiceAsync()
+    public static async Task StopServiceAsync()
     {
         await RunAsync("sc.exe", "stop ConfGTSServer", ignoreExitCode: true);
         await Task.Delay(900);
+    }
+
+    public static async Task StartServiceAsync()
+    {
         await RunAsync("sc.exe", "start ConfGTSServer", ignoreExitCode: false);
+    }
+
+    public static async Task RestartServiceAsync()
+    {
+        await StopServiceAsync();
+        await StartServiceAsync();
     }
 
     public static async Task<string> ServiceStatusAsync()
