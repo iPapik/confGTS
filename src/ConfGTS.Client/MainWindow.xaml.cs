@@ -257,38 +257,23 @@ public sealed class MainWindow : Window
         passwordHost.Children.Add(revealButton);
         panel.Children.Add(passwordHost);
 
-        _rememberMeBox.Content = null;
-        _rememberMeBox.MinWidth = 0;
-        _rememberMeBox.Width = 20;
-        _rememberMeBox.MaxWidth = 20;
-        _rememberMeBox.Height = 20;
+        // Use the native WinUI CheckBox as a whole control. The previous
+        // hand-built 20 px host clipped the indicator on some Windows themes,
+        // leaving only the caption visible.
+        _rememberMeBox.Content = "Запомнить меня";
+        _rememberMeBox.MinWidth = 150;
+        _rememberMeBox.MinHeight = 32;
         _rememberMeBox.Padding = new Thickness(0);
-        _rememberMeBox.Margin = new Thickness(0);
+        _rememberMeBox.Margin = new Thickness(0, 3, 0, 3);
         _rememberMeBox.HorizontalAlignment = HorizontalAlignment.Left;
-
-        // Keep the check mark and its caption in adjacent fixed/auto columns.
-        // The default WinUI CheckBox template reserves additional horizontal space,
-        // which previously pushed the visible caption far away from the square.
-        var rememberRow = new Grid
-        {
-            ColumnSpacing = 7,
-            Margin = new Thickness(0, 3, 0, 3),
-            HorizontalAlignment = HorizontalAlignment.Left
-        };
-        rememberRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(20) });
-        rememberRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        rememberRow.Children.Add(_rememberMeBox);
-
-        var rememberLabel = new TextBlock
-        {
-            Text = "Запомнить меня",
-            FontSize = 13,
-            Foreground = Brush(Text),
-            VerticalAlignment = VerticalAlignment.Center
-        };
-        Grid.SetColumn(rememberLabel, 1);
-        rememberRow.Children.Add(rememberLabel);
-        panel.Children.Add(rememberRow);
+        _rememberMeBox.Foreground = Brush(Text);
+        _rememberMeBox.FontSize = 13;
+        _rememberMeBox.Resources["CheckBoxCheckBackgroundFillUnchecked"] = Brush("#FFFFFF");
+        _rememberMeBox.Resources["CheckBoxCheckBackgroundStrokeUnchecked"] = Brush("#8EACC0");
+        _rememberMeBox.Resources["CheckBoxCheckBackgroundFillChecked"] = Brush(Blue);
+        _rememberMeBox.Resources["CheckBoxCheckBackgroundStrokeChecked"] = Brush(Blue);
+        _rememberMeBox.Resources["CheckBoxCheckGlyphForegroundChecked"] = Brush("#FFFFFF");
+        panel.Children.Add(_rememberMeBox);
 
         _loginButton.Height = 54;
         _loginButton.HorizontalAlignment = HorizontalAlignment.Stretch;
@@ -351,7 +336,7 @@ public sealed class MainWindow : Window
 
         panel.Children.Add(new TextBlock
         {
-            Text = "Версия 0.18.14 beta  |  © ГТС, 2026",
+            Text = "Версия 0.18.15 beta  |  © ГТС, 2026",
             FontSize = 11,
             Foreground = Brush("#8A9BAC"),
             HorizontalAlignment = HorizontalAlignment.Center,
@@ -2104,7 +2089,7 @@ public sealed class MainWindow : Window
             _dashboardView.Visibility = Visibility.Visible;
         }
 
-        var panel = new MediaSettingsPanel();
+        var panel = new MediaSettingsPanel(_api);
         panel.CloseRequested += async (_, _) =>
         {
             try
@@ -2208,94 +2193,15 @@ public sealed class MainWindow : Window
     {
         ShowMainWindow();
 
-        var box = new TextBox
-        {
-            Text = _api.BaseUrl,
-            Header = "Имя сервера или адрес",
-            PlaceholderText = "confgts, confgts.teplo.local:8090 или https://192.168.111.10:8090",
-            MinWidth = 430
-        };
-        StyleLoginTextBox(box);
-
-        var panel = new StackPanel { Spacing = 12 };
-        panel.Children.Add(new TextBlock
-        {
-            Text = "Подключение к серверу",
-            FontSize = 16,
-            FontWeight = FontWeights.SemiBold,
-            Foreground = Brush(Navy)
-        });
-        panel.Children.Add(box);
-        panel.Children.Add(new TextBlock
-        {
-            Text = "Для HTTPS ConfGTS может использовать автоматически созданный сертификат. " +
-                   "Клиент запоминает его отпечаток при первом успешном подключении.",
-            Foreground = Brush(Muted),
-            FontSize = 12,
-            TextWrapping = TextWrapping.Wrap
-        });
-
-        panel.Children.Add(new Border
-        {
-            Height = 1,
-            Background = Brush(Line),
-            Margin = new Thickness(0, 5, 0, 3)
-        });
-
-        panel.Children.Add(new TextBlock
-        {
-            Text = "Устройства",
-            FontSize = 16,
-            FontWeight = FontWeights.SemiBold,
-            Foreground = Brush(Navy)
-        });
-
-        var deviceSettings = SidebarButton("\uE713", "Камера, микрофон, динамики и громкость");
-        panel.Children.Add(deviceSettings);
-
-        bool openDeviceSettings = false;
-
-        var dialog = new ContentDialog
-        {
-            XamlRoot = (Content as FrameworkElement)?.XamlRoot,
-            Title = "Настройки ConfGTS",
-            Content = panel,
-            PrimaryButtonText = "Сохранить",
-            SecondaryButtonText = "Сбросить доверие HTTPS",
-            CloseButtonText = "Отмена",
-            DefaultButton = ContentDialogButton.Primary
-        };
-
-        deviceSettings.Click += (_, _) =>
-        {
-            openDeviceSettings = true;
-            dialog.Hide();
-        };
-
-        var result = await dialog.ShowAsync();
-        if (openDeviceSettings)
+        try
         {
             await ShowInlineSettingsAsync();
-            return;
         }
-
-        if (result == ContentDialogResult.Primary)
+        catch (Exception ex)
         {
-            try
-            {
-                _api.BaseUrl = box.Text.Trim();
-                await CheckServerAsync();
-            }
-            catch (Exception ex)
-            {
-                _loginError.Text = "Некорректный адрес сервера: " + ex.Message;
-                _loginError.Visibility = Visibility.Visible;
-            }
-        }
-        else if (result == ContentDialogResult.Secondary)
-        {
-            _api.ForgetAllCertificateTrust();
-            await CheckServerAsync();
+            StartupDiagnostics.Log("Failed to open integrated ConfGTS settings.", ex);
+            _dashboardServerText.Text = "Не удалось открыть настройки: " + ex.Message;
+            _dashboardServerText.Foreground = Brush("#B54242");
         }
     }
 
@@ -2514,33 +2420,55 @@ public sealed class MainWindow : Window
         if (parts.Length == 0)
             return "";
 
-        var textInfo = CultureInfo.GetCultureInfo("ru-RU").TextInfo;
-        string NamePart(string part)
+        var culture = CultureInfo.GetCultureInfo("ru-RU");
+        var textInfo = culture.TextInfo;
+
+        string CleanName(string part)
         {
-            var normalized = (part ?? "").Trim();
+            var normalized = (part ?? "").Trim().TrimEnd('.');
             if (normalized.Length == 0)
                 return normalized;
-            return textInfo.ToTitleCase(normalized.ToLower(CultureInfo.GetCultureInfo("ru-RU")));
+
+            if (normalized.Length == 1)
+                return normalized.ToUpper(culture);
+
+            return textInfo.ToTitleCase(normalized.ToLower(culture));
         }
 
-        // AD display names are normally "Фамилия Имя Отчество".
-        // Requested presentation: "Иван И. Иванов.".
+        // New server builds already return AD users as "Имя О. Фамилия.".
+        // Keep this format intact instead of interpreting it again as
+        // "Фамилия Имя Отчество".
+        if (parts.Length >= 3 && parts[1].Trim().EndsWith(".", StringComparison.Ordinal))
+        {
+            var firstName = CleanName(parts[0]);
+            var initialSource = CleanName(parts[1]);
+            var surname = CleanName(parts[2]);
+            var initial = initialSource.Length > 0 ? initialSource[0].ToString().ToUpper(culture) : "";
+            return string.IsNullOrWhiteSpace(initial)
+                ? $"{firstName} {surname}."
+                : $"{firstName} {initial}. {surname}.";
+        }
+
+        // Legacy AD displayName is commonly "Фамилия Имя Отчество".
         if (parts.Length >= 3)
         {
-            var surname = NamePart(parts[0]);
-            var firstName = NamePart(parts[1]);
-            var patronymic = NamePart(parts[2]);
-            return $"{firstName} {char.ToUpper(patronymic[0], CultureInfo.GetCultureInfo("ru-RU"))}. {surname}.";
+            var surname = CleanName(parts[0]);
+            var firstName = CleanName(parts[1]);
+            var patronymic = CleanName(parts[2]);
+            var initial = patronymic.Length > 0 ? patronymic[0].ToString().ToUpper(culture) : "";
+            return string.IsNullOrWhiteSpace(initial)
+                ? $"{firstName} {surname}."
+                : $"{firstName} {initial}. {surname}.";
         }
 
         if (parts.Length == 2)
         {
-            var surname = NamePart(parts[0]);
-            var firstName = NamePart(parts[1]);
-            return $"{firstName} {surname}.";
+            var first = CleanName(parts[0]);
+            var second = CleanName(parts[1]);
+            return $"{first} {second}.";
         }
 
-        return NamePart(parts[0]);
+        return CleanName(parts[0]);
     }
 
     private static string Initials(string value)
