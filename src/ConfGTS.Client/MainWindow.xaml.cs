@@ -40,6 +40,8 @@ public sealed class MainWindow : Window
 
     private readonly StackPanel _contactsPanel = new();
     private readonly StackPanel _conferenceSidebarPanel = new();
+    private readonly StackPanel _conferenceSidebarSection = new();
+    private readonly StackPanel _contactsSidebarSection = new();
     private readonly StackPanel _mainConferencePanel = new();
     private readonly TextBlock _dashboardServerText = new();
 
@@ -59,7 +61,7 @@ public sealed class MainWindow : Window
     private int _dashboardFailureCount;
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _dashboardTimer;
     private readonly Grid _mainContentHost = new();
-    private readonly ColumnDefinition _dashboardSidebarColumn = new() { Width = new GridLength(270) };
+    private readonly ColumnDefinition _dashboardSidebarColumn = new() { Width = new GridLength(220) };
     private Border? _dashboardSidebar;
     private ScrollViewer? _dashboardMainScroll;
     private MediaSettingsPanel? _mediaSettingsPanel;
@@ -344,7 +346,7 @@ public sealed class MainWindow : Window
 
         panel.Children.Add(new TextBlock
         {
-            Text = "Версия 0.18.13 beta  |  © ГТС, 2026",
+            Text = "Версия 0.18.14 beta  |  © ГТС, 2026",
             FontSize = 11,
             Foreground = Brush("#8A9BAC"),
             HorizontalAlignment = HorizontalAlignment.Center,
@@ -370,7 +372,7 @@ public sealed class MainWindow : Window
 
         _dashboardSidebar = sidebar;
 
-        var sideGrid = new Grid { Padding = new Thickness(18, 18, 18, 16) };
+        var sideGrid = new Grid { Padding = new Thickness(14, 16, 14, 14) };
         sideGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         sideGrid.RowDefinitions.Add(new RowDefinition());
         sideGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -380,25 +382,24 @@ public sealed class MainWindow : Window
         var sidebarScroll = new ScrollViewer
         {
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            Margin = new Thickness(0, 18, 0, 12)
+            Margin = new Thickness(0, 14, 0, 10)
         };
         Grid.SetRow(sidebarScroll, 1);
 
-        var sidebarContent = new StackPanel { Spacing = 12 };
-        sidebarContent.Children.Add(SidebarSectionHeader("\uE787", "Конференции"));
+        var sidebarContent = new StackPanel { Spacing = 10 };
+
+        _conferenceSidebarSection.Spacing = 8;
+        _conferenceSidebarSection.Children.Add(SidebarSectionHeader("\uE787", "Конференции"));
         _conferenceSidebarPanel.Spacing = 6;
-        sidebarContent.Children.Add(_conferenceSidebarPanel);
+        _conferenceSidebarSection.Children.Add(_conferenceSidebarPanel);
+        sidebarContent.Children.Add(_conferenceSidebarSection);
 
-        sidebarContent.Children.Add(new Border
-        {
-            Height = 1,
-            Background = Brush("#E2ECF2"),
-            Margin = new Thickness(0, 8, 0, 4)
-        });
-
-        sidebarContent.Children.Add(SidebarSectionHeader("\uE716", "Контакты"));
+        _contactsSidebarSection.Spacing = 8;
+        _contactsSidebarSection.Children.Add(SidebarSectionHeader("\uE716", "Контакты"));
         _contactsPanel.Spacing = 6;
-        sidebarContent.Children.Add(_contactsPanel);
+        _contactsSidebarSection.Children.Add(_contactsPanel);
+        _contactsSidebarSection.Visibility = Visibility.Collapsed;
+        sidebarContent.Children.Add(_contactsSidebarSection);
 
         sidebarScroll.Content = sidebarContent;
         sideGrid.Children.Add(sidebarScroll);
@@ -409,9 +410,13 @@ public sealed class MainWindow : Window
         var footerActions = new StackPanel
         {
             Orientation = Orientation.Horizontal,
-            Spacing = 8,
+            Spacing = 6,
             HorizontalAlignment = HorizontalAlignment.Left
         };
+
+        var conferences = SidebarIconButton("\uE787", "Конференции");
+        conferences.Click += ConferencesButton_Click;
+        footerActions.Children.Add(conferences);
 
         var settings = SidebarIconButton("\uE713", "Настройки");
         settings.Click += ApplicationSettingsButton_Click;
@@ -466,21 +471,21 @@ public sealed class MainWindow : Window
         var row = new StackPanel
         {
             Orientation = Orientation.Horizontal,
-            Spacing = 12
+            Spacing = 9
         };
 
         var logo = new Border
         {
-            Width = 46,
-            Height = 46,
-            CornerRadius = new CornerRadius(13),
+            Width = 42,
+            Height = 42,
+            CornerRadius = new CornerRadius(12),
             Background = Gradient()
         };
         logo.Child = new TextBlock
         {
             Text = "ГТС",
             Foreground = Brush("#FFFFFF"),
-            FontSize = 15,
+            FontSize = 14,
             FontWeight = FontWeights.Bold,
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center
@@ -490,14 +495,14 @@ public sealed class MainWindow : Window
         text.Children.Add(new TextBlock
         {
             Text = "ConfGTS",
-            FontSize = 18,
+            FontSize = 17,
             FontWeight = FontWeights.Bold,
             Foreground = Brush(Navy)
         });
         text.Children.Add(new TextBlock
         {
             Text = "Городские тепловые сети",
-            FontSize = 10,
+            FontSize = 9,
             Foreground = Brush(Muted)
         });
 
@@ -583,6 +588,7 @@ public sealed class MainWindow : Window
 
         foreach (var contact in contacts.Take(40))
         {
+            var contactName = FormatContactName(contact.EffectiveName);
             var row = new Grid
             {
                 Padding = new Thickness(5, 6, 5, 6)
@@ -590,7 +596,7 @@ public sealed class MainWindow : Window
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             row.ColumnDefinitions.Add(new ColumnDefinition());
 
-            var initials = Initials(contact.EffectiveName);
+            var initials = Initials(contactName);
             var avatar = new Border
             {
                 Width = 34,
@@ -614,8 +620,8 @@ public sealed class MainWindow : Window
             Grid.SetColumn(details, 1);
             details.Children.Add(new TextBlock
             {
-                Text = contact.EffectiveName,
-                FontSize = 13,
+                Text = contactName,
+                FontSize = 12,
                 FontWeight = FontWeights.SemiBold,
                 Foreground = Brush(Text),
                 TextTrimming = TextTrimming.CharacterEllipsis
@@ -1881,7 +1887,7 @@ public sealed class MainWindow : Window
 
         _dashboardSidebarColumn.Width = conferenceMode
             ? new GridLength(0)
-            : new GridLength(270);
+            : new GridLength(220);
 
         Grid.SetColumn(_mainContentHost, conferenceMode ? 0 : 1);
         Grid.SetColumnSpan(_mainContentHost, conferenceMode ? 2 : 1);
@@ -1898,7 +1904,7 @@ public sealed class MainWindow : Window
             _dashboardSidebar.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
 
         _dashboardSidebarColumn.Width = visible
-            ? new GridLength(270)
+            ? new GridLength(220)
             : new GridLength(0);
 
         Grid.SetColumn(_mainContentHost, visible ? 1 : 0);
@@ -1936,10 +1942,22 @@ public sealed class MainWindow : Window
         _loginError.Visibility = Visibility.Collapsed;
     }
 
+    private async void ConferencesButton_Click(object sender, RoutedEventArgs e)
+    {
+        await CloseInlineSettingsAsync();
+        ShowSidebarSection(showContacts: false);
+    }
+
     private async void ContactsButton_Click(object sender, RoutedEventArgs e)
     {
         await CloseInlineSettingsAsync();
-        _contactsPanel.StartBringIntoView();
+        ShowSidebarSection(showContacts: true);
+    }
+
+    private void ShowSidebarSection(bool showContacts)
+    {
+        _conferenceSidebarSection.Visibility = showContacts ? Visibility.Collapsed : Visibility.Visible;
+        _contactsSidebarSection.Visibility = showContacts ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private async void ApplicationSettingsButton_Click(object sender, RoutedEventArgs e)
@@ -2304,10 +2322,10 @@ public sealed class MainWindow : Window
     {
         var button = new Button
         {
-            Width = 42,
-            Height = 42,
-            MinWidth = 42,
-            MinHeight = 42,
+            Width = 40,
+            Height = 40,
+            MinWidth = 40,
+            MinHeight = 40,
             Padding = new Thickness(0),
             HorizontalContentAlignment = HorizontalAlignment.Center,
             VerticalContentAlignment = VerticalAlignment.Center,
@@ -2389,6 +2407,46 @@ public sealed class MainWindow : Window
         FontSize = 11,
         TextWrapping = TextWrapping.Wrap
     };
+
+    private static string FormatContactName(string value)
+    {
+        var parts = (value ?? "")
+            .Replace(',', ' ')
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        if (parts.Length < 2)
+            return value;
+
+        var normalized = parts.Select(CapitalizeNamePart).ToArray();
+        if (normalized.Length == 2)
+            return normalized[0] + " " + normalized[1];
+
+        static bool LooksLikePatronymic(string part)
+        {
+            var lower = part.ToLowerInvariant();
+            return lower.EndsWith("ович") || lower.EndsWith("евич") ||
+                   lower.EndsWith("ич") || lower.EndsWith("овна") ||
+                   lower.EndsWith("евна") || lower.EndsWith("ична") ||
+                   lower.EndsWith("инична");
+        }
+
+        if (LooksLikePatronymic(normalized[^1]))
+            return $"{normalized[1]} {normalized[^1][0]}. {normalized[0]}";
+
+        if (LooksLikePatronymic(normalized[1]))
+            return $"{normalized[0]} {normalized[1][0]}. {normalized[^1]}";
+
+        return $"{normalized[0]} {normalized[1][0]}. {normalized[^1]}";
+    }
+
+    private static string CapitalizeNamePart(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return value;
+
+        var lower = value.ToLowerInvariant();
+        return char.ToUpperInvariant(lower[0]) + lower[1..];
+    }
 
     private static string Initials(string value)
     {
@@ -2488,6 +2546,12 @@ public sealed class MainWindow : Window
         UIntPtr subclassId,
         UIntPtr refData)
     {
+        if (message == RestoreExistingInstanceMessage)
+        {
+            ShowMainWindow();
+            return IntPtr.Zero;
+        }
+
         if (message == TrayCallbackMessage)
         {
             var mouseMessage = unchecked((uint)lParam.ToInt64());
@@ -2580,8 +2644,11 @@ public sealed class MainWindow : Window
         if (_hwnd == IntPtr.Zero)
             _hwnd = WindowNative.GetWindowHandle(this);
 
-        ShowWindow(_hwnd, SwShow);
-        ShowWindow(_hwnd, SwRestore);
+        if (IsIconic(_hwnd))
+            ShowWindow(_hwnd, SwRestore);
+        else
+            ShowWindow(_hwnd, SwShow);
+
         Activate();
         SetForegroundWindow(_hwnd);
     }
@@ -2629,6 +2696,9 @@ public sealed class MainWindow : Window
         _trayIconHandle = IntPtr.Zero;
         _trayOwnsIconHandle = false;
     }
+
+    private static readonly uint RestoreExistingInstanceMessage =
+        RegisterWindowMessage("ConfGTS.RestoreExistingInstance");
 
     private const uint TrayIconId = 1;
     private const uint TraySubclassId = 0x43475453;
@@ -2765,6 +2835,13 @@ public sealed class MainWindow : Window
         int y,
         IntPtr owner,
         IntPtr parameters);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "RegisterWindowMessageW")]
+    private static extern uint RegisterWindowMessage(string message);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool IsIconic(IntPtr hWnd);
 
     [DllImport("user32.dll")]
     private static extern bool ShowWindow(IntPtr hWnd, int command);
