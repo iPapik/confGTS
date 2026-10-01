@@ -2419,14 +2419,16 @@ public sealed class MainWindow : Window
         var parts = source
             .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
-        // Active Directory displayName is normally stored as
-        // "Фамилия Имя Отчество". Present it in the compact corporate form:
-        // "Имя О. Фамилия."
+        // Present a normal full name such as "Иван Иванович Иванов"
+        // in the compact corporate form "Иван И. Иванов.".
+        if (source.Contains('.'))
+            return source;
+
         if (parts.Length >= 3)
-            return $"{TitleCase(parts[1])} {char.ToUpperInvariant(parts[2][0])}. {TitleCase(parts[0])}.";
+            return $"{TitleCase(parts[0])} {char.ToUpperInvariant(parts[1][0])}. {TitleCase(parts[^1])}.";
 
         if (parts.Length == 2)
-            return $"{TitleCase(parts[1])} {TitleCase(parts[0])}.";
+            return $"{TitleCase(parts[0])} {TitleCase(parts[1])}.";
 
         return TitleCase(source);
     }
