@@ -419,13 +419,13 @@ public sealed class MainWindow : Window
         conferences.Click += ConferencesButton_Click;
         footerActions.Children.Add(conferences);
 
-        var settings = SidebarIconButton("\uE713", "Настройки");
-        settings.Click += ApplicationSettingsButton_Click;
-        footerActions.Children.Add(settings);
-
         var contacts = SidebarIconButton("\uE716", "Контакты");
         contacts.Click += ContactsButton_Click;
         footerActions.Children.Add(contacts);
+
+        var settings = SidebarIconButton("\uE713", "Настройки");
+        settings.Click += ApplicationSettingsButton_Click;
+        footerActions.Children.Add(settings);
 
         var logout = SidebarIconButton("\uE72B", "Выйти из аккаунта");
         logout.Click += LogoutButton_Click;
@@ -1887,7 +1887,7 @@ public sealed class MainWindow : Window
 
         _dashboardSidebarColumn.Width = conferenceMode
             ? new GridLength(0)
-            : new GridLength(270);
+            : new GridLength(220);
 
         Grid.SetColumn(_mainContentHost, conferenceMode ? 0 : 1);
         Grid.SetColumnSpan(_mainContentHost, conferenceMode ? 2 : 1);
@@ -1904,7 +1904,7 @@ public sealed class MainWindow : Window
             _dashboardSidebar.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
 
         _dashboardSidebarColumn.Width = visible
-            ? new GridLength(270)
+            ? new GridLength(220)
             : new GridLength(0);
 
         Grid.SetColumn(_mainContentHost, visible ? 1 : 0);
