@@ -6,6 +6,10 @@ namespace ConfGTS.Client;
 
 public partial class App : Application
 {
+    private const string InstanceMutexName = @"Local\ConfGTS.Client.SingleInstance";
+    private const string RestoreMessageName = "ConfGTS.RestoreExistingInstance";
+    private static Mutex? _instanceMutex;
+
     public static MainWindow? MainWindowInstance { get; private set; }
 
     public App()
@@ -32,6 +36,15 @@ public partial class App : Application
         try
         {
             StartupDiagnostics.Log("OnLaunched started.");
+
+            if (!AcquirePrimaryInstance())
+            {
+                StartupDiagnostics.Log("Secondary instance detected; restoring existing ConfGTS window.");
+                SignalExistingInstance();
+                Environment.Exit(0);
+                return;
+            }
+
             MainWindowInstance = new MainWindow();
             MainWindowInstance.Activate();
             StartupDiagnostics.Log("Main window activated.");
@@ -58,6 +71,42 @@ public partial class App : Application
             ShowFatalError(ex);
             throw;
         }
+    }
+
+    private static bool AcquirePrimaryInstance()
+    {
+        try
+        {
+            _instanceMutex = new Mutex(initiallyOwned: true, InstanceMutexName, out var createdNew);
+            return createdNew;
+        }
+        catch (Exception ex)
+        {
+            StartupDiagnostics.Log("Single-instance mutex initialization failed; continuing as primary.", ex);
+            return true;
+        }
+    }
+
+    private static void SignalExistingInstance()
+    {
+        var message = RegisterWindowMessage(RestoreMessageName);
+
+        for (var attempt = 0; attempt < 30; attempt++)
+        {
+            var hwnd = FindWindow(null, "ConfGTS");
+            if (hwnd != IntPtr.Zero)
+            {
+                if (!PostMessage(hwnd, message, IntPtr.Zero, IntPtr.Zero))
+                    ShowWindow(hwnd, 5);
+
+                SetForegroundWindow(hwnd);
+                return;
+            }
+
+            Thread.Sleep(100);
+        }
+
+        StartupDiagnostics.Log("Primary ConfGTS process exists, but its window was not found.");
     }
 
     private static void App_UnhandledException(object sender, Microsoft.UI.Xaml.UnhandledExceptionEventArgs e)
@@ -101,6 +150,24 @@ public partial class App : Application
         {
         }
     }
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "RegisterWindowMessageW")]
+    private static extern uint RegisterWindowMessage(string message);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "FindWindowW")]
+    private static extern IntPtr FindWindow(string? className, string? windowName);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool PostMessage(IntPtr hWnd, uint message, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool ShowWindow(IntPtr hWnd, int command);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetForegroundWindow(IntPtr hWnd);
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "MessageBoxW")]
     private static extern int MessageBox(IntPtr hWnd, string text, string caption, uint type);
