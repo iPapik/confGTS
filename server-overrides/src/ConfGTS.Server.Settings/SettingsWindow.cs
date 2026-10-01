@@ -195,7 +195,7 @@ public sealed class SettingsWindow : Window
         row.Children.Add(browse);
 
         panel.Children.Add(row);
-        panel.Children.Add(Hint("После сохранения сервер создаст каталог, если его ещё нет. Существующие записи автоматически не переносятся."));
+        panel.Children.Add(Hint("После сохранения сервер создаст каталог, если его ещё нет. При смене каталога существующие записи автоматически переносятся в новое место."));
         return panel;
     }
 
