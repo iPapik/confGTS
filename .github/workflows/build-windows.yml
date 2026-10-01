@@ -141,6 +141,10 @@ jobs:
           if ($web -notmatch 'CanUploadEndedSessionRecording' -or $store -notmatch 'func \(s \*Store\) CanUploadEndedSessionRecording') {
             throw "Immediate-admin-stop final-chunk authorization is missing."
           }
+          $ldap = Get-Content '.\server\ldap.go' -Raw -Encoding UTF8
+          foreach ($token in @('givenName','middleName','berStr(0x04, "sn")','Prefer structured Active Directory attributes over displayName')) {
+            if ($ldap -notmatch [regex]::Escape($token)) { throw "Missing AD contact-name normalization marker: $token" }
+          }
           Write-Host 'Automatic recording lifecycle is present.' -ForegroundColor Green
 
       - name: Format and test server source
@@ -192,6 +196,25 @@ jobs:
             'IsWindowVisible'
           )) {
             if ($client -notmatch $token) { throw "Missing client feature marker: $token" }
+          }
+          $mediaSettings = Get-Content '.\src\ConfGTS.Client\MediaSettingsWindow.cs' -Raw -Encoding UTF8
+          if ($client -match 'new ContentDialog' -and $client -match 'Title = "Настройки ConfGTS"') {
+            throw 'Application settings must be integrated into the main ConfGTS window, not opened as a dialog.'
+          }
+          foreach ($token in @(
+            'ProgressBar _microphoneLevel',
+            'AudioGraph',
+            'MediaFrameReader',
+            'SoftwareBitmapSource',
+            'TestSpeakersAsync',
+            'CreateStereoTestWav',
+            'Подключение, звук, микрофон и камера',
+            'Сохранить и проверить'
+          )) {
+            if ($mediaSettings -notmatch [regex]::Escape($token)) { throw "Missing integrated settings feature marker: $token" }
+          }
+          if ($client -notmatch '_rememberMeBox\.Content = "Запомнить меня"' -or $client -match '_rememberMeBox\.Width = 20') {
+            throw 'Remember-me checkbox visual fix is missing.'
           }
           Write-Host 'Tray, remembered auto-login and compact sidebar markers are present.' -ForegroundColor Green
 
@@ -560,16 +583,21 @@ jobs:
           - при скрытии в трей запоминается состояние окна, включая полноэкранное/развернутое состояние;
           - открытие настроек больше не переводит развернутое окно в обычный размер.
 
+          Настройки и устройства:
+          - настройки подключения и устройств больше не открываются отдельным ContentDialog: вся страница встроена в основное окно ConfGTS;
+          - параметры сервера, HTTPS, микрофона, динамиков и камеры скомпонованы на одной странице;
+          - добавлен живой индикатор уровня выбранного микрофона через Windows AudioGraph;
+          - добавлен нативный предпросмотр выбранной веб-камеры;
+          - добавлен тест выбранного устройства вывода: сначала звучит левый, затем правый канал;
+          - исправлено отображение квадрата «Запомнить меня» на экране входа.
+
           Навигация и контакты:
-          - левая панель уменьшена до 210 пикселей;
-          - добавлены отдельные квадратные кнопки «Конференции» и «Контакты»;
-          - разделы переключаются: в режиме конференций показываются только конференции, в режиме контактов — только контакты;
-          - экран «Конференции» показывает все доступные пользователю конференции;
-          - в основной области также появляется отдельный список контактов;
-          - ФИО из AD формата «Фамилия Имя Отчество» отображается компактно как «Имя О. Фамилия.».
+          - сохранена компактная левая панель и отдельные разделы «Конференции» / «Контакты»;
+          - LDAP теперь запрашивает givenName, sn и middleName и формирует ФИО как «Имя О. Фамилия.»;
+          - если middleName не заполнен, отчество аккуратно восстанавливается из обычного AD displayName вида «Фамилия Имя Отчество».
 
           Установка:
-          - исправлен критический дефект EXE 0.18.15: [ProgramFiles64Folder] больше не передаётся в MSI как буквальный текст; Burn-переменная InstallFolder теперь имеет тип formatted;
+          - сохранён hotfix установщиков 0.18.14: [ProgramFiles64Folder] корректно разворачивается, а Burn-переменная InstallFolder имеет тип formatted;
           - CI отдельно устанавливает оба EXE по стандартному пути Program Files, чтобы этот дефект не повторился;
           - клиентский и серверный MSI получили страницу выбора каталога установки;
           - EXE-установщики показывают Options и передают выбранный InstallFolder в MSI;
