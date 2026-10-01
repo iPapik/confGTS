@@ -52,7 +52,10 @@ public sealed class MainWindow : Window
     private bool _isAuthenticated;
     private IntPtr _hwnd;
     private AppWindow? _appWindow;
-    private System.Windows.Forms.NotifyIcon? _trayIcon;
+    private SubclassProc? _traySubclassProc;
+    private IntPtr _trayIconHandle;
+    private bool _trayOwnsIconHandle;
+    private bool _trayInitialized;
     private int _dashboardFailureCount;
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _dashboardTimer;
     private readonly Grid _mainContentHost = new();
@@ -2423,49 +2426,136 @@ public sealed class MainWindow : Window
             if (_appWindow is not null)
                 _appWindow.Closing += AppWindow_Closing;
 
-            var menu = new System.Windows.Forms.ContextMenuStrip();
-
-            var closeItem = new System.Windows.Forms.ToolStripMenuItem("Закрыть приложение");
-            closeItem.Click += (_, _) => DispatcherQueue.TryEnqueue(ExitApplication);
-            menu.Items.Add(closeItem);
-
-            var logoutItem = new System.Windows.Forms.ToolStripMenuItem("Выйти из аккаунта");
-            logoutItem.Click += (_, _) => DispatcherQueue.TryEnqueue(async () =>
-            {
-                ShowMainWindow();
-                await LogoutAsync();
-            });
-            menu.Items.Add(logoutItem);
-
-            var settingsItem = new System.Windows.Forms.ToolStripMenuItem("Настройки");
-            settingsItem.Click += (_, _) => DispatcherQueue.TryEnqueue(async () =>
-            {
-                ShowMainWindow();
-                await ShowApplicationSettingsAsync();
-            });
-            menu.Items.Add(settingsItem);
+            _traySubclassProc = TrayWindowSubclass;
+            if (!SetWindowSubclass(_hwnd, _traySubclassProc, TraySubclassId, UIntPtr.Zero))
+                throw new InvalidOperationException("Не удалось подключить обработчик системного трея.");
 
             var processPath = Environment.ProcessPath;
-            var icon = !string.IsNullOrWhiteSpace(processPath)
-                ? System.Drawing.Icon.ExtractAssociatedIcon(processPath)
-                : null;
-
-            _trayIcon = new System.Windows.Forms.NotifyIcon
+            if (!string.IsNullOrWhiteSpace(processPath) &&
+                ExtractIconEx(processPath, 0, out var largeIcon, out var smallIcon, 1) > 0)
             {
-                Text = "ConfGTS",
-                Icon = icon ?? System.Drawing.SystemIcons.Application,
-                ContextMenuStrip = menu,
-                Visible = true
-            };
-            _trayIcon.DoubleClick += (_, _) => DispatcherQueue.TryEnqueue(ShowMainWindow);
+                if (smallIcon != IntPtr.Zero)
+                {
+                    _trayIconHandle = smallIcon;
+                    _trayOwnsIconHandle = true;
+                    if (largeIcon != IntPtr.Zero)
+                        DestroyIcon(largeIcon);
+                }
+                else if (largeIcon != IntPtr.Zero)
+                {
+                    _trayIconHandle = largeIcon;
+                    _trayOwnsIconHandle = true;
+                }
+            }
 
+            if (_trayIconHandle == IntPtr.Zero)
+            {
+                _trayIconHandle = LoadIcon(IntPtr.Zero, new IntPtr(IdiApplication));
+                _trayOwnsIconHandle = false;
+            }
+
+            var data = CreateTrayIconData();
+            if (!ShellNotifyIcon(NimAdd, ref data))
+                throw new InvalidOperationException("Windows не приняла значок ConfGTS в системный трей.");
+
+            _trayInitialized = true;
             Closed += (_, _) => DisposeTrayIcon();
             StartupDiagnostics.Log("System tray icon initialized.");
         }
         catch (Exception ex)
         {
-            // Tray support must not prevent the client from starting.
             StartupDiagnostics.Log("Failed to initialize system tray icon.", ex);
+            DisposeTrayIcon();
+        }
+    }
+
+    private NotifyIconData CreateTrayIconData() => new()
+    {
+        cbSize = Marshal.SizeOf<NotifyIconData>(),
+        hWnd = _hwnd,
+        uID = TrayIconId,
+        uFlags = NifMessage | NifIcon | NifTip,
+        uCallbackMessage = TrayCallbackMessage,
+        hIcon = _trayIconHandle,
+        szTip = "ConfGTS"
+    };
+
+    private IntPtr TrayWindowSubclass(
+        IntPtr hWnd,
+        uint message,
+        IntPtr wParam,
+        IntPtr lParam,
+        UIntPtr subclassId,
+        UIntPtr refData)
+    {
+        if (message == TrayCallbackMessage)
+        {
+            var mouseMessage = unchecked((uint)lParam.ToInt64());
+
+            if (mouseMessage == WmRButtonUp || mouseMessage == WmContextMenu)
+            {
+                ShowTrayMenu();
+                return IntPtr.Zero;
+            }
+
+            if (mouseMessage == WmLButtonDblClk)
+            {
+                ShowMainWindow();
+                return IntPtr.Zero;
+            }
+        }
+
+        return DefSubclassProc(hWnd, message, wParam, lParam);
+    }
+
+    private void ShowTrayMenu()
+    {
+        var menu = CreatePopupMenu();
+        if (menu == IntPtr.Zero)
+            return;
+
+        try
+        {
+            AppendMenu(menu, MfString, TrayCommandExit, "Закрыть приложение");
+            AppendMenu(menu, MfString, TrayCommandLogout, "Выйти из аккаунта");
+            AppendMenu(menu, MfString, TrayCommandSettings, "Настройки");
+
+            if (!GetCursorPos(out var point))
+                return;
+
+            SetForegroundWindow(_hwnd);
+            var command = TrackPopupMenuEx(
+                menu,
+                TpmRightButton | TpmReturnCmd | TpmNonotify,
+                point.X,
+                point.Y,
+                _hwnd,
+                IntPtr.Zero);
+
+            switch (command)
+            {
+                case TrayCommandExit:
+                    ExitApplication();
+                    break;
+                case TrayCommandLogout:
+                    DispatcherQueue.TryEnqueue(async () =>
+                    {
+                        ShowMainWindow();
+                        await LogoutAsync();
+                    });
+                    break;
+                case TrayCommandSettings:
+                    DispatcherQueue.TryEnqueue(async () =>
+                    {
+                        ShowMainWindow();
+                        await ShowApplicationSettingsAsync();
+                    });
+                    break;
+            }
+        }
+        finally
+        {
+            DestroyMenu(menu);
         }
     }
 
@@ -2505,29 +2595,179 @@ public sealed class MainWindow : Window
 
     private void DisposeTrayIcon()
     {
-        if (_trayIcon is null)
-            return;
+        if (_trayInitialized && _hwnd != IntPtr.Zero)
+        {
+            try
+            {
+                var data = CreateTrayIconData();
+                ShellNotifyIcon(NimDelete, ref data);
+            }
+            catch
+            {
+            }
+        }
 
-        try
+        _trayInitialized = false;
+
+        if (_traySubclassProc is not null && _hwnd != IntPtr.Zero)
         {
-            _trayIcon.Visible = false;
-            _trayIcon.Dispose();
+            try
+            {
+                RemoveWindowSubclass(_hwnd, _traySubclassProc, TraySubclassId);
+            }
+            catch
+            {
+            }
+            _traySubclassProc = null;
         }
-        catch
+
+        if (_trayOwnsIconHandle && _trayIconHandle != IntPtr.Zero)
         {
+            try { DestroyIcon(_trayIconHandle); } catch { }
         }
-        finally
-        {
-            _trayIcon = null;
-        }
+
+        _trayIconHandle = IntPtr.Zero;
+        _trayOwnsIconHandle = false;
     }
 
+    private const uint TrayIconId = 1;
+    private const uint TraySubclassId = 0x43475453;
+    private const uint TrayCallbackMessage = 0x8000 + 73; // WM_APP + 73
+    private const uint NifMessage = 0x00000001;
+    private const uint NifIcon = 0x00000002;
+    private const uint NifTip = 0x00000004;
+    private const uint NimAdd = 0x00000000;
+    private const uint NimDelete = 0x00000002;
+    private const uint WmRButtonUp = 0x0205;
+    private const uint WmLButtonDblClk = 0x0203;
+    private const uint WmContextMenu = 0x007B;
+    private const uint MfString = 0x00000000;
+    private const uint TpmRightButton = 0x0002;
+    private const uint TpmNonotify = 0x0080;
+    private const uint TpmReturnCmd = 0x0100;
+    private const uint TrayCommandExit = 1001;
+    private const uint TrayCommandLogout = 1002;
+    private const uint TrayCommandSettings = 1003;
+    private const int IdiApplication = 32512;
     private const int SwHide = 0;
     private const int SwShow = 5;
     private const int SwRestore = 9;
 
+    private delegate IntPtr SubclassProc(
+        IntPtr hWnd,
+        uint message,
+        IntPtr wParam,
+        IntPtr lParam,
+        UIntPtr subclassId,
+        UIntPtr refData);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Point
+    {
+        public int X;
+        public int Y;
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct NotifyIconData
+    {
+        public int cbSize;
+        public IntPtr hWnd;
+        public uint uID;
+        public uint uFlags;
+        public uint uCallbackMessage;
+        public IntPtr hIcon;
+
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)]
+        public string szTip;
+
+        public uint dwState;
+        public uint dwStateMask;
+
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 256)]
+        public string szInfo;
+
+        public uint uTimeoutOrVersion;
+
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 64)]
+        public string szInfoTitle;
+
+        public uint dwInfoFlags;
+        public Guid guidItem;
+        public IntPtr hBalloonIcon;
+    }
+
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode, EntryPoint = "Shell_NotifyIconW")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool ShellNotifyIcon(uint message, ref NotifyIconData data);
+
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode, EntryPoint = "ExtractIconExW")]
+    private static extern uint ExtractIconEx(
+        string file,
+        int iconIndex,
+        out IntPtr largeIcon,
+        out IntPtr smallIcon,
+        uint icons);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "LoadIconW")]
+    private static extern IntPtr LoadIcon(IntPtr instance, IntPtr iconName);
+
     [DllImport("user32.dll")]
-    private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool DestroyIcon(IntPtr icon);
+
+    [DllImport("comctl32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetWindowSubclass(
+        IntPtr hWnd,
+        SubclassProc callback,
+        UIntPtr subclassId,
+        UIntPtr refData);
+
+    [DllImport("comctl32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool RemoveWindowSubclass(
+        IntPtr hWnd,
+        SubclassProc callback,
+        UIntPtr subclassId);
+
+    [DllImport("comctl32.dll")]
+    private static extern IntPtr DefSubclassProc(
+        IntPtr hWnd,
+        uint message,
+        IntPtr wParam,
+        IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr CreatePopupMenu();
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "AppendMenuW")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool AppendMenu(
+        IntPtr menu,
+        uint flags,
+        uint itemId,
+        string text);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool DestroyMenu(IntPtr menu);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetCursorPos(out Point point);
+
+    [DllImport("user32.dll")]
+    private static extern uint TrackPopupMenuEx(
+        IntPtr menu,
+        uint flags,
+        int x,
+        int y,
+        IntPtr owner,
+        IntPtr parameters);
+
+    [DllImport("user32.dll")]
+    private static extern bool ShowWindow(IntPtr hWnd, int command);
 
     [DllImport("user32.dll")]
     private static extern bool SetForegroundWindow(IntPtr hWnd);
