@@ -206,16 +206,16 @@ jobs:
           if ($clientPackage -notmatch 'WixUI_InstallDir' -or $clientPackage -notmatch 'InstallDirectory="INSTALLFOLDER"') {
             throw 'Client MSI install-directory UI is missing.'
           }
-          if ($clientBundle -notmatch 'Variable Name="InstallFolder"' -or $clientBundle -notmatch 'SuppressOptionsUI="no"' -or $clientBundle -notmatch 'MsiProperty Name="INSTALLFOLDER"') {
+          if ($clientBundle -notmatch 'Variable Name="InstallFolder"' -or $clientBundle -notmatch 'bal:Overridable="yes"' -or $clientBundle -notmatch 'SuppressOptionsUI="no"' -or $clientBundle -notmatch 'MsiProperty Name="INSTALLFOLDER"') {
             throw 'Client EXE install-directory options are missing.'
           }
           if ($serverSettings -notmatch 'Хранение записей' -or $serverSettings -notmatch 'PickRecordingsFolderAsync') {
             throw 'Server recording directory UI is missing.'
           }
-          if ($serverConfig -notmatch 'ApplyRecordingDirectoryAsync' -or $serverConfig -notmatch 'mklink /J' -or $serverConfig -notmatch 'recordings_path') {
-            throw 'Server recording directory redirection is missing.'
+          if ($serverConfig -notmatch 'ApplyRecordingDirectoryAsync' -or $serverConfig -notmatch 'root\["recording_dir"\]' -or $serverConfig -match 'mklink /J') {
+            throw 'Server native recording_dir storage selection is missing.'
           }
-          if ($overlay -notmatch 'WixUI_InstallDir' -or $overlay -notmatch 'Variable Name="InstallFolder"' -or $overlay -notmatch 'SuppressOptionsUI="no"') {
+          if ($overlay -notmatch 'WixUI_InstallDir' -or $overlay -notmatch 'Variable Name="InstallFolder"' -or $overlay -notmatch 'bal:Overridable="yes"' -or $overlay -notmatch 'SuppressOptionsUI="no"') {
             throw 'Server installer custom-directory overlay is missing.'
           }
           Write-Host 'Custom install paths and recording storage settings are present.' -ForegroundColor Green
@@ -317,12 +317,13 @@ jobs:
         shell: pwsh
         run: |
           $setup = (Resolve-Path 'artifacts\setup\ConfGTS-Setup-0.18.14-x64.exe').Path
-          $installedExe = Join-Path $env:ProgramFiles 'ГТС\ConfGTS\ConfGTS.Client.exe'
+          $customClientDir = Join-Path $env:ProgramFiles 'ConfGTS-CI-EXE-Custom'
+          $installedExe = Join-Path $customClientDir 'ConfGTS.Client.exe'
           $startMenu = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\ConfGTS\ConfGTS.lnk'
           $desktop = Join-Path ([Environment]::GetFolderPath('CommonDesktopDirectory')) 'ConfGTS.lnk'
           $startupLog = "$env:LOCALAPPDATA\ConfGTS\logs\startup.log"
 
-          $p = Start-Process $setup -ArgumentList @('/quiet','/norestart') -Wait -PassThru
+          $p = Start-Process $setup -ArgumentList @('/quiet','/norestart',("InstallFolder=" + $customClientDir + "\")) -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw "Client EXE install failed: $($p.ExitCode)" }
           foreach ($path in @($installedExe,$startMenu,$desktop)) {
             if (!(Test-Path $path)) { throw "Client EXE expected path missing: $path" }
@@ -461,13 +462,13 @@ jobs:
           }
 
           $setup = (Resolve-Path 'artifacts\server-setup\ConfGTS-Server-Setup-0.18.14-x64.exe').Path
-          $serverDir = Join-Path $env:ProgramFiles 'ГТС\ConfGTS Server'
+          $serverDir = Join-Path $env:ProgramFiles 'ConfGTS-Server-CI-EXE-Custom'
           $serverExe = Join-Path $serverDir 'ConfGTSServer.exe'
           $settingsExe = Join-Path $serverDir 'ConfGTS.Server.Settings.exe'
           $ffmpegExe = Join-Path $serverDir 'ffmpeg.exe'
 
           Remove-Item "$env:ProgramData\ConfGTS" -Recurse -Force -ErrorAction SilentlyContinue
-          $p = Start-Process $setup -ArgumentList @('/quiet','/norestart') -Wait -PassThru
+          $p = Start-Process $setup -ArgumentList @('/quiet','/norestart',("InstallFolder=" + $serverDir + "\")) -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw "Server EXE install failed: $($p.ExitCode)" }
           foreach ($path in @($serverExe,$settingsExe,$ffmpegExe)) {
             if (!(Test-Path $path)) { throw "Server EXE expected path missing: $path" }
