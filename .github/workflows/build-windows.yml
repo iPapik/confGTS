@@ -141,7 +141,13 @@ jobs:
           if ($web -notmatch 'CanUploadEndedSessionRecording' -or $store -notmatch 'func \(s \*Store\) CanUploadEndedSessionRecording') {
             throw "Immediate-admin-stop final-chunk authorization is missing."
           }
-          Write-Host 'Automatic recording lifecycle is present.' -ForegroundColor Green
+          $ldap = Get-Content '.\server\ldap.go' -Raw -Encoding UTF8
+          if ($ldap -notmatch 'baseDN := strings\.TrimSpace\(cfg\.BaseDN\)' -or
+              $ldap -notmatch 'DC=' -or
+              $ldap -notmatch 'searchRequest\(2, baseDN, username\)') {
+            throw 'LDAP displayName lookup fallback from UPN suffix is missing.'
+          }
+          Write-Host 'Automatic recording lifecycle and AD contact lookup are present.' -ForegroundColor Green
 
           $serverSettings = Get-Content '.\src\ConfGTS.Server.Settings\SettingsWindow.cs' -Raw -Encoding UTF8
           $configManager = Get-Content '.\src\ConfGTS.Server.Settings\ConfigManager.cs' -Raw -Encoding UTF8
