@@ -189,6 +189,7 @@ jobs:
         shell: pwsh
         run: |
           $client = Get-Content '.\src\ConfGTS.Client\MainWindow.xaml.cs' -Raw -Encoding UTF8
+          $app = Get-Content '.\src\ConfGTS.Client\App.xaml.cs' -Raw -Encoding UTF8
           $project = Get-Content '.\src\ConfGTS.Client\ConfGTS.Client.csproj' -Raw -Encoding UTF8
           if ($client -notmatch 'ShellNotifyIcon' -or $client -notmatch 'SetWindowSubclass') {
             throw 'Native Win32 tray support is missing from the client.'
@@ -201,13 +202,17 @@ jobs:
             'PerformLoginAsync\(autoLogin: true\)',
             'SidebarIconButton',
             'ActivateExistingMessage',
-            'SingleInstance',
             'IsZoomed',
             'ShowSidebarSection',
             'FormatContactName',
             'new GridLength\(220\)'
           )) {
             if ($client -notmatch $token) { throw "Missing client feature marker: $token" }
+          }
+          if ($app -notmatch 'SingleInstanceMutexName' -or
+              $app -notmatch 'ActivateExistingInstance' -or
+              $app -notmatch 'Environment\.Exit\(0\)') {
+            throw 'Single-instance startup handoff is missing from App.xaml.cs.'
           }
           Write-Host 'Tray, remembered auto-login and compact sidebar markers are present.' -ForegroundColor Green
 
