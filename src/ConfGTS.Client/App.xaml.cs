@@ -6,6 +6,11 @@ namespace ConfGTS.Client;
 
 public partial class App : Application
 {
+    private const string SingleInstanceMutexName = "Global\\ConfGTS.Client.SingleInstance";
+    private const uint ActivateExistingMessage = 0x8000 + 74; // WM_APP + 74
+
+    private Mutex? _singleInstanceMutex;
+
     public static MainWindow? MainWindowInstance { get; private set; }
 
     public App()
@@ -32,6 +37,16 @@ public partial class App : Application
         try
         {
             StartupDiagnostics.Log("OnLaunched started.");
+
+            _singleInstanceMutex = new Mutex(initiallyOwned: true, SingleInstanceMutexName, out var isFirstInstance);
+            if (!isFirstInstance)
+            {
+                StartupDiagnostics.Log("Another ConfGTS client instance is already running; activating it.");
+                ActivateExistingInstance();
+                Exit();
+                return;
+            }
+
             MainWindowInstance = new MainWindow();
             MainWindowInstance.Activate();
             StartupDiagnostics.Log("Main window activated.");
@@ -59,6 +74,53 @@ public partial class App : Application
             throw;
         }
     }
+
+    private static void ActivateExistingInstance()
+    {
+        IntPtr target = IntPtr.Zero;
+
+        EnumWindows((hWnd, _) =>
+        {
+            var length = GetWindowTextLength(hWnd);
+            if (length <= 0)
+                return true;
+
+            var buffer = new System.Text.StringBuilder(length + 1);
+            GetWindowText(hWnd, buffer, buffer.Capacity);
+
+            if (!string.Equals(buffer.ToString(), "ConfGTS", StringComparison.Ordinal))
+                return true;
+
+            target = hWnd;
+            return false;
+        }, IntPtr.Zero);
+
+        if (target != IntPtr.Zero)
+        {
+            PostMessage(target, ActivateExistingMessage, IntPtr.Zero, IntPtr.Zero);
+            SetForegroundWindow(target);
+        }
+    }
+
+    private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder text, int maxCount);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetWindowTextLength(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool PostMessage(IntPtr hWnd, uint message, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetForegroundWindow(IntPtr hWnd);
 
     private static void App_UnhandledException(object sender, Microsoft.UI.Xaml.UnhandledExceptionEventArgs e)
     {
