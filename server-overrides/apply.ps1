@@ -783,27 +783,39 @@ if (Test-Path $serverBundle) {
     if (-not $bundle.Contains('IconSourceFile=')) {
         $bundle = $bundle.Replace('          Version="0.18.15"', '          Version="0.18.15"' + [Environment]::NewLine + '          IconSourceFile="!(bindpath.assets)\ConfGTS.ico"')
     }
-    if (-not $bundle.Contains('Variable Name="InstallFolder"')) {
-        $bundle = $bundle.Replace(
-            '    <BootstrapperApplication>',
-            '    <Variable Name="InstallFolder" Type="formatted" Value="[ProgramFiles64Folder]ГТС\ConfGTS Server" Persisted="yes" bal:Overridable="yes" />' +
-            [Environment]::NewLine + [Environment]::NewLine + '    <BootstrapperApplication>')
-    }
+
+    # Always replace the Burn install-directory variable with the canonical
+    # declaration. Older reconstructed bundles may already contain a variable
+    # without bal:Overridable, which makes InstallFolder=... on the EXE command
+    # line silently fall back to the persisted/default Program Files path.
+    $bundle = [regex]::Replace(
+        $bundle,
+        '(?m)^\s*<Variable\s+Name="InstallFolder"[^>]*/>\s*\r?\n?',
+        '',
+        1)
+    $bundle = $bundle.Replace(
+        '    <BootstrapperApplication>',
+        '    <Variable Name="InstallFolder" Type="formatted" Value="[ProgramFiles64Folder]ГТС\ConfGTS Server" Persisted="yes" bal:Overridable="yes" />' +
+        [Environment]::NewLine + [Environment]::NewLine + '    <BootstrapperApplication>')
+
     $bundle = $bundle.Replace('SuppressOptionsUI="yes"', 'SuppressOptionsUI="no"')
-    $bundle = $bundle.Replace('Type="string" Value="[ProgramFiles64Folder]ГТС\ConfGTS Server\"', 'Type="formatted" Value="[ProgramFiles64Folder]ГТС\ConfGTS Server"')
-    $bundle = $bundle.Replace('LaunchTarget="[InstallFolder]ConfGTS.Server.Settings.exe"', 'LaunchTarget="[InstallFolder]\ConfGTS.Server.Settings.exe"')
     $bundle = $bundle.Replace(
         'LaunchTarget="[ProgramFiles64Folder]ГТС\ConfGTS Server\ConfGTS.Server.Settings.exe"',
         'LaunchTarget="[InstallFolder]\ConfGTS.Server.Settings.exe"')
+    $bundle = $bundle.Replace(
+        'LaunchTarget="[InstallFolder]ConfGTS.Server.Settings.exe"',
+        'LaunchTarget="[InstallFolder]\ConfGTS.Server.Settings.exe"')
+
     if ($bundle -notmatch '<MsiProperty Name="INSTALLFOLDER" Value="\[InstallFolder\]"') {
         $bundle = [regex]::Replace(
             $bundle,
-            '<MsiPackage([^>]+SourceFile="[^"]+ConfGTS-Server-0\.18\.14-x64\.msi"[^>]*)\s*/>',
+            '<MsiPackage([^>]+SourceFile="[^"]+ConfGTS-Server-0\.18\.15-x64\.msi"[^>]*)\s*/>',
             '<MsiPackage$1>' + [Environment]::NewLine +
             '        <MsiProperty Name="INSTALLFOLDER" Value="[InstallFolder]" />' + [Environment]::NewLine +
             '      </MsiPackage>',
             1)
     }
+
     Set-Content $serverBundle $bundle -Encoding UTF8 -NoNewline
 }
 
