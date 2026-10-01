@@ -305,7 +305,7 @@ public sealed class SettingsWindow : Window
             var publicUrl = $"{scheme}://{name}:{port}";
             var recordingDirectory = _recordingDirectoryBox.Text.Trim();
             if (string.IsNullOrWhiteSpace(recordingDirectory))
-                recordingDirectory = Path.Combine(ConfigManager.DataDirectory, "Recordings");
+                recordingDirectory = System.IO.Path.Combine(ConfigManager.DataDirectory, "Recordings");
 
             ConfigManager.Save(new NetworkSettings(
                 bind,
