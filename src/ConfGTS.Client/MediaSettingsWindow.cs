@@ -44,10 +44,10 @@ public sealed class MediaSettingsPanel : Grid
 
     public MediaSettingsPanel()
     {
-        StartupDiagnostics.Log("MediaSettingsPanel 0.18.13 constructor started.");
+        StartupDiagnostics.Log("MediaSettingsPanel 0.18.14 constructor started.");
         Background = Brush(Bg);
         Children.Add(BuildUi());
-        StartupDiagnostics.Log("MediaSettingsPanel 0.18.13 constructor completed.");
+        StartupDiagnostics.Log("MediaSettingsPanel 0.18.14 constructor completed.");
     }
 
     public async Task InitializeAsync()
