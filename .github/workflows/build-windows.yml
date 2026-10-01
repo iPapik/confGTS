@@ -3,6 +3,8 @@ name: Build full ConfGTS client and server (manual)
 on:
   push:
     branches: [ main, 'beta-full-*' ]
+  pull_request:
+    branches: [ main ]
   workflow_dispatch:
 
 permissions:
