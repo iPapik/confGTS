@@ -215,6 +215,10 @@ jobs:
             @($serverPackage, 'WixUI_InstallDir'),
             @($clientBundle, 'Name="InstallFolder"'),
             @($serverBundle, 'Name="InstallFolder"'),
+            @($clientBundle, 'Type="formatted"'),
+            @($serverBundle, 'Type="formatted"'),
+            @($clientBundle, 'bal:Overridable="yes"'),
+            @($serverBundle, 'bal:Overridable="yes"'),
             @($clientBundle, 'SuppressOptionsUI="no"'),
             @($serverBundle, 'SuppressOptionsUI="no"'),
             @($clientBundle, 'MsiProperty Name="INSTALLFOLDER"'),
@@ -342,13 +346,15 @@ jobs:
         shell: pwsh
         run: |
           $msi = (Resolve-Path 'artifacts\msi\ConfGTS-0.18.14-x64.msi').Path
-          $installedExe = Join-Path $env:ProgramFiles 'ГТС\ConfGTS\ConfGTS.Client.exe'
+          $clientMsiDir = Join-Path $env:SystemDrive 'ConfGTS-CI\Client-MSI'
+          Remove-Item $clientMsiDir -Recurse -Force -ErrorAction SilentlyContinue
+          $installedExe = Join-Path $clientMsiDir 'ConfGTS.Client.exe'
           $startMenu = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\ConfGTS\ConfGTS.lnk'
           $desktop = Join-Path ([Environment]::GetFolderPath('CommonDesktopDirectory')) 'ConfGTS.lnk'
           $startupLog = "$env:LOCALAPPDATA\ConfGTS\logs\startup.log"
 
-          $install = Start-Process msiexec.exe -ArgumentList @('/i', "`"$msi`"", '/qn', '/norestart') -Wait -PassThru
-          if ($install.ExitCode -ne 0) { throw "Client MSI install failed: $($install.ExitCode)" }
+          $install = Start-Process msiexec.exe -ArgumentList @('/i', "`"$msi`"", "INSTALLFOLDER=$clientMsiDir", '/qn', '/norestart') -Wait -PassThru
+          if ($install.ExitCode -ne 0) { throw "Client MSI custom-directory install failed: $($install.ExitCode)" }
           foreach ($path in @($installedExe,$startMenu,$desktop)) {
             if (!(Test-Path $path)) { throw "Client MSI expected path missing: $path" }
           }
@@ -372,13 +378,19 @@ jobs:
         shell: pwsh
         run: |
           $setup = (Resolve-Path 'artifacts\setup\ConfGTS-Setup-0.18.14-x64.exe').Path
-          $installedExe = Join-Path $env:ProgramFiles 'ГТС\ConfGTS\ConfGTS.Client.exe'
+          $clientExeDir = Join-Path $env:SystemDrive 'ConfGTS-CI\Client-EXE'
+          Remove-Item $clientExeDir -Recurse -Force -ErrorAction SilentlyContinue
+          $installedExe = Join-Path $clientExeDir 'ConfGTS.Client.exe'
           $startMenu = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\ConfGTS\ConfGTS.lnk'
           $desktop = Join-Path ([Environment]::GetFolderPath('CommonDesktopDirectory')) 'ConfGTS.lnk'
           $startupLog = "$env:LOCALAPPDATA\ConfGTS\logs\startup.log"
 
-          $p = Start-Process $setup -ArgumentList @('/quiet','/norestart') -Wait -PassThru
-          if ($p.ExitCode -ne 0) { throw "Client EXE install failed: $($p.ExitCode)" }
+          $bundleLog = Join-Path $env:RUNNER_TEMP 'confgts-client-bundle.log'
+          $p = Start-Process $setup -ArgumentList @("InstallFolder=$clientExeDir",'/quiet','/norestart','/log',"`"$bundleLog`"") -Wait -PassThru
+          if ($p.ExitCode -ne 0) {
+            if (Test-Path $bundleLog) { Get-Content $bundleLog -Tail 160 }
+            throw "Client EXE custom-directory install failed: $($p.ExitCode)"
+          }
           foreach ($path in @($installedExe,$startMenu,$desktop)) {
             if (!(Test-Path $path)) { throw "Client EXE expected path missing: $path" }
           }
@@ -414,7 +426,8 @@ jobs:
           }
 
           $msi = (Resolve-Path 'artifacts\server-msi\ConfGTS-Server-0.18.14-x64.msi').Path
-          $serverDir = Join-Path $env:ProgramFiles 'ГТС\ConfGTS Server'
+          $serverDir = Join-Path $env:SystemDrive 'ConfGTS-CI\Server-MSI'
+          Remove-Item $serverDir -Recurse -Force -ErrorAction SilentlyContinue
           $serverExe = Join-Path $serverDir 'ConfGTSServer.exe'
           $settingsExe = Join-Path $serverDir 'ConfGTS.Server.Settings.exe'
           $ffmpegExe = Join-Path $serverDir 'ffmpeg.exe'
@@ -424,8 +437,8 @@ jobs:
           $menuWeb = Join-Path $menuDir 'ConfGTS Server Web.lnk'
 
           Remove-Item "$env:ProgramData\ConfGTS" -Recurse -Force -ErrorAction SilentlyContinue
-          $install = Start-Process msiexec.exe -ArgumentList @('/i', "`"$msi`"", '/qn', '/norestart') -Wait -PassThru
-          if ($install.ExitCode -ne 0) { throw "Server MSI install failed: $($install.ExitCode)" }
+          $install = Start-Process msiexec.exe -ArgumentList @('/i', "`"$msi`"", "INSTALLFOLDER=$serverDir", '/qn', '/norestart') -Wait -PassThru
+          if ($install.ExitCode -ne 0) { throw "Server MSI custom-directory install failed: $($install.ExitCode)" }
 
           foreach ($path in @($serverExe,$settingsExe,$ffmpegExe,$desktop,$menuSettings,$menuWeb)) {
             if (!(Test-Path $path)) { throw "Server MSI expected path missing: $path" }
@@ -516,14 +529,19 @@ jobs:
           }
 
           $setup = (Resolve-Path 'artifacts\server-setup\ConfGTS-Server-Setup-0.18.14-x64.exe').Path
-          $serverDir = Join-Path $env:ProgramFiles 'ГТС\ConfGTS Server'
+          $serverDir = Join-Path $env:SystemDrive 'ConfGTS-CI\Server-EXE'
+          Remove-Item $serverDir -Recurse -Force -ErrorAction SilentlyContinue
           $serverExe = Join-Path $serverDir 'ConfGTSServer.exe'
           $settingsExe = Join-Path $serverDir 'ConfGTS.Server.Settings.exe'
           $ffmpegExe = Join-Path $serverDir 'ffmpeg.exe'
 
           Remove-Item "$env:ProgramData\ConfGTS" -Recurse -Force -ErrorAction SilentlyContinue
-          $p = Start-Process $setup -ArgumentList @('/quiet','/norestart') -Wait -PassThru
-          if ($p.ExitCode -ne 0) { throw "Server EXE install failed: $($p.ExitCode)" }
+          $bundleLog = Join-Path $env:RUNNER_TEMP 'confgts-server-bundle.log'
+          $p = Start-Process $setup -ArgumentList @("InstallFolder=$serverDir",'/quiet','/norestart','/log',"`"$bundleLog`"") -Wait -PassThru
+          if ($p.ExitCode -ne 0) {
+            if (Test-Path $bundleLog) { Get-Content $bundleLog -Tail 160 }
+            throw "Server EXE custom-directory install failed: $($p.ExitCode)"
+          }
           foreach ($path in @($serverExe,$settingsExe,$ffmpegExe)) {
             if (!(Test-Path $path)) { throw "Server EXE expected path missing: $path" }
           }
