@@ -194,7 +194,7 @@ public sealed class SettingsWindow : Window
         row.Children.Add(browse);
 
         panel.Children.Add(row);
-        panel.Children.Add(Hint("По умолчанию записи находятся в C:\ProgramData\ConfGTS\recordings. Можно выбрать другой локальный диск или каталог."));
+        panel.Children.Add(Hint(@"По умолчанию записи находятся в C:\ProgramData\ConfGTS\recordings. Можно выбрать другой локальный диск или каталог."));
         return panel;
     }
 
