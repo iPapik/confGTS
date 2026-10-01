@@ -130,3 +130,23 @@ func TestRecordingUsesMP4Extension(t *testing.T) {
 		t.Fatalf("MP4 recording bytes were not persisted: ok=%v size=%d", ok, stored.SizeBytes)
 	}
 }
+
+
+func TestRecordingUsesConfiguredDirectory(t *testing.T) {
+	s, room := newRecordingTestStore(t)
+	customDir := filepath.Join(t.TempDir(), "conference-recordings")
+	cfg := s.Config()
+	cfg.RecordingDir = customDir
+	if err := s.SaveConfig(cfg); err != nil {
+		t.Fatalf("SaveConfig custom recording dir: %v", err)
+	}
+
+	rec, _ := createTestRecording(t, s, room, "cap_custom_dir_test")
+	path := s.RecordingPath(rec)
+	if filepath.Clean(filepath.Dir(path)) != filepath.Clean(customDir) {
+		t.Fatalf("recording stored in wrong directory: got %q want %q", filepath.Dir(path), customDir)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("recording was not written to configured directory: %v", err)
+	}
+}
