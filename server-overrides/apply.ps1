@@ -292,14 +292,9 @@ Set-Content $webPath $web -Encoding UTF8 -NoNewline
 $ldapPath = Join-Path $root "server\ldap.go"
 if (Test-Path $ldapPath) {
     $ldap = Get-Content $ldapPath -Raw -Encoding UTF8
-    $oldBaseDnBlock = @'
-	u := User{Username: username, DisplayName: username}
-	if cfg.BaseDN == "" {
-		return u, nil
-	}
-	if _, err = c.Write(searchRequest(2, cfg.BaseDN, username)); err != nil {
-'@
-    $newBaseDnBlock = @'
+    if (-not $ldap.Contains('baseDN := strings.TrimSpace(cfg.BaseDN)')) {
+        $baseDnPattern = '(?ms)(\s*u := User\{Username: username, DisplayName: username\}\s*)if cfg\.BaseDN == "" \{\s*return u, nil\s*\}\s*if _, err = c\.Write\(searchRequest\(2, cfg\.BaseDN, username\)\); err != nil \{'
+        $baseDnReplacement = @'
 	u := User{Username: username, DisplayName: username}
 	baseDN := strings.TrimSpace(cfg.BaseDN)
 	if baseDN == "" {
@@ -320,10 +315,11 @@ if (Test-Path $ldapPath) {
 	}
 	if _, err = c.Write(searchRequest(2, baseDN, username)); err != nil {
 '@
-    if ($ldap.Contains($oldBaseDnBlock)) {
-        $ldap = $ldap.Replace($oldBaseDnBlock, $newBaseDnBlock)
-    } elseif (-not $ldap.Contains('baseDN := strings.TrimSpace(cfg.BaseDN)')) {
-        throw 'LDAP Base DN derivation patch was not applied.'
+        $patchedLdap = [regex]::Replace($ldap, $baseDnPattern, $baseDnReplacement.TrimStart(), 1)
+        if ($patchedLdap -eq $ldap) {
+            throw 'LDAP Base DN derivation patch was not applied.'
+        }
+        $ldap = $patchedLdap
     }
     Set-Content $ldapPath $ldap -Encoding UTF8 -NoNewline
 }
