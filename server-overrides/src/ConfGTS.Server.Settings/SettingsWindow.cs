@@ -7,6 +7,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Shapes;
 using Windows.Graphics;
+using Windows.Storage.Pickers;
 using WinRT.Interop;
 
 namespace ConfGTS.Server.Settings;
@@ -21,6 +22,7 @@ public sealed class SettingsWindow : Window
     private readonly TextBlock _dnsStatus = new();
     private readonly TextBlock _serviceStatus = new();
     private readonly Button _saveButton = new();
+    private readonly TextBox _recordingsPathBox = new();
 
     private const string Navy = "#0B2F5B";
     private const string Blue = "#168CB8";
@@ -94,11 +96,12 @@ public sealed class SettingsWindow : Window
         outer.Children.Add(header);
 
         outer.Children.Add(Card(BuildNetworkPanel()));
+        outer.Children.Add(Card(BuildStoragePanel()));
         outer.Children.Add(Card(BuildServicePanel()));
 
         var footer = new TextBlock
         {
-            Text = "ConfGTS Server Settings 0.17.0  |  Городские тепловые сети",
+            Text = "ConfGTS Server Settings 0.18.14  |  Городские тепловые сети",
             Foreground = Brush("#8194A7"),
             FontSize = 12,
             HorizontalAlignment = HorizontalAlignment.Center,
@@ -169,6 +172,51 @@ public sealed class SettingsWindow : Window
         return panel;
     }
 
+    private UIElement BuildStoragePanel()
+    {
+        var panel = new StackPanel { Spacing = 11 };
+        panel.Children.Add(SectionTitle("Хранение записей"));
+        panel.Children.Add(Hint("Выберите каталог, где сервер ConfGTS будет хранить записи конференций. При смене каталога существующие записи копируются в новый каталог, после чего серверная служба перезапускается."));
+
+        panel.Children.Add(Label("Каталог записей"));
+
+        var row = new Grid { ColumnSpacing = 10 };
+        row.ColumnDefinitions.Add(new ColumnDefinition());
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        StyleInput(_recordingsPathBox, @"D:\ConfGTS\Recordings");
+        row.Children.Add(_recordingsPathBox);
+
+        var browse = SecondaryButton("Обзор…");
+        browse.VerticalAlignment = VerticalAlignment.Stretch;
+        browse.Click += async (_, _) => await PickRecordingsFolderAsync();
+        Grid.SetColumn(browse, 1);
+        row.Children.Add(browse);
+
+        panel.Children.Add(row);
+        panel.Children.Add(Hint(@"По умолчанию записи находятся в C:\ProgramData\ConfGTS\recordings. Можно выбрать другой локальный диск или каталог."));
+        return panel;
+    }
+
+    private async Task PickRecordingsFolderAsync()
+    {
+        try
+        {
+            var picker = new FolderPicker();
+            picker.FileTypeFilter.Add("*");
+            var hwnd = WindowNative.GetWindowHandle(this);
+            InitializeWithWindow.Initialize(picker, hwnd);
+            var folder = await picker.PickSingleFolderAsync();
+            if (folder is not null)
+                _recordingsPathBox.Text = folder.Path;
+        }
+        catch (Exception ex)
+        {
+            Diagnostics.Log("Recording folder picker failed", ex);
+            await ShowAsync("Каталог записей", ex.Message);
+        }
+    }
+
     private UIElement BuildServicePanel()
     {
         var panel = new StackPanel { Spacing = 12 };
@@ -216,6 +264,7 @@ public sealed class SettingsWindow : Window
         _portBox.Text = cfg.Port.ToString();
         _nameBox.Text = cfg.ServerName;
         _schemeBox.SelectedItem = cfg.Scheme;
+        _recordingsPathBox.Text = ConfigManager.GetRecordingsDirectory();
         UpdatePublicUrl();
         _dnsStatus.Text = "Нажмите «Проверить DNS».";
     }
@@ -252,10 +301,14 @@ public sealed class SettingsWindow : Window
 
             var scheme = _schemeBox.SelectedItem?.ToString() ?? "http";
             var publicUrl = $"{scheme}://{name}:{port}";
+            var recordingsPath = _recordingsPathBox.Text.Trim();
+            if (string.IsNullOrWhiteSpace(recordingsPath))
+                throw new InvalidOperationException("Укажите каталог для хранения записей конференций.");
+
             ConfigManager.Save(new NetworkSettings(bind, port, name, scheme, publicUrl));
 
-            _serviceStatus.Text = "Настройки сохранены. Перезапуск…";
-            await ConfigManager.RestartServiceAsync();
+            _serviceStatus.Text = "Настройки сохранены. Применение каталога записей…";
+            await ConfigManager.ApplyRecordingDirectoryAsync(recordingsPath);
             await RefreshServiceAsync();
             await CheckDnsAsync();
             await ShowAsync("ConfGTS Server", "Настройки сохранены. Служба перезапущена.");

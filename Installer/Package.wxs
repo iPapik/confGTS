@@ -1,11 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
   <Package
       Name="ConfGTS"
       Manufacturer="СГМУП Городские тепловые сети"
-      Version="0.18.13"
+      Version="0.18.14"
       UpgradeCode="CC8C0A11-1DC6-44D3-BA24-F2B79EDBF2F6"
       Language="1049"
+      Codepage="1251"
       Scope="perMachine">
 
     <SummaryInformation
@@ -14,6 +16,8 @@
 
     <MajorUpgrade DowngradeErrorMessage="Установлена более новая версия ConfGTS." />
     <MediaTemplate EmbedCab="yes" />
+
+    <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
 
     <StandardDirectory Id="ProgramFiles64Folder">
       <Directory Id="CompanyFolder" Name="ГТС">

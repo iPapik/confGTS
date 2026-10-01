@@ -26,6 +26,7 @@ internal static class ConfigManager
     public static string CertificateDirectory => Path.Combine(DataDirectory, "certs");
     public static string AutoCertificatePath => Path.Combine(CertificateDirectory, "confgts-server.crt");
     public static string AutoKeyPath => Path.Combine(CertificateDirectory, "confgts-server.key");
+    public static string DefaultRecordingsDirectory => Path.Combine(DataDirectory, "Recordings");
 
     public static NetworkSettings Load()
     {
@@ -239,6 +240,114 @@ internal static class ConfigManager
         catch
         {
             return false;
+        }
+    }
+
+    public static string GetRecordingsDirectory()
+    {
+        try
+        {
+            if (File.Exists(ConfigPath))
+            {
+                var root = JsonNode.Parse(File.ReadAllText(ConfigPath)) as JsonObject;
+                var configured = root?["recording_dir"]?.GetValue<string>()?.Trim();
+
+                // Compatibility with the first 0.18.14 beta implementation.
+                if (string.IsNullOrWhiteSpace(configured))
+                    configured = root?["recordings_path"]?.GetValue<string>()?.Trim();
+
+                if (!string.IsNullOrWhiteSpace(configured))
+                    return Path.GetFullPath(Environment.ExpandEnvironmentVariables(configured));
+            }
+        }
+        catch (Exception ex)
+        {
+            Diagnostics.Log("Recording directory load failed", ex);
+        }
+
+        return DefaultRecordingsDirectory;
+    }
+
+    public static async Task ApplyRecordingDirectoryAsync(string requestedPath)
+    {
+        var raw = (requestedPath ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(raw))
+            throw new InvalidOperationException("Каталог записей не указан.");
+
+        var target = Path.GetFullPath(Environment.ExpandEnvironmentVariables(raw));
+        Directory.CreateDirectory(target);
+
+        var previous = GetRecordingsDirectory();
+
+        await RunAsync("sc.exe", "stop ConfGTSServer", ignoreExitCode: true);
+        await Task.Delay(900);
+
+        try
+        {
+            if (!PathsEqual(previous, target) && Directory.Exists(previous))
+                CopyDirectoryContents(previous, target);
+
+            Directory.CreateDirectory(DataDirectory);
+
+            JsonObject root;
+            try
+            {
+                root = File.Exists(ConfigPath)
+                    ? (JsonNode.Parse(File.ReadAllText(ConfigPath)) as JsonObject ?? new JsonObject())
+                    : new JsonObject();
+            }
+            catch
+            {
+                root = new JsonObject();
+            }
+
+            // The Go server already natively supports recording_dir. Store the
+            // selected path directly instead of depending on a filesystem junction.
+            root["recording_dir"] = target;
+            root.Remove("recordings_path");
+
+            var tmp = ConfigPath + ".tmp";
+            File.WriteAllText(tmp, root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+            File.Move(tmp, ConfigPath, true);
+
+            Diagnostics.Log($"Recording directory configured: {target}");
+        }
+        finally
+        {
+            await RunAsync("sc.exe", "start ConfGTSServer", ignoreExitCode: false);
+        }
+    }
+
+    private static void CopyDirectoryContents(string source, string destination)
+    {
+        if (!Directory.Exists(source) || PathsEqual(source, destination))
+            return;
+
+        Directory.CreateDirectory(destination);
+
+        foreach (var directory in Directory.GetDirectories(source, "*", SearchOption.AllDirectories))
+        {
+            var relative = Path.GetRelativePath(source, directory);
+            Directory.CreateDirectory(Path.Combine(destination, relative));
+        }
+
+        foreach (var file in Directory.GetFiles(source, "*", SearchOption.AllDirectories))
+        {
+            var relative = Path.GetRelativePath(source, file);
+            var destinationFile = Path.Combine(destination, relative);
+            Directory.CreateDirectory(Path.GetDirectoryName(destinationFile)!);
+
+            // Keep an existing destination copy if it is at least as new and the
+            // same size. This avoids rewriting large recording files unnecessarily.
+            if (File.Exists(destinationFile))
+            {
+                var src = new FileInfo(file);
+                var dst = new FileInfo(destinationFile);
+                if (src.Length == dst.Length && dst.LastWriteTimeUtc >= src.LastWriteTimeUtc)
+                    continue;
+            }
+
+            File.Copy(file, destinationFile, true);
         }
     }
 

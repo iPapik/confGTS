@@ -46,11 +46,11 @@ jobs:
           [IO.File]::WriteAllBytes($zip, [Convert]::FromBase64String($builder.ToString()))
           Expand-Archive $zip -DestinationPath '.' -Force
 
-      - name: Apply ConfGTS Server 0.18.13 overlays
+      - name: Apply ConfGTS Server 0.18.14 overlays
         shell: pwsh
         run: .\server-overrides\apply.ps1
 
-      - name: Validate 0.18.13 server UI changes
+      - name: Validate 0.18.14 server UI changes
         shell: pwsh
         run: |
           $admin = Get-Content '.\server\admin.go' -Raw -Encoding UTF8
@@ -153,7 +153,7 @@ jobs:
       - name: Package server source
         shell: pwsh
         run: |
-          $stage = Join-Path $env:RUNNER_TEMP 'ConfGTS-Server-0.18.13-Source'
+          $stage = Join-Path $env:RUNNER_TEMP 'ConfGTS-Server-0.18.14-Source'
           Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Force -Path $stage | Out-Null
           Copy-Item '.\go.mod' $stage -Force
@@ -164,12 +164,13 @@ jobs:
           Copy-Item '.\Installer\Server' (Join-Path $stage 'Installer\Server') -Recurse -Force
           Copy-Item '.\build-server.ps1' $stage -Force
           New-Item -ItemType Directory -Force -Path '.\artifacts' | Out-Null
-          Compress-Archive -Path "$stage\*" -DestinationPath '.\artifacts\ConfGTS-Server-0.18.13-Source.zip' -Force
+          Compress-Archive -Path "$stage\*" -DestinationPath '.\artifacts\ConfGTS-Server-0.18.14-Source.zip' -Force
 
       - name: Validate tray, auto-login and compact sidebar changes
         shell: pwsh
         run: |
-          $client = Get-Content '.\src\ConfGTS.Client\MainWindow.xaml.cs' -Raw -Encoding UTF8
+          $client = (Get-Content '.\src\ConfGTS.Client\MainWindow.xaml.cs' -Raw -Encoding UTF8) + [Environment]::NewLine +
+                    (Get-Content '.\src\ConfGTS.Client\App.xaml.cs' -Raw -Encoding UTF8)
           $project = Get-Content '.\src\ConfGTS.Client\ConfGTS.Client.csproj' -Raw -Encoding UTF8
           if ($client -notmatch 'ShellNotifyIcon' -or $client -notmatch 'SetWindowSubclass') {
             throw 'Native Win32 tray support is missing from the client.'
@@ -180,12 +181,44 @@ jobs:
             'ShowApplicationSettingsAsync',
             'RememberedCredentials.Clear',
             'PerformLoginAsync\(autoLogin: true\)',
+            'ActivateFromExternalLaunch',
+            'InstanceMutexName',
+            'ActivationEventName',
+            'ShowDashboardSection',
+            'FormatContactName',
             'SidebarIconButton',
-            'new GridLength\(270\)'
+            'new GridLength\(210\)',
+            'IsZoomed',
+            'IsWindowVisible'
           )) {
             if ($client -notmatch $token) { throw "Missing client feature marker: $token" }
           }
           Write-Host 'Tray, remembered auto-login and compact sidebar markers are present.' -ForegroundColor Green
+
+      - name: Validate custom install folders and recording storage settings
+        shell: pwsh
+        run: |
+          $clientPackage = Get-Content '.\Installer\Package.wxs' -Raw -Encoding UTF8
+          $clientBundle = Get-Content '.\Installer\Bootstrapper\Bundle.wxs' -Raw -Encoding UTF8
+          $serverSettings = Get-Content '.\server-overrides\src\ConfGTS.Server.Settings\SettingsWindow.cs' -Raw -Encoding UTF8
+          $serverConfig = Get-Content '.\server-overrides\src\ConfGTS.Server.Settings\ConfigManager.cs' -Raw -Encoding UTF8
+          $overlay = Get-Content '.\server-overrides\apply.ps1' -Raw -Encoding UTF8
+          if ($clientPackage -notmatch 'WixUI_InstallDir' -or $clientPackage -notmatch 'InstallDirectory="INSTALLFOLDER"') {
+            throw 'Client MSI install-directory UI is missing.'
+          }
+          if ($clientBundle -notmatch 'Variable Name="InstallFolder"' -or $clientBundle -notmatch 'bal:Overridable="yes"' -or $clientBundle -notmatch 'SuppressOptionsUI="no"' -or $clientBundle -notmatch 'MsiProperty Name="INSTALLFOLDER"') {
+            throw 'Client EXE install-directory options are missing.'
+          }
+          if ($serverSettings -notmatch 'Хранение записей' -or $serverSettings -notmatch 'PickRecordingsFolderAsync') {
+            throw 'Server recording directory UI is missing.'
+          }
+          if ($serverConfig -notmatch 'ApplyRecordingDirectoryAsync' -or $serverConfig -notmatch 'root\["recording_dir"\]' -or $serverConfig -match 'mklink /J') {
+            throw 'Server native recording_dir storage selection is missing.'
+          }
+          if ($overlay -notmatch 'WixUI_InstallDir' -or $overlay -notmatch 'Variable Name="InstallFolder"' -or $overlay -notmatch 'bal:Overridable="yes"' -or $overlay -notmatch 'SuppressOptionsUI="no"') {
+            throw 'Server installer custom-directory overlay is missing.'
+          }
+          Write-Host 'Custom install paths and recording storage settings are present.' -ForegroundColor Green
 
       - name: Build client MSI and EXE
         shell: pwsh
@@ -200,14 +233,14 @@ jobs:
         run: |
           $required = @(
             'artifacts\publish\ConfGTS.Client.exe',
-            'artifacts\msi\ConfGTS-0.18.13-x64.msi',
-            'artifacts\setup\ConfGTS-Setup-0.18.13-x64.exe',
+            'artifacts\msi\ConfGTS-0.18.14-x64.msi',
+            'artifacts\setup\ConfGTS-Setup-0.18.14-x64.exe',
             'artifacts\server-publish\ConfGTSServer.exe',
             'artifacts\server-publish\ConfGTS.Server.Settings.exe',
             'artifacts\server-publish\ffmpeg.exe',
-            'artifacts\server-msi\ConfGTS-Server-0.18.13-x64.msi',
-            'artifacts\server-setup\ConfGTS-Server-Setup-0.18.13-x64.exe',
-            'artifacts\ConfGTS-Server-0.18.13-Source.zip'
+            'artifacts\server-msi\ConfGTS-Server-0.18.14-x64.msi',
+            'artifacts\server-setup\ConfGTS-Server-Setup-0.18.14-x64.exe',
+            'artifacts\ConfGTS-Server-0.18.14-Source.zip'
           )
           foreach ($file in $required) {
             if (!(Test-Path $file)) { throw "Missing artifact: $file" }
@@ -235,18 +268,31 @@ jobs:
             Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
             throw "Published ConfGTS client failed the real startup test."
           }
+
+          $second = Start-Process (Resolve-Path 'artifacts\publish\ConfGTS.Client.exe').Path -PassThru
+          if (!$second.WaitForExit(5000)) {
+            Stop-Process -Id $second.Id -Force -ErrorAction SilentlyContinue
+            Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+            throw "Second ConfGTS launch did not hand off to the existing instance."
+          }
+          if ($p.HasExited) {
+            throw "Existing ConfGTS instance exited during single-instance handoff."
+          }
+          Write-Host 'Single-instance desktop relaunch handoff passed.' -ForegroundColor Green
+
           Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
 
       - name: Test client MSI installation, shortcuts and startup
         shell: pwsh
         run: |
-          $msi = (Resolve-Path 'artifacts\msi\ConfGTS-0.18.13-x64.msi').Path
-          $installedExe = Join-Path $env:ProgramFiles 'ГТС\ConfGTS\ConfGTS.Client.exe'
+          $msi = (Resolve-Path 'artifacts\msi\ConfGTS-0.18.14-x64.msi').Path
+          $customClientDir = Join-Path $env:ProgramFiles 'ConfGTS-CI-Custom'
+          $installedExe = Join-Path $customClientDir 'ConfGTS.Client.exe'
           $startMenu = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\ConfGTS\ConfGTS.lnk'
           $desktop = Join-Path ([Environment]::GetFolderPath('CommonDesktopDirectory')) 'ConfGTS.lnk'
           $startupLog = "$env:LOCALAPPDATA\ConfGTS\logs\startup.log"
 
-          $install = Start-Process msiexec.exe -ArgumentList @('/i', "`"$msi`"", '/qn', '/norestart') -Wait -PassThru
+          $install = Start-Process msiexec.exe -ArgumentList @('/i', "`"$msi`"", "INSTALLFOLDER=`"$customClientDir`"", '/qn', '/norestart') -Wait -PassThru
           if ($install.ExitCode -ne 0) { throw "Client MSI install failed: $($install.ExitCode)" }
           foreach ($path in @($installedExe,$startMenu,$desktop)) {
             if (!(Test-Path $path)) { throw "Client MSI expected path missing: $path" }
@@ -270,13 +316,14 @@ jobs:
       - name: Test client EXE installation, shortcuts and startup
         shell: pwsh
         run: |
-          $setup = (Resolve-Path 'artifacts\setup\ConfGTS-Setup-0.18.13-x64.exe').Path
-          $installedExe = Join-Path $env:ProgramFiles 'ГТС\ConfGTS\ConfGTS.Client.exe'
+          $setup = (Resolve-Path 'artifacts\setup\ConfGTS-Setup-0.18.14-x64.exe').Path
+          $customClientDir = 'C:\ConfGTS-CI-EXE-Custom'
+          $installedExe = Join-Path $customClientDir 'ConfGTS.Client.exe'
           $startMenu = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\ConfGTS\ConfGTS.lnk'
           $desktop = Join-Path ([Environment]::GetFolderPath('CommonDesktopDirectory')) 'ConfGTS.lnk'
           $startupLog = "$env:LOCALAPPDATA\ConfGTS\logs\startup.log"
 
-          $p = Start-Process $setup -ArgumentList @('/quiet','/norestart') -Wait -PassThru
+          $p = Start-Process $setup -ArgumentList @('/quiet','/norestart',("InstallFolder=" + $customClientDir + "\")) -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw "Client EXE install failed: $($p.ExitCode)" }
           foreach ($path in @($installedExe,$startMenu,$desktop)) {
             if (!(Test-Path $path)) { throw "Client EXE expected path missing: $path" }
@@ -312,8 +359,8 @@ jobs:
             throw "ConfGTS Server health endpoint did not become ready: $Uri"
           }
 
-          $msi = (Resolve-Path 'artifacts\server-msi\ConfGTS-Server-0.18.13-x64.msi').Path
-          $serverDir = Join-Path $env:ProgramFiles 'ГТС\ConfGTS Server'
+          $msi = (Resolve-Path 'artifacts\server-msi\ConfGTS-Server-0.18.14-x64.msi').Path
+          $serverDir = Join-Path $env:ProgramFiles 'ConfGTS-Server-CI-Custom'
           $serverExe = Join-Path $serverDir 'ConfGTSServer.exe'
           $settingsExe = Join-Path $serverDir 'ConfGTS.Server.Settings.exe'
           $ffmpegExe = Join-Path $serverDir 'ffmpeg.exe'
@@ -323,7 +370,7 @@ jobs:
           $menuWeb = Join-Path $menuDir 'ConfGTS Server Web.lnk'
 
           Remove-Item "$env:ProgramData\ConfGTS" -Recurse -Force -ErrorAction SilentlyContinue
-          $install = Start-Process msiexec.exe -ArgumentList @('/i', "`"$msi`"", '/qn', '/norestart') -Wait -PassThru
+          $install = Start-Process msiexec.exe -ArgumentList @('/i', "`"$msi`"", "INSTALLFOLDER=`"$serverDir`"", '/qn', '/norestart') -Wait -PassThru
           if ($install.ExitCode -ne 0) { throw "Server MSI install failed: $($install.ExitCode)" }
 
           foreach ($path in @($serverExe,$settingsExe,$ffmpegExe,$desktop,$menuSettings,$menuWeb)) {
@@ -334,7 +381,7 @@ jobs:
           if ($svc.Status -ne 'Running') { Start-Service 'ConfGTSServer' }
 
           $health = Wait-Server 'http://127.0.0.1:8090/health'
-          if ($health.version -ne '0.18.13') { throw "Unexpected server version: $($health.version)" }
+          if ($health.version -ne '0.18.14') { throw "Unexpected server version: $($health.version)" }
 
           $nameHealth = Wait-Server ("http://{0}:8090/health" -f $env:COMPUTERNAME)
           if ($nameHealth.ok -ne $true) { throw "Server is not reachable by Windows computer name." }
@@ -414,21 +461,21 @@ jobs:
             throw "ConfGTS Server health endpoint did not become ready: $Uri"
           }
 
-          $setup = (Resolve-Path 'artifacts\server-setup\ConfGTS-Server-Setup-0.18.13-x64.exe').Path
-          $serverDir = Join-Path $env:ProgramFiles 'ГТС\ConfGTS Server'
+          $setup = (Resolve-Path 'artifacts\server-setup\ConfGTS-Server-Setup-0.18.14-x64.exe').Path
+          $serverDir = 'C:\ConfGTS-Server-CI-EXE-Custom'
           $serverExe = Join-Path $serverDir 'ConfGTSServer.exe'
           $settingsExe = Join-Path $serverDir 'ConfGTS.Server.Settings.exe'
           $ffmpegExe = Join-Path $serverDir 'ffmpeg.exe'
 
           Remove-Item "$env:ProgramData\ConfGTS" -Recurse -Force -ErrorAction SilentlyContinue
-          $p = Start-Process $setup -ArgumentList @('/quiet','/norestart') -Wait -PassThru
+          $p = Start-Process $setup -ArgumentList @('/quiet','/norestart',("InstallFolder=" + $serverDir + "\")) -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw "Server EXE install failed: $($p.ExitCode)" }
           foreach ($path in @($serverExe,$settingsExe,$ffmpegExe)) {
             if (!(Test-Path $path)) { throw "Server EXE expected path missing: $path" }
           }
 
           $health = Wait-Server 'http://127.0.0.1:8090/health'
-          if ($health.version -ne '0.18.13') { throw "Unexpected server version: $($health.version)" }
+          if ($health.version -ne '0.18.14') { throw "Unexpected server version: $($health.version)" }
           [void](Wait-Server ("http://{0}:8090/health" -f $env:COMPUTERNAME))
 
           $web = Invoke-WebRequest -Uri 'http://127.0.0.1:8090/server-login' -UseBasicParsing -TimeoutSec 5
@@ -443,11 +490,11 @@ jobs:
         shell: pwsh
         run: |
           $files = @(
-            'artifacts\msi\ConfGTS-0.18.13-x64.msi',
-            'artifacts\setup\ConfGTS-Setup-0.18.13-x64.exe',
-            'artifacts\server-msi\ConfGTS-Server-0.18.13-x64.msi',
-            'artifacts\server-setup\ConfGTS-Server-Setup-0.18.13-x64.exe',
-            'artifacts\ConfGTS-Server-0.18.13-Source.zip'
+            'artifacts\msi\ConfGTS-0.18.14-x64.msi',
+            'artifacts\setup\ConfGTS-Setup-0.18.14-x64.exe',
+            'artifacts\server-msi\ConfGTS-Server-0.18.14-x64.msi',
+            'artifacts\server-setup\ConfGTS-Server-Setup-0.18.14-x64.exe',
+            'artifacts\ConfGTS-Server-0.18.14-Source.zip'
           )
           $lines = foreach ($file in $files) {
             $hash = Get-FileHash $file -Algorithm SHA256
@@ -459,16 +506,16 @@ jobs:
       - name: Upload tested packages
         uses: actions/upload-artifact@v4
         with:
-          name: ConfGTS-0.18.13-tested
+          name: ConfGTS-0.18.14-tested
           if-no-files-found: error
           retention-days: 30
           compression-level: 0
           path: |
-            artifacts/msi/ConfGTS-0.18.13-x64.msi
-            artifacts/setup/ConfGTS-Setup-0.18.13-x64.exe
-            artifacts/server-msi/ConfGTS-Server-0.18.13-x64.msi
-            artifacts/server-setup/ConfGTS-Server-Setup-0.18.13-x64.exe
-            artifacts/ConfGTS-Server-0.18.13-Source.zip
+            artifacts/msi/ConfGTS-0.18.14-x64.msi
+            artifacts/setup/ConfGTS-Setup-0.18.14-x64.exe
+            artifacts/server-msi/ConfGTS-Server-0.18.14-x64.msi
+            artifacts/server-setup/ConfGTS-Server-Setup-0.18.14-x64.exe
+            artifacts/ConfGTS-Server-0.18.14-Source.zip
             artifacts/SHA256SUMS.txt
 
       - name: Publish GitHub Release
@@ -477,34 +524,34 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release delete v0.18.13 --cleanup-tag --yes 2>$null
-          if ($LASTEXITCODE -ne 0) { Write-Host 'No previous v0.18.13 release to delete.' }
+          gh release delete v0.18.14 --cleanup-tag --yes 2>$null
+          if ($LASTEXITCODE -ne 0) { Write-Host 'No previous v0.18.14 release to delete.' }
           @'
-          ConfGTS 0.18.13.
+          ConfGTS 0.18.14.
 
-          Трей и завершение клиента:
-          - нажатие на крестик и Alt+F4 больше не завершают ConfGTS, а скрывают главное окно в системный трей;
-          - ПКМ по значку ConfGTS в трее открывает команды «Закрыть приложение», «Выйти из аккаунта» и «Настройки»;
-          - «Закрыть приложение» завершает процесс, но не выполняет API-разлогин и не удаляет сохранённые учетные данные;
-          - двойной щелчок по значку в трее возвращает главное окно;
-          - активная конференция не завершается при обычном скрытии окна в трей.
+          Окно и системный трей:
+          - ConfGTS теперь работает как один экземпляр: повторный запуск ярлыка активирует уже запущенный клиент из трея вместо запуска второго процесса;
+          - при скрытии в трей запоминается состояние окна, включая полноэкранное/развернутое состояние;
+          - открытие настроек больше не переводит развернутое окно в обычный размер.
 
-          Авторизация:
-          - если включено «Запомнить меня», данные из Windows Credential Manager используются для автоматического входа сразу при запуске;
-          - окно авторизации при таком запуске не показывается даже на первом кадре;
-          - явная команда «Выйти из аккаунта» завершает серверную сессию, удаляет сохранённые учетные данные и возвращает форму входа;
-          - обычное закрытие приложения не считается выходом из аккаунта.
+          Навигация и контакты:
+          - левая панель уменьшена до 210 пикселей;
+          - добавлены отдельные квадратные кнопки «Конференции» и «Контакты»;
+          - разделы переключаются: в режиме конференций показываются только конференции, в режиме контактов — только контакты;
+          - экран «Конференции» показывает все доступные пользователю конференции;
+          - в основной области также появляется отдельный список контактов;
+          - ФИО из AD формата «Фамилия Имя Отчество» отображается компактно как «Имя О. Фамилия.».
 
-          Интерфейс:
-          - левая панель уменьшена с 330 до 270 пикселей;
-          - нижние действия заменены компактными квадратными иконками «Настройки», «Контакты» и «Выйти из аккаунта»;
-          - общие настройки ConfGTS объединяют параметры подключения и переход к существующим настройкам камеры, микрофона, динамиков и громкости;
-          - отдельные настройки устройств внутри активной конференции сохранены.
+          Установка:
+          - клиентский и серверный MSI получили страницу выбора каталога установки;
+          - EXE-установщики показывают Options и передают выбранный InstallFolder в MSI;
+          - установка в нестандартный каталог проверяется Windows CI.
 
-          Исправления 0.18.12 сохранены:
-          - USB-микрофоны перечисляются через Windows MediaDevice endpoint selectors;
-          - Bluetooth Hands-Free микрофон не открывается скрытно при входе и не должен дёргать внешний Bluetooth-адаптер;
-          - камера и WebView2 продолжают работать при переключении на другое окно Windows;
-          - серверные записи после завершения проходят ffmpeg remux и поддерживают перемотку.
+          Серверные записи:
+          - в ConfGTS Server Settings добавлен выбор каталога хранения записей;
+          - существующие записи безопасно копируются в новый каталог;
+          - выбранный путь сохраняется штатным параметром recording_dir в конфигурации сервера, поэтому обновления не должны сбрасывать выбранный каталог.
+
+          Все исправления 0.18.13 и 0.18.12 сохранены.
           '@ | Set-Content 'artifacts\RELEASE-NOTES.md' -Encoding utf8
-          gh release create v0.18.13 'artifacts\msi\ConfGTS-0.18.13-x64.msi' 'artifacts\setup\ConfGTS-Setup-0.18.13-x64.exe' 'artifacts\server-msi\ConfGTS-Server-0.18.13-x64.msi' 'artifacts\server-setup\ConfGTS-Server-Setup-0.18.13-x64.exe' 'artifacts\ConfGTS-Server-0.18.13-Source.zip' 'artifacts\SHA256SUMS.txt' --target '${{ github.sha }}' --title 'ConfGTS 0.18.13' --notes-file 'artifacts\RELEASE-NOTES.md'
+          gh release create v0.18.14 'artifacts\msi\ConfGTS-0.18.14-x64.msi' 'artifacts\setup\ConfGTS-Setup-0.18.14-x64.exe' 'artifacts\server-msi\ConfGTS-Server-0.18.14-x64.msi' 'artifacts\server-setup\ConfGTS-Server-Setup-0.18.14-x64.exe' 'artifacts\ConfGTS-Server-0.18.14-Source.zip' 'artifacts\SHA256SUMS.txt' --target '${{ github.sha }}' --title 'ConfGTS 0.18.14' --notes-file 'artifacts\RELEASE-NOTES.md'

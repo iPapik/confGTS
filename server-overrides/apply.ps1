@@ -2,7 +2,7 @@ $ErrorActionPreference = "Stop"
 
 $root = Split-Path -Parent $PSScriptRoot
 
-Write-Host "Applying ConfGTS Server 0.18.13 overlays..." -ForegroundColor Cyan
+Write-Host "Applying ConfGTS Server 0.18.14 overlays..." -ForegroundColor Cyan
 
 Copy-Item (Join-Path $PSScriptRoot "src\*") (Join-Path $root "src") -Recurse -Force
 Copy-Item (Join-Path $PSScriptRoot "server\*") (Join-Path $root "server") -Recurse -Force
@@ -85,7 +85,7 @@ func (s *Store) CanUploadEndedSessionRecording(sessionID, username string, maxAg
     }
 }
 
-# 0.18.13 stores browser MP4 directly. If MP4 recording is unavailable,
+# 0.18.14 stores browser MP4 directly. If MP4 recording is unavailable,
 # Chromium falls back to WebM; WebM is a Matroska subset and is stored as .mkv.
 $recordingContainerPattern = '(?ms)^\s*fn := sessionID \+ "_" \+ safe \+ "\.webm"\r?\n\s*r := Recording\{ID: newID\("rec_"\), RoomID: roomID, SessionID: sessionID, CaptureID: safe, Recorder: recorder, FileName: fn, StartedAt: time\.Now\(\), ContentType: contentType\}'
 $recordingContainerReplacement = @'
@@ -107,8 +107,8 @@ Set-Content $storePath $store -Encoding UTF8 -NoNewline
 
 $mainPath = Join-Path $root "server\main.go"
 $main = Get-Content $mainPath -Raw -Encoding UTF8
-$main = $main.Replace('const Version = "0.16.0"', 'const Version = "0.18.13"')
-$main = $main.Replace('const Version = "0.16.1"', 'const Version = "0.18.13"')
+$main = $main.Replace('const Version = "0.16.0"', 'const Version = "0.18.14"')
+$main = $main.Replace('const Version = "0.16.1"', 'const Version = "0.18.14"')
 $main = $main.Replace('cfg.ListenAddr == ":8090" {', 'cfg.ListenAddr == ":8090" || cfg.ListenAddr == "0.0.0.0:8090" {')
 $main = $main.Replace('cfg.ListenAddr = "127.0.0.1:" + strconv.Itoa(n)', 'cfg.ListenAddr = "0.0.0.0:" + strconv.Itoa(n)')
 $main = $main.Replace('addr = "127.0.0.1:8090"', 'addr = "0.0.0.0:8090"')
@@ -566,16 +566,16 @@ $versionTargets = @(
     (Join-Path $root "src\ConfGTS.Server.Settings"),
     (Join-Path $root "build-server.ps1")
 )
-$versionPattern = '(?<!\d)0\.(?:16\.[01]|17\.0|18\.(?:0|1|2|7|11))(?!\d)'
+$versionPattern = '(?<!\d)0\.(?:16\.[01]|17\.0|18\.(?:0|1|2|7|11|13))(?!\d)'
 foreach ($target in $versionTargets) {
     if (Test-Path $target -PathType Leaf) {
         $text = Get-Content $target -Raw -Encoding UTF8
-        $text = [regex]::Replace($text, $versionPattern, '0.18.13')
+        $text = [regex]::Replace($text, $versionPattern, '0.18.14')
         Set-Content $target $text -Encoding UTF8 -NoNewline
     } elseif (Test-Path $target -PathType Container) {
         Get-ChildItem $target -Recurse -File -Include *.go,*.cs,*.xaml,*.csproj,*.wxs,*.wixproj,*.ps1 | ForEach-Object {
             $text = Get-Content $_.FullName -Raw -Encoding UTF8
-            $patched = [regex]::Replace($text, $versionPattern, '0.18.13')
+            $patched = [regex]::Replace($text, $versionPattern, '0.18.14')
             if ($patched -ne $text) {
                 Set-Content $_.FullName $patched -Encoding UTF8 -NoNewline
             }
@@ -655,6 +655,23 @@ if (Test-Path $serverPackage) {
     if (-not $wxs.Contains('Id="ConfGTSIcon"')) {
         $wxs = $wxs.Replace('    <Feature Id="MainFeature"', '    <Icon Id="ConfGTSIcon" SourceFile="!(bindpath.assets)\ConfGTS.ico" />' + [Environment]::NewLine + '    <Property Id="ARPPRODUCTICON" Value="ConfGTSIcon" />' + [Environment]::NewLine + [Environment]::NewLine + '    <Feature Id="MainFeature"')
     }
+    if (-not $wxs.Contains('schemas/v4/wxs/ui')) {
+        $wxs = $wxs.Replace(
+            '<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">',
+            '<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"' + [Environment]::NewLine +
+            '     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">')
+    }
+    if (-not $wxs.Contains('<ui:WixUI')) {
+        $wxs = $wxs.Replace(
+            '    <MediaTemplate EmbedCab="yes" />',
+            '    <MediaTemplate EmbedCab="yes" />' + [Environment]::NewLine + [Environment]::NewLine +
+            '    <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />')
+    }
+    if (-not $wxs.Contains('Codepage="1251"')) {
+        $wxs = $wxs.Replace(
+            '      Language="1049"',
+            '      Language="1049"' + [Environment]::NewLine + '      Codepage="1251"')
+    }
     Set-Content $serverPackage $wxs -Encoding UTF8 -NoNewline
 }
 
@@ -664,6 +681,14 @@ if (Test-Path $serverMsiProject) {
     if (-not $proj.Contains('BindName="assets"')) {
         $proj = $proj.Replace('    <BindPath Include="$(PublishDir)" BindName="publish" />', '    <BindPath Include="$(PublishDir)" BindName="publish" />' + [Environment]::NewLine + '    <BindPath Include="$(MSBuildThisFileDirectory)..\Assets" BindName="assets" />')
     }
+    if (-not $proj.Contains('WixToolset.UI.wixext')) {
+        $proj = [regex]::Replace(
+            $proj,
+            '  <ItemGroup>',
+            '  <ItemGroup>' + [Environment]::NewLine +
+            '    <PackageReference Include="WixToolset.UI.wixext" Version="5.0.2" />',
+            1)
+    }
     Set-Content $serverMsiProject $proj -Encoding UTF8 -NoNewline
 }
 
@@ -671,7 +696,26 @@ $serverBundle = Join-Path $root "Installer\Server\Bootstrapper\Bundle.wxs"
 if (Test-Path $serverBundle) {
     $bundle = Get-Content $serverBundle -Raw -Encoding UTF8
     if (-not $bundle.Contains('IconSourceFile=')) {
-        $bundle = $bundle.Replace('          Version="0.18.13"', '          Version="0.18.13"' + [Environment]::NewLine + '          IconSourceFile="!(bindpath.assets)\ConfGTS.ico"')
+        $bundle = $bundle.Replace('          Version="0.18.14"', '          Version="0.18.14"' + [Environment]::NewLine + '          IconSourceFile="!(bindpath.assets)\ConfGTS.ico"')
+    }
+    if (-not $bundle.Contains('Variable Name="InstallFolder"')) {
+        $bundle = $bundle.Replace(
+            '    <BootstrapperApplication>',
+            '    <Variable Name="InstallFolder" Type="string" Value="[ProgramFiles64Folder]ГТС\ConfGTS Server\" Persisted="yes" bal:Overridable="yes" />' +
+            [Environment]::NewLine + [Environment]::NewLine + '    <BootstrapperApplication>')
+    }
+    $bundle = $bundle.Replace('SuppressOptionsUI="yes"', 'SuppressOptionsUI="no"')
+    $bundle = $bundle.Replace(
+        'LaunchTarget="[ProgramFiles64Folder]ГТС\ConfGTS Server\ConfGTS.Server.Settings.exe"',
+        'LaunchTarget="[InstallFolder]ConfGTS.Server.Settings.exe"')
+    if ($bundle -notmatch '<MsiProperty Name="INSTALLFOLDER" Value="\[InstallFolder\]"') {
+        $bundle = [regex]::Replace(
+            $bundle,
+            '<MsiPackage([^>]+SourceFile="[^"]+ConfGTS-Server-0\.18\.14-x64\.msi"[^>]*)\s*/>',
+            '<MsiPackage$1>' + [Environment]::NewLine +
+            '        <MsiProperty Name="INSTALLFOLDER" Value="[InstallFolder]" />' + [Environment]::NewLine +
+            '      </MsiPackage>',
+            1)
     }
     Set-Content $serverBundle $bundle -Encoding UTF8 -NoNewline
 }

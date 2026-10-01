@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using ConfGTS.Client.Services;
@@ -41,7 +42,11 @@ public sealed class MainWindow : Window
     private readonly StackPanel _contactsPanel = new();
     private readonly StackPanel _conferenceSidebarPanel = new();
     private readonly StackPanel _mainConferencePanel = new();
+    private readonly StackPanel _mainContactsPanel = new();
     private readonly TextBlock _dashboardServerText = new();
+    private readonly StackPanel _conferenceSidebarSection = new();
+    private readonly StackPanel _contactsSidebarSection = new();
+    private IReadOnlyList<RoomInfo> _lastRooms = Array.Empty<RoomInfo>();
 
     private bool _passwordVisible;
     private bool _dashboardRefreshRunning;
@@ -56,10 +61,12 @@ public sealed class MainWindow : Window
     private IntPtr _trayIconHandle;
     private bool _trayOwnsIconHandle;
     private bool _trayInitialized;
+    private bool _wasMaximizedBeforeHide;
+    private bool _showingContacts;
     private int _dashboardFailureCount;
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _dashboardTimer;
     private readonly Grid _mainContentHost = new();
-    private readonly ColumnDefinition _dashboardSidebarColumn = new() { Width = new GridLength(270) };
+    private readonly ColumnDefinition _dashboardSidebarColumn = new() { Width = new GridLength(210) };
     private Border? _dashboardSidebar;
     private ScrollViewer? _dashboardMainScroll;
     private MediaSettingsPanel? _mediaSettingsPanel;
@@ -344,7 +351,7 @@ public sealed class MainWindow : Window
 
         panel.Children.Add(new TextBlock
         {
-            Text = "Версия 0.18.13 beta  |  © ГТС, 2026",
+            Text = "Версия 0.18.14 beta  |  © ГТС, 2026",
             FontSize = 11,
             Foreground = Brush("#8A9BAC"),
             HorizontalAlignment = HorizontalAlignment.Center,
@@ -370,7 +377,7 @@ public sealed class MainWindow : Window
 
         _dashboardSidebar = sidebar;
 
-        var sideGrid = new Grid { Padding = new Thickness(18, 18, 18, 16) };
+        var sideGrid = new Grid { Padding = new Thickness(12, 16, 12, 14) };
         sideGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         sideGrid.RowDefinitions.Add(new RowDefinition());
         sideGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -380,25 +387,24 @@ public sealed class MainWindow : Window
         var sidebarScroll = new ScrollViewer
         {
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            Margin = new Thickness(0, 18, 0, 12)
+            Margin = new Thickness(0, 14, 0, 10)
         };
         Grid.SetRow(sidebarScroll, 1);
 
-        var sidebarContent = new StackPanel { Spacing = 12 };
-        sidebarContent.Children.Add(SidebarSectionHeader("\uE787", "Конференции"));
+        var sidebarContent = new StackPanel { Spacing = 10 };
+
+        _conferenceSidebarSection.Spacing = 8;
+        _conferenceSidebarSection.Children.Add(SidebarSectionHeader("\uE787", "Конференции"));
         _conferenceSidebarPanel.Spacing = 6;
-        sidebarContent.Children.Add(_conferenceSidebarPanel);
+        _conferenceSidebarSection.Children.Add(_conferenceSidebarPanel);
+        sidebarContent.Children.Add(_conferenceSidebarSection);
 
-        sidebarContent.Children.Add(new Border
-        {
-            Height = 1,
-            Background = Brush("#E2ECF2"),
-            Margin = new Thickness(0, 8, 0, 4)
-        });
-
-        sidebarContent.Children.Add(SidebarSectionHeader("\uE716", "Контакты"));
+        _contactsSidebarSection.Spacing = 8;
+        _contactsSidebarSection.Children.Add(SidebarSectionHeader("\uE716", "Контакты"));
         _contactsPanel.Spacing = 6;
-        sidebarContent.Children.Add(_contactsPanel);
+        _contactsSidebarSection.Children.Add(_contactsPanel);
+        _contactsSidebarSection.Visibility = Visibility.Collapsed;
+        sidebarContent.Children.Add(_contactsSidebarSection);
 
         sidebarScroll.Content = sidebarContent;
         sideGrid.Children.Add(sidebarScroll);
@@ -409,17 +415,21 @@ public sealed class MainWindow : Window
         var footerActions = new StackPanel
         {
             Orientation = Orientation.Horizontal,
-            Spacing = 8,
+            Spacing = 6,
             HorizontalAlignment = HorizontalAlignment.Left
         };
 
-        var settings = SidebarIconButton("\uE713", "Настройки");
-        settings.Click += ApplicationSettingsButton_Click;
-        footerActions.Children.Add(settings);
+        var conferences = SidebarIconButton("\uE787", "Конференции");
+        conferences.Click += ConferencesButton_Click;
+        footerActions.Children.Add(conferences);
 
         var contacts = SidebarIconButton("\uE716", "Контакты");
         contacts.Click += ContactsButton_Click;
         footerActions.Children.Add(contacts);
+
+        var settings = SidebarIconButton("\uE713", "Настройки");
+        settings.Click += ApplicationSettingsButton_Click;
+        footerActions.Children.Add(settings);
 
         var logout = SidebarIconButton("\uE72B", "Выйти из аккаунта");
         logout.Click += LogoutButton_Click;
@@ -453,6 +463,10 @@ public sealed class MainWindow : Window
         _mainConferencePanel.Spacing = 14;
         main.Children.Add(_mainConferencePanel);
 
+        _mainContactsPanel.Spacing = 12;
+        _mainContactsPanel.Visibility = Visibility.Collapsed;
+        main.Children.Add(_mainContactsPanel);
+
         mainScroll.Content = main;
         _mainContentHost.Children.Add(mainScroll);
         Grid.SetColumn(_mainContentHost, 1);
@@ -466,14 +480,14 @@ public sealed class MainWindow : Window
         var row = new StackPanel
         {
             Orientation = Orientation.Horizontal,
-            Spacing = 12
+            Spacing = 9
         };
 
         var logo = new Border
         {
-            Width = 46,
-            Height = 46,
-            CornerRadius = new CornerRadius(13),
+            Width = 42,
+            Height = 42,
+            CornerRadius = new CornerRadius(12),
             Background = Gradient()
         };
         logo.Child = new TextBlock
@@ -490,14 +504,14 @@ public sealed class MainWindow : Window
         text.Children.Add(new TextBlock
         {
             Text = "ConfGTS",
-            FontSize = 18,
+            FontSize = 16,
             FontWeight = FontWeights.Bold,
             Foreground = Brush(Navy)
         });
         text.Children.Add(new TextBlock
         {
             Text = "Городские тепловые сети",
-            FontSize = 10,
+            FontSize = 9,
             Foreground = Brush(Muted)
         });
 
@@ -511,6 +525,7 @@ public sealed class MainWindow : Window
         _contactsPanel.Children.Clear();
         _conferenceSidebarPanel.Children.Clear();
         _mainConferencePanel.Children.Clear();
+        _mainContactsPanel.Children.Clear();
 
         _contactsPanel.Children.Add(MutedText("Загрузка контактов…"));
         _conferenceSidebarPanel.Children.Add(MutedText("Загрузка конференций…"));
@@ -543,6 +558,7 @@ public sealed class MainWindow : Window
             var rooms = (await roomsTask)
                 .Where(r => r.Enabled)
                 .ToList();
+            _lastRooms = rooms;
             var contacts = (await contactsTask)
                 .OrderBy(c => c.EffectiveName, StringComparer.CurrentCultureIgnoreCase)
                 .ToList();
@@ -550,6 +566,7 @@ public sealed class MainWindow : Window
             RenderContacts(contacts);
             RenderConferences(rooms);
             RenderMainConference(rooms);
+            ShowDashboardSection(_showingContacts);
 
             _dashboardFailureCount = 0;
             _dashboardServerText.Text = "●  Подключено";
@@ -574,48 +591,63 @@ public sealed class MainWindow : Window
     private void RenderContacts(IReadOnlyList<ContactInfo> contacts)
     {
         _contactsPanel.Children.Clear();
+        _mainContactsPanel.Children.Clear();
+
+        _mainContactsPanel.Children.Add(new TextBlock
+        {
+            Text = "Контакты",
+            FontSize = 28,
+            FontWeight = FontWeights.Bold,
+            Foreground = Brush(Navy),
+            Margin = new Thickness(0, 0, 0, 6)
+        });
 
         if (contacts.Count == 0)
         {
             _contactsPanel.Children.Add(MutedText("Пока нет известных контактов"));
+            _mainContactsPanel.Children.Add(Card(new TextBlock
+            {
+                Text = "Пока нет известных контактов",
+                Foreground = Brush(Muted),
+                FontSize = 14
+            }));
             return;
         }
 
-        foreach (var contact in contacts.Take(40))
+        foreach (var contact in contacts.Take(80))
         {
-            var row = new Grid
-            {
-                Padding = new Thickness(5, 6, 5, 6)
-            };
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            row.ColumnDefinitions.Add(new ColumnDefinition());
+            var displayName = FormatContactName(contact.EffectiveName);
+            var initials = Initials(displayName);
 
-            var initials = Initials(contact.EffectiveName);
+            var sideRow = new Grid { Padding = new Thickness(3, 5, 3, 5) };
+            sideRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            sideRow.ColumnDefinitions.Add(new ColumnDefinition());
+
             var avatar = new Border
             {
-                Width = 34,
-                Height = 34,
-                CornerRadius = new CornerRadius(17),
+                Width = 32,
+                Height = 32,
+                CornerRadius = new CornerRadius(16),
                 Background = Brush("#E1F2F7"),
-                Margin = new Thickness(0, 0, 9, 0)
+                Margin = new Thickness(0, 0, 8, 0)
             };
             avatar.Child = new TextBlock
             {
                 Text = initials,
-                FontSize = 11,
+                FontSize = 10,
                 FontWeight = FontWeights.SemiBold,
                 Foreground = Brush(Blue),
                 HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Center
             };
-            row.Children.Add(avatar);
+            sideRow.Children.Add(avatar);
 
             var details = new StackPanel { Spacing = 0, VerticalAlignment = VerticalAlignment.Center };
             Grid.SetColumn(details, 1);
             details.Children.Add(new TextBlock
             {
-                Text = contact.EffectiveName,
-                FontSize = 13,
+                Text = displayName,
+                FontSize = 12,
                 FontWeight = FontWeights.SemiBold,
                 Foreground = Brush(Text),
                 TextTrimming = TextTrimming.CharacterEllipsis
@@ -623,13 +655,53 @@ public sealed class MainWindow : Window
             details.Children.Add(new TextBlock
             {
                 Text = string.IsNullOrWhiteSpace(contact.Email) ? contact.Username : contact.Email,
-                FontSize = 10,
+                FontSize = 9,
                 Foreground = Brush(Muted),
                 TextTrimming = TextTrimming.CharacterEllipsis
             });
-            row.Children.Add(details);
+            sideRow.Children.Add(details);
+            _contactsPanel.Children.Add(sideRow);
 
-            _contactsPanel.Children.Add(row);
+            var mainRow = new Grid { Padding = new Thickness(4, 2, 4, 2) };
+            mainRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            mainRow.ColumnDefinitions.Add(new ColumnDefinition());
+
+            var mainAvatar = new Border
+            {
+                Width = 42,
+                Height = 42,
+                CornerRadius = new CornerRadius(21),
+                Background = Brush("#E1F2F7"),
+                Margin = new Thickness(0, 0, 12, 0)
+            };
+            mainAvatar.Child = new TextBlock
+            {
+                Text = initials,
+                FontSize = 12,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = Brush(Blue),
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            mainRow.Children.Add(mainAvatar);
+
+            var mainDetails = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
+            Grid.SetColumn(mainDetails, 1);
+            mainDetails.Children.Add(new TextBlock
+            {
+                Text = displayName,
+                FontSize = 15,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = Brush(Text)
+            });
+            mainDetails.Children.Add(new TextBlock
+            {
+                Text = string.IsNullOrWhiteSpace(contact.Email) ? contact.Username : contact.Email,
+                FontSize = 11,
+                Foreground = Brush(Muted)
+            });
+            mainRow.Children.Add(mainDetails);
+            _mainContactsPanel.Children.Add(Card(mainRow));
         }
     }
 
@@ -684,11 +756,7 @@ public sealed class MainWindow : Window
     {
         _mainConferencePanel.Children.Clear();
 
-        var room = rooms.FirstOrDefault(r =>
-                       r.Name.Equals("Общая конференция", StringComparison.OrdinalIgnoreCase))
-                   ?? rooms.FirstOrDefault();
-
-        if (room is null)
+        if (rooms.Count == 0)
         {
             _mainConferencePanel.Children.Add(Card(new StackPanel
             {
@@ -696,14 +764,14 @@ public sealed class MainWindow : Window
                 {
                     new TextBlock
                     {
-                        Text = "Постоянная конференция не найдена",
+                        Text = "Доступные конференции не найдены",
                         FontSize = 22,
                         FontWeight = FontWeights.SemiBold,
                         Foreground = Brush(Navy)
                     },
                     new TextBlock
                     {
-                        Text = "Проверьте конференции на сервере ConfGTS.",
+                        Text = "Проверьте список конференций на сервере ConfGTS.",
                         Foreground = Brush(Muted),
                         Margin = new Thickness(0, 6, 0, 0)
                     }
@@ -712,64 +780,90 @@ public sealed class MainWindow : Window
             return;
         }
 
-        var conferenceCard = new Border
+        if (rooms.Count > 1)
         {
-            Background = Brush("#FFFFFF"),
-            BorderBrush = Brush(Line),
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(22),
-            Padding = new Thickness(30),
-            MinHeight = 190
-        };
+            _mainConferencePanel.Children.Add(new TextBlock
+            {
+                Text = "Конференции",
+                FontSize = 28,
+                FontWeight = FontWeights.Bold,
+                Foreground = Brush(Navy),
+                Margin = new Thickness(0, 0, 0, 4)
+            });
+        }
 
-        var grid = new Grid();
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        grid.ColumnDefinitions.Add(new ColumnDefinition());
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
-        var icon = new Border
+        foreach (var room in rooms)
         {
-            Width = 78,
-            Height = 78,
-            CornerRadius = new CornerRadius(20),
-            Background = Gradient(),
-            Margin = new Thickness(0, 0, 22, 0)
-        };
-        icon.Child = new FontIcon
-        {
-            Glyph = "\uE714",
-            FontSize = 32,
-            Foreground = Brush("#FFFFFF"),
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center
-        };
-        grid.Children.Add(icon);
+            var conferenceCard = new Border
+            {
+                Background = Brush("#FFFFFF"),
+                BorderBrush = Brush(Line),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(22),
+                Padding = new Thickness(26),
+                MinHeight = 150
+            };
 
-        var detail = new StackPanel
-        {
-            Spacing = 7,
-            VerticalAlignment = VerticalAlignment.Center
-        };
-        Grid.SetColumn(detail, 1);
-        detail.Children.Add(new TextBlock
-        {
-            Text = room.Name,
-            FontSize = 30,
-            FontWeight = FontWeights.Bold,
-            Foreground = Brush(Navy)
-        });
-        grid.Children.Add(detail);
+            var grid = new Grid();
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            grid.ColumnDefinitions.Add(new ColumnDefinition());
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-        var join = PrimaryActionButton("Подключиться");
-        join.MinWidth = 170;
-        join.VerticalAlignment = VerticalAlignment.Center;
-        join.Margin = new Thickness(24, 0, 0, 0);
-        join.Click += async (_, _) => await OpenConferenceAsync(room);
-        Grid.SetColumn(join, 2);
-        grid.Children.Add(join);
+            var icon = new Border
+            {
+                Width = 66,
+                Height = 66,
+                CornerRadius = new CornerRadius(18),
+                Background = Gradient(),
+                Margin = new Thickness(0, 0, 20, 0)
+            };
+            icon.Child = new FontIcon
+            {
+                Glyph = "\uE714",
+                FontSize = 28,
+                Foreground = Brush("#FFFFFF"),
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            grid.Children.Add(icon);
 
-        conferenceCard.Child = grid;
-        _mainConferencePanel.Children.Add(conferenceCard);
+            var detail = new StackPanel
+            {
+                Spacing = 5,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            Grid.SetColumn(detail, 1);
+            detail.Children.Add(new TextBlock
+            {
+                Text = room.Name,
+                FontSize = 24,
+                FontWeight = FontWeights.Bold,
+                Foreground = Brush(Navy),
+                TextWrapping = TextWrapping.Wrap
+            });
+            if (!string.IsNullOrWhiteSpace(room.Description))
+            {
+                detail.Children.Add(new TextBlock
+                {
+                    Text = room.Description,
+                    FontSize = 12,
+                    Foreground = Brush(Muted),
+                    TextWrapping = TextWrapping.Wrap
+                });
+            }
+            grid.Children.Add(detail);
+
+            var join = PrimaryActionButton("Подключиться");
+            join.MinWidth = 150;
+            join.VerticalAlignment = VerticalAlignment.Center;
+            join.Margin = new Thickness(20, 0, 0, 0);
+            join.Click += async (_, _) => await OpenConferenceAsync(room);
+            Grid.SetColumn(join, 2);
+            grid.Children.Add(join);
+
+            conferenceCard.Child = grid;
+            _mainConferencePanel.Children.Add(conferenceCard);
+        }
     }
 
     private async Task OpenConferenceAsync(RoomInfo room)
@@ -1881,7 +1975,7 @@ public sealed class MainWindow : Window
 
         _dashboardSidebarColumn.Width = conferenceMode
             ? new GridLength(0)
-            : new GridLength(270);
+            : new GridLength(210);
 
         Grid.SetColumn(_mainContentHost, conferenceMode ? 0 : 1);
         Grid.SetColumnSpan(_mainContentHost, conferenceMode ? 2 : 1);
@@ -1898,7 +1992,7 @@ public sealed class MainWindow : Window
             _dashboardSidebar.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
 
         _dashboardSidebarColumn.Width = visible
-            ? new GridLength(270)
+            ? new GridLength(210)
             : new GridLength(0);
 
         Grid.SetColumn(_mainContentHost, visible ? 1 : 0);
@@ -1936,10 +2030,32 @@ public sealed class MainWindow : Window
         _loginError.Visibility = Visibility.Collapsed;
     }
 
+    private async void ConferencesButton_Click(object sender, RoutedEventArgs e)
+    {
+        await CloseInlineSettingsAsync();
+        RenderMainConference(_lastRooms);
+        ShowDashboardSection(showContacts: false);
+    }
+
     private async void ContactsButton_Click(object sender, RoutedEventArgs e)
     {
         await CloseInlineSettingsAsync();
-        _contactsPanel.StartBringIntoView();
+        ShowDashboardSection(showContacts: true);
+    }
+
+    private void ShowDashboardSection(bool showContacts)
+    {
+        _showingContacts = showContacts;
+        _conferenceSidebarSection.Visibility = showContacts ? Visibility.Collapsed : Visibility.Visible;
+        _contactsSidebarSection.Visibility = showContacts ? Visibility.Visible : Visibility.Collapsed;
+        _mainConferencePanel.Visibility = showContacts ? Visibility.Collapsed : Visibility.Visible;
+        _mainContactsPanel.Visibility = showContacts ? Visibility.Visible : Visibility.Collapsed;
+
+        if (_dashboardMainScroll is not null)
+        {
+            _dashboardMainScroll.Visibility = Visibility.Visible;
+            _dashboardMainScroll.ChangeView(null, 0, null, true);
+        }
     }
 
     private async void ApplicationSettingsButton_Click(object sender, RoutedEventArgs e)
@@ -2304,10 +2420,10 @@ public sealed class MainWindow : Window
     {
         var button = new Button
         {
-            Width = 42,
-            Height = 42,
-            MinWidth = 42,
-            MinHeight = 42,
+            Width = 40,
+            Height = 40,
+            MinWidth = 40,
+            MinHeight = 40,
             Padding = new Thickness(0),
             HorizontalContentAlignment = HorizontalAlignment.Center,
             VerticalContentAlignment = VerticalAlignment.Center,
@@ -2389,6 +2505,43 @@ public sealed class MainWindow : Window
         FontSize = 11,
         TextWrapping = TextWrapping.Wrap
     };
+
+    private static string FormatContactName(string value)
+    {
+        var parts = (value ?? "")
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        if (parts.Length == 0)
+            return "";
+
+        var textInfo = CultureInfo.GetCultureInfo("ru-RU").TextInfo;
+        string NamePart(string part)
+        {
+            var normalized = (part ?? "").Trim();
+            if (normalized.Length == 0)
+                return normalized;
+            return textInfo.ToTitleCase(normalized.ToLower(CultureInfo.GetCultureInfo("ru-RU")));
+        }
+
+        // AD display names are normally "Фамилия Имя Отчество".
+        // Requested presentation: "Иван И. Иванов.".
+        if (parts.Length >= 3)
+        {
+            var surname = NamePart(parts[0]);
+            var firstName = NamePart(parts[1]);
+            var patronymic = NamePart(parts[2]);
+            return $"{firstName} {char.ToUpper(patronymic[0], CultureInfo.GetCultureInfo("ru-RU"))}. {surname}.";
+        }
+
+        if (parts.Length == 2)
+        {
+            var surname = NamePart(parts[0]);
+            var firstName = NamePart(parts[1]);
+            return $"{firstName} {surname}.";
+        }
+
+        return NamePart(parts[0]);
+    }
 
     private static string Initials(string value)
     {
@@ -2571,8 +2724,11 @@ public sealed class MainWindow : Window
 
     private void HideMainWindow()
     {
-        if (_hwnd != IntPtr.Zero)
-            ShowWindow(_hwnd, SwHide);
+        if (_hwnd == IntPtr.Zero)
+            return;
+
+        _wasMaximizedBeforeHide = IsZoomed(_hwnd);
+        ShowWindow(_hwnd, SwHide);
     }
 
     private void ShowMainWindow()
@@ -2580,11 +2736,22 @@ public sealed class MainWindow : Window
         if (_hwnd == IntPtr.Zero)
             _hwnd = WindowNative.GetWindowHandle(this);
 
-        ShowWindow(_hwnd, SwShow);
-        ShowWindow(_hwnd, SwRestore);
+        // Do not call SW_RESTORE on an already visible maximized window:
+        // that was the reason opening Settings unexpectedly shrank the client.
+        if (!IsWindowVisible(_hwnd))
+        {
+            ShowWindow(_hwnd, _wasMaximizedBeforeHide ? SwShowMaximized : SwShow);
+        }
+        else if (IsIconic(_hwnd))
+        {
+            ShowWindow(_hwnd, _wasMaximizedBeforeHide ? SwShowMaximized : SwRestore);
+        }
+
         Activate();
         SetForegroundWindow(_hwnd);
     }
+
+    public void ActivateFromExternalLaunch() => ShowMainWindow();
 
     private void ExitApplication()
     {
@@ -2651,6 +2818,7 @@ public sealed class MainWindow : Window
     private const int IdiApplication = 32512;
     private const int SwHide = 0;
     private const int SwShow = 5;
+    private const int SwShowMaximized = 3;
     private const int SwRestore = 9;
 
     private delegate IntPtr SubclassProc(
@@ -2768,6 +2936,18 @@ public sealed class MainWindow : Window
 
     [DllImport("user32.dll")]
     private static extern bool ShowWindow(IntPtr hWnd, int command);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool IsWindowVisible(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool IsIconic(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool IsZoomed(IntPtr hWnd);
 
     [DllImport("user32.dll")]
     private static extern bool SetForegroundWindow(IntPtr hWnd);

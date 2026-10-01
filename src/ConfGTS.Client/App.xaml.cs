@@ -6,6 +6,13 @@ namespace ConfGTS.Client;
 
 public partial class App : Application
 {
+    private const string InstanceMutexName = @"Local\ConfGTS.Client.SingleInstance";
+    private const string ActivationEventName = @"Local\ConfGTS.Client.Activate";
+
+    private Mutex? _instanceMutex;
+    private EventWaitHandle? _activationEvent;
+    private CancellationTokenSource? _activationCancellation;
+
     public static MainWindow? MainWindowInstance { get; private set; }
 
     public App()
@@ -32,9 +39,24 @@ public partial class App : Application
         try
         {
             StartupDiagnostics.Log("OnLaunched started.");
+
+            _instanceMutex = new Mutex(true, InstanceMutexName, out var isFirstInstance);
+            if (!isFirstInstance)
+            {
+                StartupDiagnostics.Log("Another ConfGTS instance is already running; activating it.");
+                SignalExistingInstance();
+                Environment.Exit(0);
+                return;
+            }
+
+            _activationEvent = new EventWaitHandle(false, EventResetMode.AutoReset, ActivationEventName);
+            _activationCancellation = new CancellationTokenSource();
+
             MainWindowInstance = new MainWindow();
             MainWindowInstance.Activate();
             StartupDiagnostics.Log("Main window activated.");
+
+            _ = Task.Run(() => ActivationLoop(_activationCancellation.Token));
 
             if (Environment.GetCommandLineArgs().Any(
                     x => string.Equals(x, "--self-test-settings", StringComparison.OrdinalIgnoreCase)))
@@ -57,6 +79,49 @@ public partial class App : Application
             StartupDiagnostics.Log("Fatal error while creating the main window.", ex);
             ShowFatalError(ex);
             throw;
+        }
+    }
+
+    private void ActivationLoop(CancellationToken cancellationToken)
+    {
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            try
+            {
+                if (_activationEvent is null)
+                    return;
+
+                var signaled = WaitHandle.WaitAny(
+                    new WaitHandle[] { _activationEvent, cancellationToken.WaitHandle });
+
+                if (signaled != 0 || cancellationToken.IsCancellationRequested)
+                    return;
+
+                MainWindowInstance?.DispatcherQueue.TryEnqueue(() =>
+                    MainWindowInstance?.ActivateFromExternalLaunch());
+            }
+            catch (Exception ex)
+            {
+                StartupDiagnostics.Log("Single-instance activation loop failed.", ex);
+                return;
+            }
+        }
+    }
+
+    private static void SignalExistingInstance()
+    {
+        for (var attempt = 0; attempt < 20; attempt++)
+        {
+            try
+            {
+                using var activation = EventWaitHandle.OpenExisting(ActivationEventName);
+                activation.Set();
+                return;
+            }
+            catch (WaitHandleCannotBeOpenedException)
+            {
+                Thread.Sleep(50);
+            }
         }
     }
 
