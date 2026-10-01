@@ -6,7 +6,7 @@
           Version="0.18.14"
           IconSourceFile="!(bindpath.assets)\ConfGTS.ico"
           UpgradeCode="9C5D2F51-7B95-4D1E-9842-83450C9315E7">
-    <Variable Name="InstallFolder" Type="string" Value="[ProgramFiles64Folder]ГТС\ConfGTS" />
+    <Variable Name="InstallFolder" Type="formatted" Value="[ProgramFiles64Folder]ГТС\ConfGTS" Persisted="yes" bal:Overridable="yes" />
     <BootstrapperApplication>
       <bal:WixStandardBootstrapperApplication
           Theme="hyperlinkLicense"
