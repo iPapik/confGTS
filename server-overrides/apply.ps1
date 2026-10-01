@@ -697,7 +697,7 @@ if (Test-Path $serverBundle) {
     if (-not $bundle.Contains('Name="InstallFolder"')) {
         $bundle = $bundle.Replace(
             '    <BootstrapperApplication>',
-            '    <Variable Name="InstallFolder" Type="string" Value="[ProgramFiles64Folder]ГТС\ConfGTS Server" />' + [Environment]::NewLine + '    <BootstrapperApplication>')
+            '    <Variable Name="InstallFolder" Type="formatted" Value="[ProgramFiles64Folder]ГТС\ConfGTS Server" Persisted="yes" bal:Overridable="yes" />' + [Environment]::NewLine + '    <BootstrapperApplication>')
     }
     $bundle = $bundle.Replace(
         'LaunchTarget="[ProgramFiles64Folder]ГТС\ConfGTS Server\ConfGTS.Server.Settings.exe"',
