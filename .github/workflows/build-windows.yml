@@ -181,8 +181,15 @@ jobs:
             'ShowApplicationSettingsAsync',
             'RememberedCredentials.Clear',
             'PerformLoginAsync\(autoLogin: true\)',
+            'ActivateFromExternalLaunch',
+            'InstanceMutexName',
+            'ActivationEventName',
+            'ShowDashboardSection',
+            'FormatContactName',
             'SidebarIconButton',
-            'new GridLength\(270\)'
+            'new GridLength\(210\)',
+            'IsZoomed',
+            'IsWindowVisible'
           )) {
             if ($client -notmatch $token) { throw "Missing client feature marker: $token" }
           }
