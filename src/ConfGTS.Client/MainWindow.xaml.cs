@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using ConfGTS.Client.Services;
 using Microsoft.UI;
@@ -44,10 +45,21 @@ public sealed class MainWindow : Window
 
     private bool _passwordVisible;
     private bool _dashboardRefreshRunning;
+    private bool _allowWindowClose;
+    private bool _autoLoginPending;
+    private bool _autoLoginStarted;
+    private bool _settingsOpenedFromLogin;
+    private bool _isAuthenticated;
+    private IntPtr _hwnd;
+    private AppWindow? _appWindow;
+    private SubclassProc? _traySubclassProc;
+    private IntPtr _trayIconHandle;
+    private bool _trayOwnsIconHandle;
+    private bool _trayInitialized;
     private int _dashboardFailureCount;
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _dashboardTimer;
     private readonly Grid _mainContentHost = new();
-    private readonly ColumnDefinition _dashboardSidebarColumn = new() { Width = new GridLength(330) };
+    private readonly ColumnDefinition _dashboardSidebarColumn = new() { Width = new GridLength(270) };
     private Border? _dashboardSidebar;
     private ScrollViewer? _dashboardMainScroll;
     private MediaSettingsPanel? _mediaSettingsPanel;
@@ -67,7 +79,29 @@ public sealed class MainWindow : Window
         SetWindowSize(1400, 900);
 
         Content = BuildRoot();
-        LoadRememberedCredentials();
+        var hasRememberedCredentials = LoadRememberedCredentials();
+        if (hasRememberedCredentials)
+        {
+            // Do not flash the authorization form when "Запомнить меня" is enabled.
+            // The first activated frame is already the main shell while credentials
+            // are validated against the server in the background.
+            _autoLoginPending = true;
+            _loginView.Visibility = Visibility.Collapsed;
+            _dashboardView.Visibility = Visibility.Visible;
+            RenderLoadingDashboard();
+        }
+
+        InitializeTray();
+        Activated += async (_, _) =>
+        {
+            if (!_autoLoginPending || _autoLoginStarted)
+                return;
+
+            _autoLoginStarted = true;
+            _autoLoginPending = false;
+            await PerformLoginAsync(autoLogin: true);
+        };
+
         StartupDiagnostics.Log("MainWindow C# UI construction completed.");
 
         _ = CheckServerAsync();
@@ -198,7 +232,7 @@ public sealed class MainWindow : Window
             Content = new FontIcon
             {
                 Glyph = "\uE890",
-                FontSize = 16,
+                FontSize = 15,
                 Foreground = Brush("#5D7891")
             }
         };
@@ -310,7 +344,7 @@ public sealed class MainWindow : Window
 
         panel.Children.Add(new TextBlock
         {
-            Text = "Версия 0.18.12 beta  |  © ГТС, 2026",
+            Text = "Версия 0.18.13 beta  |  © ГТС, 2026",
             FontSize = 11,
             Foreground = Brush("#8A9BAC"),
             HorizontalAlignment = HorizontalAlignment.Center,
@@ -336,7 +370,7 @@ public sealed class MainWindow : Window
 
         _dashboardSidebar = sidebar;
 
-        var sideGrid = new Grid { Padding = new Thickness(22, 20, 22, 18) };
+        var sideGrid = new Grid { Padding = new Thickness(18, 18, 18, 16) };
         sideGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         sideGrid.RowDefinitions.Add(new RowDefinition());
         sideGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -346,7 +380,7 @@ public sealed class MainWindow : Window
         var sidebarScroll = new ScrollViewer
         {
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            Margin = new Thickness(0, 24, 0, 14)
+            Margin = new Thickness(0, 18, 0, 12)
         };
         Grid.SetRow(sidebarScroll, 1);
 
@@ -372,17 +406,30 @@ public sealed class MainWindow : Window
         var footer = new StackPanel { Spacing = 9 };
         Grid.SetRow(footer, 2);
 
-        var deviceSettings = SidebarButton("\uE713", "Настройки устройств");
-        deviceSettings.Click += MediaSettingsButton_Click;
-        footer.Children.Add(deviceSettings);
+        var footerActions = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 8,
+            HorizontalAlignment = HorizontalAlignment.Left
+        };
 
-        var logout = SidebarButton("\uE72B", "Выйти");
+        var settings = SidebarIconButton("\uE713", "Настройки");
+        settings.Click += ApplicationSettingsButton_Click;
+        footerActions.Children.Add(settings);
+
+        var contacts = SidebarIconButton("\uE716", "Контакты");
+        contacts.Click += ContactsButton_Click;
+        footerActions.Children.Add(contacts);
+
+        var logout = SidebarIconButton("\uE72B", "Выйти из аккаунта");
         logout.Click += LogoutButton_Click;
-        footer.Children.Add(logout);
+        footerActions.Children.Add(logout);
+
+        footer.Children.Add(footerActions);
 
         _dashboardServerText.Text = "●  Сервер доступен";
         _dashboardServerText.Foreground = Brush("#278E55");
-        _dashboardServerText.FontSize = 12;
+        _dashboardServerText.FontSize = 11;
         _dashboardServerText.TextWrapping = TextWrapping.Wrap;
         _dashboardServerText.Margin = new Thickness(2, 0, 0, 0);
         footer.Children.Add(_dashboardServerText);
@@ -424,16 +471,16 @@ public sealed class MainWindow : Window
 
         var logo = new Border
         {
-            Width = 52,
-            Height = 52,
-            CornerRadius = new CornerRadius(15),
+            Width = 46,
+            Height = 46,
+            CornerRadius = new CornerRadius(13),
             Background = Gradient()
         };
         logo.Child = new TextBlock
         {
             Text = "ГТС",
             Foreground = Brush("#FFFFFF"),
-            FontSize = 16,
+            FontSize = 15,
             FontWeight = FontWeights.Bold,
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center
@@ -443,14 +490,14 @@ public sealed class MainWindow : Window
         text.Children.Add(new TextBlock
         {
             Text = "ConfGTS",
-            FontSize = 20,
+            FontSize = 18,
             FontWeight = FontWeights.Bold,
             Foreground = Brush(Navy)
         });
         text.Children.Add(new TextBlock
         {
             Text = "Городские тепловые сети",
-            FontSize = 11,
+            FontSize = 10,
             Foreground = Brush(Muted)
         });
 
@@ -1761,7 +1808,7 @@ public sealed class MainWindow : Window
         await PerformLoginAsync();
     }
 
-    private async Task PerformLoginAsync()
+    private async Task PerformLoginAsync(bool autoLogin = false)
     {
         if (!_loginButton.IsEnabled)
             return;
@@ -1779,6 +1826,7 @@ public sealed class MainWindow : Window
             else
                 RememberedCredentials.Clear();
 
+            _isAuthenticated = true;
             _loginView.Visibility = Visibility.Collapsed;
             _dashboardView.Visibility = Visibility.Visible;
             RenderLoadingDashboard();
@@ -1788,6 +1836,13 @@ public sealed class MainWindow : Window
         }
         catch (Exception ex)
         {
+            _isAuthenticated = false;
+            if (autoLogin)
+            {
+                _dashboardView.Visibility = Visibility.Collapsed;
+                _loginView.Visibility = Visibility.Visible;
+            }
+
             _loginError.Text = "Не удалось войти: " + ex.Message;
             _loginError.Visibility = Visibility.Visible;
         }
@@ -1797,21 +1852,23 @@ public sealed class MainWindow : Window
         }
     }
 
-    private void LoadRememberedCredentials()
+    private bool LoadRememberedCredentials()
     {
         try
         {
             if (!RememberedCredentials.TryRead(out var username, out var password))
-                return;
+                return false;
 
             _loginBox.Text = username;
             _passwordBox.Password = password;
             _rememberMeBox.IsChecked = true;
-            StartupDiagnostics.Log("Remembered login restored from Windows Credential Manager.");
+            StartupDiagnostics.Log("Remembered login restored from Windows Credential Manager; automatic login scheduled.");
+            return true;
         }
         catch (Exception ex)
         {
             StartupDiagnostics.Log("Failed to restore remembered login.", ex);
+            return false;
         }
     }
 
@@ -1824,7 +1881,7 @@ public sealed class MainWindow : Window
 
         _dashboardSidebarColumn.Width = conferenceMode
             ? new GridLength(0)
-            : new GridLength(330);
+            : new GridLength(270);
 
         Grid.SetColumn(_mainContentHost, conferenceMode ? 0 : 1);
         Grid.SetColumnSpan(_mainContentHost, conferenceMode ? 2 : 1);
@@ -1841,7 +1898,7 @@ public sealed class MainWindow : Window
             _dashboardSidebar.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
 
         _dashboardSidebarColumn.Width = visible
-            ? new GridLength(330)
+            ? new GridLength(270)
             : new GridLength(0);
 
         Grid.SetColumn(_mainContentHost, visible ? 1 : 0);
@@ -1857,16 +1914,37 @@ public sealed class MainWindow : Window
         StartupDiagnostics.Log("Settings smoke test completed.");
     }
 
-    private async void LogoutButton_Click(object sender, RoutedEventArgs e)
+    private async void LogoutButton_Click(object sender, RoutedEventArgs e) =>
+        await LogoutAsync();
+
+    private async Task LogoutAsync()
     {
         StopDashboardTimer();
         await CloseInlineSettingsAsync();
         await LeaveConferenceAsync(false);
         await _api.LogoutAsync();
+
+        // "Выйти из аккаунта" is explicit: remove the saved secret so the next
+        // application start cannot silently authenticate the previous user.
+        RememberedCredentials.Clear();
+        _rememberMeBox.IsChecked = false;
+        _passwordBox.Password = "";
+        _isAuthenticated = false;
+
         _dashboardView.Visibility = Visibility.Collapsed;
         _loginView.Visibility = Visibility.Visible;
-        if (_rememberMeBox.IsChecked != true)
-            _passwordBox.Password = "";
+        _loginError.Visibility = Visibility.Collapsed;
+    }
+
+    private async void ContactsButton_Click(object sender, RoutedEventArgs e)
+    {
+        await CloseInlineSettingsAsync();
+        _contactsPanel.StartBringIntoView();
+    }
+
+    private async void ApplicationSettingsButton_Click(object sender, RoutedEventArgs e)
+    {
+        await ShowApplicationSettingsAsync();
     }
 
     private async void MediaSettingsButton_Click(object sender, RoutedEventArgs e)
@@ -1902,6 +1980,13 @@ public sealed class MainWindow : Window
         // are open and makes the panel a true in-conference overlay.
         _settingsOpenedFromConference = _conferenceHost is not null && !string.IsNullOrWhiteSpace(_activeRoomId);
         _settingsConferenceSidebarVisible = _conferenceSidebarVisible;
+        _settingsOpenedFromLogin = _loginView.Visibility == Visibility.Visible;
+
+        if (_settingsOpenedFromLogin)
+        {
+            _loginView.Visibility = Visibility.Collapsed;
+            _dashboardView.Visibility = Visibility.Visible;
+        }
 
         var panel = new MediaSettingsPanel();
         panel.CloseRequested += async (_, _) =>
@@ -1934,9 +2019,17 @@ public sealed class MainWindow : Window
         {
             _mediaSettingsPanel = null;
             _mainContentHost.Children.Remove(panel);
+            var restoreLogin = _settingsOpenedFromLogin;
             _settingsOpenedFromConference = false;
+            _settingsConferenceSidebarVisible = false;
+            _settingsOpenedFromLogin = false;
 
-            if (_conferenceHost is not null && !string.IsNullOrWhiteSpace(_activeRoomId))
+            if (restoreLogin)
+            {
+                _dashboardView.Visibility = Visibility.Collapsed;
+                _loginView.Visibility = Visibility.Visible;
+            }
+            else if (_conferenceHost is not null && !string.IsNullOrWhiteSpace(_activeRoomId))
             {
                 if (_dashboardMainScroll is not null)
                     _dashboardMainScroll.Visibility = Visibility.Collapsed;
@@ -1958,9 +2051,11 @@ public sealed class MainWindow : Window
                                  _conferenceHost is not null &&
                                  !string.IsNullOrWhiteSpace(_activeRoomId);
         var restoreSidebar = _settingsConferenceSidebarVisible;
+        var restoreLogin = _settingsOpenedFromLogin;
 
         _settingsOpenedFromConference = false;
         _settingsConferenceSidebarVisible = false;
+        _settingsOpenedFromLogin = false;
 
         if (panel is not null)
         {
@@ -1979,12 +2074,24 @@ public sealed class MainWindow : Window
             return;
         }
 
+        if (restoreLogin)
+        {
+            _dashboardView.Visibility = Visibility.Collapsed;
+            _loginView.Visibility = Visibility.Visible;
+            return;
+        }
+
         if (_dashboardMainScroll is not null)
             _dashboardMainScroll.Visibility = Visibility.Visible;
     }
 
-    private async void SettingsButton_Click(object sender, RoutedEventArgs e)
+    private async void SettingsButton_Click(object sender, RoutedEventArgs e) =>
+        await ShowApplicationSettingsAsync();
+
+    private async Task ShowApplicationSettingsAsync()
     {
+        ShowMainWindow();
+
         var box = new TextBox
         {
             Text = _api.BaseUrl,
@@ -1994,7 +2101,14 @@ public sealed class MainWindow : Window
         };
         StyleLoginTextBox(box);
 
-        var panel = new StackPanel { Spacing = 8 };
+        var panel = new StackPanel { Spacing = 12 };
+        panel.Children.Add(new TextBlock
+        {
+            Text = "Подключение к серверу",
+            FontSize = 16,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = Brush(Navy)
+        });
         panel.Children.Add(box);
         panel.Children.Add(new TextBlock
         {
@@ -2005,10 +2119,30 @@ public sealed class MainWindow : Window
             TextWrapping = TextWrapping.Wrap
         });
 
+        panel.Children.Add(new Border
+        {
+            Height = 1,
+            Background = Brush(Line),
+            Margin = new Thickness(0, 5, 0, 3)
+        });
+
+        panel.Children.Add(new TextBlock
+        {
+            Text = "Устройства",
+            FontSize = 16,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = Brush(Navy)
+        });
+
+        var deviceSettings = SidebarButton("\uE713", "Камера, микрофон, динамики и громкость");
+        panel.Children.Add(deviceSettings);
+
+        bool openDeviceSettings = false;
+
         var dialog = new ContentDialog
         {
             XamlRoot = (Content as FrameworkElement)?.XamlRoot,
-            Title = "Настройки подключения",
+            Title = "Настройки ConfGTS",
             Content = panel,
             PrimaryButtonText = "Сохранить",
             SecondaryButtonText = "Сбросить доверие HTTPS",
@@ -2016,7 +2150,19 @@ public sealed class MainWindow : Window
             DefaultButton = ContentDialogButton.Primary
         };
 
+        deviceSettings.Click += (_, _) =>
+        {
+            openDeviceSettings = true;
+            dialog.Hide();
+        };
+
         var result = await dialog.ShowAsync();
+        if (openDeviceSettings)
+        {
+            await ShowInlineSettingsAsync();
+            return;
+        }
+
         if (result == ContentDialogResult.Primary)
         {
             try
@@ -2154,6 +2300,34 @@ public sealed class MainWindow : Window
         return button;
     }
 
+    private static Button SidebarIconButton(string glyph, string tooltip)
+    {
+        var button = new Button
+        {
+            Width = 42,
+            Height = 42,
+            MinWidth = 42,
+            MinHeight = 42,
+            Padding = new Thickness(0),
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+            VerticalContentAlignment = VerticalAlignment.Center,
+            Background = Brush("#F3F9FC"),
+            Foreground = Brush(Navy),
+            BorderBrush = Brush("#D9E7EF"),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(9),
+            Content = new FontIcon
+            {
+                Glyph = glyph,
+                FontSize = 16,
+                Foreground = Brush(Blue)
+            }
+        };
+        ApplyButtonVisuals(button, "#F3F9FC", "#E4F2F8", "#D6EAF3", Navy);
+        ToolTipService.SetToolTip(button, tooltip);
+        return button;
+    }
+
     private static Button IconButton(string glyph, string tooltip)
     {
         var button = new Button
@@ -2241,6 +2415,362 @@ public sealed class MainWindow : Window
         brush.GradientStops.Add(new GradientStop { Color = Color(Cyan), Offset = 1 });
         return brush;
     }
+
+    private void InitializeTray()
+    {
+        try
+        {
+            _hwnd = WindowNative.GetWindowHandle(this);
+            var id = Win32Interop.GetWindowIdFromWindow(_hwnd);
+            _appWindow = AppWindow.GetFromWindowId(id);
+            if (_appWindow is not null)
+                _appWindow.Closing += AppWindow_Closing;
+
+            _traySubclassProc = TrayWindowSubclass;
+            if (!SetWindowSubclass(_hwnd, _traySubclassProc, TraySubclassId, UIntPtr.Zero))
+                throw new InvalidOperationException("Не удалось подключить обработчик системного трея.");
+
+            var processPath = Environment.ProcessPath;
+            if (!string.IsNullOrWhiteSpace(processPath) &&
+                ExtractIconEx(processPath, 0, out var largeIcon, out var smallIcon, 1) > 0)
+            {
+                if (smallIcon != IntPtr.Zero)
+                {
+                    _trayIconHandle = smallIcon;
+                    _trayOwnsIconHandle = true;
+                    if (largeIcon != IntPtr.Zero)
+                        DestroyIcon(largeIcon);
+                }
+                else if (largeIcon != IntPtr.Zero)
+                {
+                    _trayIconHandle = largeIcon;
+                    _trayOwnsIconHandle = true;
+                }
+            }
+
+            if (_trayIconHandle == IntPtr.Zero)
+            {
+                _trayIconHandle = LoadIcon(IntPtr.Zero, new IntPtr(IdiApplication));
+                _trayOwnsIconHandle = false;
+            }
+
+            var data = CreateTrayIconData();
+            if (!ShellNotifyIcon(NimAdd, ref data))
+                throw new InvalidOperationException("Windows не приняла значок ConfGTS в системный трей.");
+
+            _trayInitialized = true;
+            Closed += (_, _) => DisposeTrayIcon();
+            StartupDiagnostics.Log("System tray icon initialized.");
+        }
+        catch (Exception ex)
+        {
+            StartupDiagnostics.Log("Failed to initialize system tray icon.", ex);
+            DisposeTrayIcon();
+        }
+    }
+
+    private NotifyIconData CreateTrayIconData() => new()
+    {
+        cbSize = Marshal.SizeOf<NotifyIconData>(),
+        hWnd = _hwnd,
+        uID = TrayIconId,
+        uFlags = NifMessage | NifIcon | NifTip,
+        uCallbackMessage = TrayCallbackMessage,
+        hIcon = _trayIconHandle,
+        szTip = "ConfGTS"
+    };
+
+    private IntPtr TrayWindowSubclass(
+        IntPtr hWnd,
+        uint message,
+        IntPtr wParam,
+        IntPtr lParam,
+        UIntPtr subclassId,
+        UIntPtr refData)
+    {
+        if (message == TrayCallbackMessage)
+        {
+            var mouseMessage = unchecked((uint)lParam.ToInt64());
+
+            if (mouseMessage == WmRButtonUp || mouseMessage == WmContextMenu)
+            {
+                ShowTrayMenu();
+                return IntPtr.Zero;
+            }
+
+            if (mouseMessage == WmLButtonDblClk)
+            {
+                ShowMainWindow();
+                return IntPtr.Zero;
+            }
+        }
+
+        return DefSubclassProc(hWnd, message, wParam, lParam);
+    }
+
+    private void ShowTrayMenu()
+    {
+        var menu = CreatePopupMenu();
+        if (menu == IntPtr.Zero)
+            return;
+
+        try
+        {
+            AppendMenu(menu, MfString, TrayCommandExit, "Закрыть приложение");
+            AppendMenu(menu, MfString, TrayCommandLogout, "Выйти из аккаунта");
+            AppendMenu(menu, MfString, TrayCommandSettings, "Настройки");
+
+            if (!GetCursorPos(out var point))
+                return;
+
+            SetForegroundWindow(_hwnd);
+            var command = TrackPopupMenuEx(
+                menu,
+                TpmRightButton | TpmReturnCmd | TpmNonotify,
+                point.X,
+                point.Y,
+                _hwnd,
+                IntPtr.Zero);
+
+            switch (command)
+            {
+                case TrayCommandExit:
+                    ExitApplication();
+                    break;
+                case TrayCommandLogout:
+                    DispatcherQueue.TryEnqueue(async () =>
+                    {
+                        ShowMainWindow();
+                        await LogoutAsync();
+                    });
+                    break;
+                case TrayCommandSettings:
+                    DispatcherQueue.TryEnqueue(async () =>
+                    {
+                        ShowMainWindow();
+                        await ShowApplicationSettingsAsync();
+                    });
+                    break;
+            }
+        }
+        finally
+        {
+            DestroyMenu(menu);
+        }
+    }
+
+    private void AppWindow_Closing(AppWindow sender, AppWindowClosingEventArgs args)
+    {
+        if (_allowWindowClose)
+            return;
+
+        args.Cancel = true;
+        HideMainWindow();
+        StartupDiagnostics.Log("Main window hidden to system tray.");
+    }
+
+    private void HideMainWindow()
+    {
+        if (_hwnd != IntPtr.Zero)
+            ShowWindow(_hwnd, SwHide);
+    }
+
+    private void ShowMainWindow()
+    {
+        if (_hwnd == IntPtr.Zero)
+            _hwnd = WindowNative.GetWindowHandle(this);
+
+        ShowWindow(_hwnd, SwShow);
+        ShowWindow(_hwnd, SwRestore);
+        Activate();
+        SetForegroundWindow(_hwnd);
+    }
+
+    private void ExitApplication()
+    {
+        _allowWindowClose = true;
+        DisposeTrayIcon();
+        Close();
+    }
+
+    private void DisposeTrayIcon()
+    {
+        if (_trayInitialized && _hwnd != IntPtr.Zero)
+        {
+            try
+            {
+                var data = CreateTrayIconData();
+                ShellNotifyIcon(NimDelete, ref data);
+            }
+            catch
+            {
+            }
+        }
+
+        _trayInitialized = false;
+
+        if (_traySubclassProc is not null && _hwnd != IntPtr.Zero)
+        {
+            try
+            {
+                RemoveWindowSubclass(_hwnd, _traySubclassProc, TraySubclassId);
+            }
+            catch
+            {
+            }
+            _traySubclassProc = null;
+        }
+
+        if (_trayOwnsIconHandle && _trayIconHandle != IntPtr.Zero)
+        {
+            try { DestroyIcon(_trayIconHandle); } catch { }
+        }
+
+        _trayIconHandle = IntPtr.Zero;
+        _trayOwnsIconHandle = false;
+    }
+
+    private const uint TrayIconId = 1;
+    private const uint TraySubclassId = 0x43475453;
+    private const uint TrayCallbackMessage = 0x8000 + 73; // WM_APP + 73
+    private const uint NifMessage = 0x00000001;
+    private const uint NifIcon = 0x00000002;
+    private const uint NifTip = 0x00000004;
+    private const uint NimAdd = 0x00000000;
+    private const uint NimDelete = 0x00000002;
+    private const uint WmRButtonUp = 0x0205;
+    private const uint WmLButtonDblClk = 0x0203;
+    private const uint WmContextMenu = 0x007B;
+    private const uint MfString = 0x00000000;
+    private const uint TpmRightButton = 0x0002;
+    private const uint TpmNonotify = 0x0080;
+    private const uint TpmReturnCmd = 0x0100;
+    private const uint TrayCommandExit = 1001;
+    private const uint TrayCommandLogout = 1002;
+    private const uint TrayCommandSettings = 1003;
+    private const int IdiApplication = 32512;
+    private const int SwHide = 0;
+    private const int SwShow = 5;
+    private const int SwRestore = 9;
+
+    private delegate IntPtr SubclassProc(
+        IntPtr hWnd,
+        uint message,
+        IntPtr wParam,
+        IntPtr lParam,
+        UIntPtr subclassId,
+        UIntPtr refData);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Point
+    {
+        public int X;
+        public int Y;
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct NotifyIconData
+    {
+        public int cbSize;
+        public IntPtr hWnd;
+        public uint uID;
+        public uint uFlags;
+        public uint uCallbackMessage;
+        public IntPtr hIcon;
+
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)]
+        public string szTip;
+
+        public uint dwState;
+        public uint dwStateMask;
+
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 256)]
+        public string szInfo;
+
+        public uint uTimeoutOrVersion;
+
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 64)]
+        public string szInfoTitle;
+
+        public uint dwInfoFlags;
+        public Guid guidItem;
+        public IntPtr hBalloonIcon;
+    }
+
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode, EntryPoint = "Shell_NotifyIconW")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool ShellNotifyIcon(uint message, ref NotifyIconData data);
+
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode, EntryPoint = "ExtractIconExW")]
+    private static extern uint ExtractIconEx(
+        string file,
+        int iconIndex,
+        out IntPtr largeIcon,
+        out IntPtr smallIcon,
+        uint icons);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "LoadIconW")]
+    private static extern IntPtr LoadIcon(IntPtr instance, IntPtr iconName);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool DestroyIcon(IntPtr icon);
+
+    [DllImport("comctl32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetWindowSubclass(
+        IntPtr hWnd,
+        SubclassProc callback,
+        UIntPtr subclassId,
+        UIntPtr refData);
+
+    [DllImport("comctl32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool RemoveWindowSubclass(
+        IntPtr hWnd,
+        SubclassProc callback,
+        UIntPtr subclassId);
+
+    [DllImport("comctl32.dll")]
+    private static extern IntPtr DefSubclassProc(
+        IntPtr hWnd,
+        uint message,
+        IntPtr wParam,
+        IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr CreatePopupMenu();
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "AppendMenuW")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool AppendMenu(
+        IntPtr menu,
+        uint flags,
+        uint itemId,
+        string text);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool DestroyMenu(IntPtr menu);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetCursorPos(out Point point);
+
+    [DllImport("user32.dll")]
+    private static extern uint TrackPopupMenuEx(
+        IntPtr menu,
+        uint flags,
+        int x,
+        int y,
+        IntPtr owner,
+        IntPtr parameters);
+
+    [DllImport("user32.dll")]
+    private static extern bool ShowWindow(IntPtr hWnd, int command);
+
+    [DllImport("user32.dll")]
+    private static extern bool SetForegroundWindow(IntPtr hWnd);
 
     private void SetWindowSize(int width, int height)
     {
