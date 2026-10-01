@@ -315,7 +315,8 @@ if (Test-Path $ldapPath) {
 	}
 	if _, err = c.Write(searchRequest(2, baseDN, username)); err != nil {
 '@
-        $patchedLdap = [regex]::Replace($ldap, $baseDnPattern, $baseDnReplacement.TrimStart(), 1)
+        $replacementText = [Environment]::NewLine + $baseDnReplacement.TrimStart("`r","`n")
+        $patchedLdap = [regex]::Replace($ldap, $baseDnPattern, $replacementText, 1)
         if ($patchedLdap -eq $ldap) {
             throw 'LDAP Base DN derivation patch was not applied.'
         }
