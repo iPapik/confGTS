@@ -286,6 +286,48 @@ if (-not $web.Contains('go a.store.OptimizeRecording(in.CaptureID)') -or -not $w
 
 Set-Content $webPath $web -Encoding UTF8 -NoNewline
 
+# Populate AD contact names even when administrators configured only UPN suffix
+# and left Base DN empty. Derive e.g. teplo.local -> DC=teplo,DC=local so the
+# post-bind LDAP lookup can fetch displayName/mail/memberOf.
+$ldapPath = Join-Path $root "server\ldap.go"
+if (Test-Path $ldapPath) {
+    $ldap = Get-Content $ldapPath -Raw -Encoding UTF8
+    $oldBaseDnBlock = @'
+	u := User{Username: username, DisplayName: username}
+	if cfg.BaseDN == "" {
+		return u, nil
+	}
+	if _, err = c.Write(searchRequest(2, cfg.BaseDN, username)); err != nil {
+'@
+    $newBaseDnBlock = @'
+	u := User{Username: username, DisplayName: username}
+	baseDN := strings.TrimSpace(cfg.BaseDN)
+	if baseDN == "" {
+		suffix := strings.TrimSpace(strings.TrimPrefix(cfg.UPNSuffix, "@"))
+		if suffix != "" {
+			var dc []string
+			for _, part := range strings.Split(suffix, ".") {
+				part = strings.TrimSpace(part)
+				if part != "" {
+					dc = append(dc, "DC="+part)
+				}
+			}
+			baseDN = strings.Join(dc, ",")
+		}
+	}
+	if baseDN == "" {
+		return u, nil
+	}
+	if _, err = c.Write(searchRequest(2, baseDN, username)); err != nil {
+'@
+    if ($ldap.Contains($oldBaseDnBlock)) {
+        $ldap = $ldap.Replace($oldBaseDnBlock, $newBaseDnBlock)
+    } elseif (-not $ldap.Contains('baseDN := strings.TrimSpace(cfg.BaseDN)')) {
+        throw 'LDAP Base DN derivation patch was not applied.'
+    }
+    Set-Content $ldapPath $ldap -Encoding UTF8 -NoNewline
+}
+
 $uiPath = Join-Path $root "server\ui.go"
 $ui = Get-Content $uiPath -Raw -Encoding UTF8
 $replacements = [ordered]@{
