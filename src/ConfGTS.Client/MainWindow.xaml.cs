@@ -477,7 +477,7 @@ public sealed class MainWindow : Window
         {
             Text = "ГТС",
             Foreground = Brush("#FFFFFF"),
-            FontSize = 16,
+            FontSize = 15,
             FontWeight = FontWeights.Bold,
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center
@@ -2016,9 +2016,17 @@ public sealed class MainWindow : Window
         {
             _mediaSettingsPanel = null;
             _mainContentHost.Children.Remove(panel);
+            var restoreLogin = _settingsOpenedFromLogin;
             _settingsOpenedFromConference = false;
+            _settingsConferenceSidebarVisible = false;
+            _settingsOpenedFromLogin = false;
 
-            if (_conferenceHost is not null && !string.IsNullOrWhiteSpace(_activeRoomId))
+            if (restoreLogin)
+            {
+                _dashboardView.Visibility = Visibility.Collapsed;
+                _loginView.Visibility = Visibility.Visible;
+            }
+            else if (_conferenceHost is not null && !string.IsNullOrWhiteSpace(_activeRoomId))
             {
                 if (_dashboardMainScroll is not null)
                     _dashboardMainScroll.Visibility = Visibility.Collapsed;
