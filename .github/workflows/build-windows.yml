@@ -261,6 +261,18 @@ jobs:
             Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
             throw "Published ConfGTS client failed the real startup test."
           }
+
+          $second = Start-Process (Resolve-Path 'artifacts\publish\ConfGTS.Client.exe').Path -PassThru
+          if (!$second.WaitForExit(5000)) {
+            Stop-Process -Id $second.Id -Force -ErrorAction SilentlyContinue
+            Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+            throw "Second ConfGTS launch did not hand off to the existing instance."
+          }
+          if ($p.HasExited) {
+            throw "Existing ConfGTS instance exited during single-instance handoff."
+          }
+          Write-Host 'Single-instance desktop relaunch handoff passed.' -ForegroundColor Green
+
           Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
 
       - name: Test client MSI installation, shortcuts and startup
