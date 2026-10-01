@@ -7,6 +7,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Shapes;
 using Windows.Graphics;
+using Windows.Storage.Pickers;
 using WinRT.Interop;
 
 namespace ConfGTS.Server.Settings;
@@ -20,6 +21,7 @@ public sealed class SettingsWindow : Window
     private readonly TextBlock _publicUrl = new();
     private readonly TextBlock _dnsStatus = new();
     private readonly TextBlock _serviceStatus = new();
+    private readonly TextBox _recordingDirectoryBox = new();
     private readonly Button _saveButton = new();
 
     private const string Navy = "#0B2F5B";
@@ -94,11 +96,12 @@ public sealed class SettingsWindow : Window
         outer.Children.Add(header);
 
         outer.Children.Add(Card(BuildNetworkPanel()));
+        outer.Children.Add(Card(BuildStoragePanel()));
         outer.Children.Add(Card(BuildServicePanel()));
 
         var footer = new TextBlock
         {
-            Text = "ConfGTS Server Settings 0.17.0  |  Городские тепловые сети",
+            Text = "ConfGTS Server Settings 0.18.14  |  Городские тепловые сети",
             Foreground = Brush("#8194A7"),
             FontSize = 12,
             HorizontalAlignment = HorizontalAlignment.Center,
@@ -169,6 +172,53 @@ public sealed class SettingsWindow : Window
         return panel;
     }
 
+    private UIElement BuildStoragePanel()
+    {
+        var panel = new StackPanel { Spacing = 11 };
+        panel.Children.Add(SectionTitle("Хранение записей"));
+        panel.Children.Add(Hint("Здесь задаётся каталог, в который сервер сохраняет записи конференций. Можно выбрать любой локальный диск или каталог, доступный службе ConfGTS Server."));
+
+        panel.Children.Add(Label("Каталог записей"));
+
+        var row = new Grid { ColumnSpacing = 10 };
+        row.ColumnDefinitions.Add(new ColumnDefinition());
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        StyleInput(_recordingDirectoryBox, @"C:\ProgramData\ConfGTS\Recordings");
+        row.Children.Add(_recordingDirectoryBox);
+
+        var browse = SecondaryButton("Выбрать…");
+        browse.VerticalAlignment = VerticalAlignment.Stretch;
+        browse.Click += async (_, _) => await PickRecordingDirectoryAsync();
+        Grid.SetColumn(browse, 1);
+        row.Children.Add(browse);
+
+        panel.Children.Add(row);
+        panel.Children.Add(Hint("При изменении пути существующие записи автоматически не переносятся: новые конференции будут записываться в выбранный каталог."));
+
+        return panel;
+    }
+
+    private async Task PickRecordingDirectoryAsync()
+    {
+        try
+        {
+            var picker = new FolderPicker();
+            picker.FileTypeFilter.Add("*");
+            picker.SuggestedStartLocation = PickerLocationId.ComputerFolder;
+            InitializeWithWindow.Initialize(picker, WindowNative.GetWindowHandle(this));
+
+            var folder = await picker.PickSingleFolderAsync();
+            if (folder is not null)
+                _recordingDirectoryBox.Text = folder.Path;
+        }
+        catch (Exception ex)
+        {
+            Diagnostics.Log("Recording folder picker failed", ex);
+            await ShowAsync("Каталог записей", "Не удалось выбрать каталог: " + ex.Message);
+        }
+    }
+
     private UIElement BuildServicePanel()
     {
         var panel = new StackPanel { Spacing = 12 };
@@ -204,7 +254,7 @@ public sealed class SettingsWindow : Window
         buttons.Children.Add(open);
         panel.Children.Add(buttons);
 
-        panel.Children.Add(Hint("Для работы по имени во всех подсетях рекомендуется A-запись в корпоративном DNS. Клиент 0.17.0 также умеет находить ConfGTS в своей локальной сети по логическому имени. Для автоматически созданного HTTPS-сертификата клиент использует доверие по отпечатку при первом подключении."));
+        panel.Children.Add(Hint("Для работы по имени во всех подсетях рекомендуется A-запись в корпоративном DNS. Клиент 0.18.14 также умеет находить ConfGTS в своей локальной сети по логическому имени. Для автоматически созданного HTTPS-сертификата клиент использует доверие по отпечатку при первом подключении."));
         return panel;
     }
 
@@ -216,6 +266,7 @@ public sealed class SettingsWindow : Window
         _portBox.Text = cfg.Port.ToString();
         _nameBox.Text = cfg.ServerName;
         _schemeBox.SelectedItem = cfg.Scheme;
+        _recordingDirectoryBox.Text = cfg.RecordingDirectory;
         UpdatePublicUrl();
         _dnsStatus.Text = "Нажмите «Проверить DNS».";
     }
@@ -252,7 +303,17 @@ public sealed class SettingsWindow : Window
 
             var scheme = _schemeBox.SelectedItem?.ToString() ?? "http";
             var publicUrl = $"{scheme}://{name}:{port}";
-            ConfigManager.Save(new NetworkSettings(bind, port, name, scheme, publicUrl));
+            var recordingDirectory = _recordingDirectoryBox.Text.Trim();
+            if (string.IsNullOrWhiteSpace(recordingDirectory))
+                recordingDirectory = Path.Combine(ConfigManager.DataDirectory, "Recordings");
+
+            ConfigManager.Save(new NetworkSettings(
+                bind,
+                port,
+                name,
+                scheme,
+                publicUrl,
+                recordingDirectory));
 
             _serviceStatus.Text = "Настройки сохранены. Перезапуск…";
             await ConfigManager.RestartServiceAsync();
