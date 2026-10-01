@@ -176,7 +176,7 @@ public sealed class SettingsWindow : Window
     {
         var panel = new StackPanel { Spacing = 11 };
         panel.Children.Add(SectionTitle("Хранение записей"));
-        panel.Children.Add(Hint("Выберите каталог, где сервер ConfGTS будет хранить записи конференций. При смене каталога существующие записи переносятся, а серверная служба перезапускается."));
+        panel.Children.Add(Hint("Выберите каталог, где сервер ConfGTS будет хранить записи конференций. При смене каталога существующие записи копируются в новый каталог, после чего серверная служба перезапускается."));
 
         panel.Children.Add(Label("Каталог записей"));
 
