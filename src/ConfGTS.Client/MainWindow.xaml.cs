@@ -40,6 +40,8 @@ public sealed class MainWindow : Window
 
     private readonly StackPanel _contactsPanel = new();
     private readonly StackPanel _conferenceSidebarPanel = new();
+    private readonly StackPanel _conferenceSidebarSection = new();
+    private readonly StackPanel _contactsSidebarSection = new();
     private readonly StackPanel _mainConferencePanel = new();
     private readonly TextBlock _dashboardServerText = new();
 
@@ -56,10 +58,11 @@ public sealed class MainWindow : Window
     private IntPtr _trayIconHandle;
     private bool _trayOwnsIconHandle;
     private bool _trayInitialized;
+    private bool _restoreMaximized;
     private int _dashboardFailureCount;
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _dashboardTimer;
     private readonly Grid _mainContentHost = new();
-    private readonly ColumnDefinition _dashboardSidebarColumn = new() { Width = new GridLength(270) };
+    private readonly ColumnDefinition _dashboardSidebarColumn = new() { Width = new GridLength(220) };
     private Border? _dashboardSidebar;
     private ScrollViewer? _dashboardMainScroll;
     private MediaSettingsPanel? _mediaSettingsPanel;
@@ -344,7 +347,7 @@ public sealed class MainWindow : Window
 
         panel.Children.Add(new TextBlock
         {
-            Text = "Версия 0.18.13 beta  |  © ГТС, 2026",
+            Text = "Версия 0.18.14 beta  |  © ГТС, 2026",
             FontSize = 11,
             Foreground = Brush("#8A9BAC"),
             HorizontalAlignment = HorizontalAlignment.Center,
@@ -370,7 +373,7 @@ public sealed class MainWindow : Window
 
         _dashboardSidebar = sidebar;
 
-        var sideGrid = new Grid { Padding = new Thickness(18, 18, 18, 16) };
+        var sideGrid = new Grid { Padding = new Thickness(14, 16, 14, 14) };
         sideGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         sideGrid.RowDefinitions.Add(new RowDefinition());
         sideGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -380,25 +383,24 @@ public sealed class MainWindow : Window
         var sidebarScroll = new ScrollViewer
         {
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            Margin = new Thickness(0, 18, 0, 12)
+            Margin = new Thickness(0, 14, 0, 10)
         };
         Grid.SetRow(sidebarScroll, 1);
 
-        var sidebarContent = new StackPanel { Spacing = 12 };
-        sidebarContent.Children.Add(SidebarSectionHeader("\uE787", "Конференции"));
+        var sidebarContent = new Grid();
+
+        _conferenceSidebarSection.Spacing = 10;
+        _conferenceSidebarSection.Children.Add(SidebarSectionHeader("\uE787", "Конференции"));
         _conferenceSidebarPanel.Spacing = 6;
-        sidebarContent.Children.Add(_conferenceSidebarPanel);
+        _conferenceSidebarSection.Children.Add(_conferenceSidebarPanel);
+        sidebarContent.Children.Add(_conferenceSidebarSection);
 
-        sidebarContent.Children.Add(new Border
-        {
-            Height = 1,
-            Background = Brush("#E2ECF2"),
-            Margin = new Thickness(0, 8, 0, 4)
-        });
-
-        sidebarContent.Children.Add(SidebarSectionHeader("\uE716", "Контакты"));
+        _contactsSidebarSection.Spacing = 10;
+        _contactsSidebarSection.Visibility = Visibility.Collapsed;
+        _contactsSidebarSection.Children.Add(SidebarSectionHeader("\uE716", "Контакты"));
         _contactsPanel.Spacing = 6;
-        sidebarContent.Children.Add(_contactsPanel);
+        _contactsSidebarSection.Children.Add(_contactsPanel);
+        sidebarContent.Children.Add(_contactsSidebarSection);
 
         sidebarScroll.Content = sidebarContent;
         sideGrid.Children.Add(sidebarScroll);
@@ -409,9 +411,13 @@ public sealed class MainWindow : Window
         var footerActions = new StackPanel
         {
             Orientation = Orientation.Horizontal,
-            Spacing = 8,
+            Spacing = 6,
             HorizontalAlignment = HorizontalAlignment.Left
         };
+
+        var conferences = SidebarIconButton("\uE787", "Конференции");
+        conferences.Click += ConferencesButton_Click;
+        footerActions.Children.Add(conferences);
 
         var settings = SidebarIconButton("\uE713", "Настройки");
         settings.Click += ApplicationSettingsButton_Click;
@@ -590,7 +596,7 @@ public sealed class MainWindow : Window
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             row.ColumnDefinitions.Add(new ColumnDefinition());
 
-            var initials = Initials(contact.EffectiveName);
+            var initials = Initials(FormatContactName(contact));
             var avatar = new Border
             {
                 Width = 34,
@@ -614,7 +620,7 @@ public sealed class MainWindow : Window
             Grid.SetColumn(details, 1);
             details.Children.Add(new TextBlock
             {
-                Text = contact.EffectiveName,
+                Text = FormatContactName(contact),
                 FontSize = 13,
                 FontWeight = FontWeights.SemiBold,
                 Foreground = Brush(Text),
@@ -1936,10 +1942,24 @@ public sealed class MainWindow : Window
         _loginError.Visibility = Visibility.Collapsed;
     }
 
+    private async void ConferencesButton_Click(object sender, RoutedEventArgs e)
+    {
+        await CloseInlineSettingsAsync();
+        ShowSidebarSection(showContacts: false);
+        _conferenceSidebarPanel.StartBringIntoView();
+    }
+
     private async void ContactsButton_Click(object sender, RoutedEventArgs e)
     {
         await CloseInlineSettingsAsync();
+        ShowSidebarSection(showContacts: true);
         _contactsPanel.StartBringIntoView();
+    }
+
+    private void ShowSidebarSection(bool showContacts)
+    {
+        _conferenceSidebarSection.Visibility = showContacts ? Visibility.Collapsed : Visibility.Visible;
+        _contactsSidebarSection.Visibility = showContacts ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private async void ApplicationSettingsButton_Click(object sender, RoutedEventArgs e)
@@ -2390,6 +2410,39 @@ public sealed class MainWindow : Window
         TextWrapping = TextWrapping.Wrap
     };
 
+    private static string FormatContactName(ContactInfo contact)
+    {
+        var source = string.IsNullOrWhiteSpace(contact.DisplayName)
+            ? contact.EffectiveName
+            : contact.DisplayName.Trim();
+
+        var parts = source
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        // Active Directory displayName is normally stored as
+        // "Фамилия Имя Отчество". Present it in the compact corporate form:
+        // "Имя О. Фамилия."
+        if (parts.Length >= 3)
+            return $"{TitleCase(parts[1])} {char.ToUpperInvariant(parts[2][0])}. {TitleCase(parts[0])}.";
+
+        if (parts.Length == 2)
+            return $"{TitleCase(parts[1])} {TitleCase(parts[0])}.";
+
+        return TitleCase(source);
+    }
+
+    private static string TitleCase(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return "";
+
+        var text = value.Trim();
+        if (text.Length == 1)
+            return text.ToUpperInvariant();
+
+        return char.ToUpperInvariant(text[0]) + text[1..].ToLowerInvariant();
+    }
+
     private static string Initials(string value)
     {
         var parts = (value ?? "")
@@ -2488,6 +2541,12 @@ public sealed class MainWindow : Window
         UIntPtr subclassId,
         UIntPtr refData)
     {
+        if (message == ActivateExistingMessage)
+        {
+            ShowMainWindow();
+            return IntPtr.Zero;
+        }
+
         if (message == TrayCallbackMessage)
         {
             var mouseMessage = unchecked((uint)lParam.ToInt64());
@@ -2571,8 +2630,11 @@ public sealed class MainWindow : Window
 
     private void HideMainWindow()
     {
-        if (_hwnd != IntPtr.Zero)
-            ShowWindow(_hwnd, SwHide);
+        if (_hwnd == IntPtr.Zero)
+            return;
+
+        _restoreMaximized = IsZoomed(_hwnd);
+        ShowWindow(_hwnd, SwHide);
     }
 
     private void ShowMainWindow()
@@ -2580,8 +2642,17 @@ public sealed class MainWindow : Window
         if (_hwnd == IntPtr.Zero)
             _hwnd = WindowNative.GetWindowHandle(this);
 
-        ShowWindow(_hwnd, SwShow);
-        ShowWindow(_hwnd, SwRestore);
+        // If the window is already visible (for example when the tray Settings
+        // command is used) do not call SW_RESTORE: that would unmaximize it.
+        if (!IsWindowVisible(_hwnd))
+        {
+            ShowWindow(_hwnd, _restoreMaximized ? SwShowMaximized : SwShow);
+        }
+        else if (IsIconic(_hwnd))
+        {
+            ShowWindow(_hwnd, _restoreMaximized ? SwShowMaximized : SwRestore);
+        }
+
         Activate();
         SetForegroundWindow(_hwnd);
     }
@@ -2633,6 +2704,7 @@ public sealed class MainWindow : Window
     private const uint TrayIconId = 1;
     private const uint TraySubclassId = 0x43475453;
     private const uint TrayCallbackMessage = 0x8000 + 73; // WM_APP + 73
+    private const uint ActivateExistingMessage = 0x8000 + 74; // WM_APP + 74
     private const uint NifMessage = 0x00000001;
     private const uint NifIcon = 0x00000002;
     private const uint NifTip = 0x00000004;
@@ -2650,6 +2722,7 @@ public sealed class MainWindow : Window
     private const uint TrayCommandSettings = 1003;
     private const int IdiApplication = 32512;
     private const int SwHide = 0;
+    private const int SwShowMaximized = 3;
     private const int SwShow = 5;
     private const int SwRestore = 9;
 
@@ -2771,6 +2844,18 @@ public sealed class MainWindow : Window
 
     [DllImport("user32.dll")]
     private static extern bool SetForegroundWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool IsWindowVisible(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool IsZoomed(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool IsIconic(IntPtr hWnd);
 
     private void SetWindowSize(int width, int height)
     {
