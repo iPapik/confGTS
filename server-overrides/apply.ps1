@@ -701,7 +701,7 @@ if (Test-Path $serverBundle) {
     if (-not $bundle.Contains('Variable Name="InstallFolder"')) {
         $bundle = $bundle.Replace(
             '    <BootstrapperApplication>',
-            '    <Variable Name="InstallFolder" Type="string" Value="[ProgramFiles64Folder]ГТС\ConfGTS Server\" />' +
+            '    <Variable Name="InstallFolder" Type="string" Value="[ProgramFiles64Folder]ГТС\ConfGTS Server\" Persisted="yes" bal:Overridable="yes" />' +
             [Environment]::NewLine + [Environment]::NewLine + '    <BootstrapperApplication>')
     }
     $bundle = $bundle.Replace('SuppressOptionsUI="yes"', 'SuppressOptionsUI="no"')
