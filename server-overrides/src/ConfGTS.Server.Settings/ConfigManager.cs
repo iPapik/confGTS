@@ -14,7 +14,8 @@ internal sealed record NetworkSettings(
     int Port,
     string ServerName,
     string Scheme,
-    string PublicUrl);
+    string PublicUrl,
+    string RecordingDirectory);
 
 internal static class ConfigManager
 {
@@ -34,15 +35,16 @@ internal static class ConfigManager
         var name = SuggestedServerName();
         var scheme = "http";
         var publicUrl = $"http://{name}:8090";
+        var recordingDirectory = Path.Combine(DataDirectory, "Recordings");
 
         try
         {
             if (!File.Exists(ConfigPath))
-                return new(bind, port, name, scheme, publicUrl);
+                return new(bind, port, name, scheme, publicUrl, recordingDirectory);
 
             var node = JsonNode.Parse(File.ReadAllText(ConfigPath)) as JsonObject;
             if (node is null)
-                return new(bind, port, name, scheme, publicUrl);
+                return new(bind, port, name, scheme, publicUrl, recordingDirectory);
 
             var listen = node["listen_addr"]?.GetValue<string>()?.Trim() ?? "";
             if (!string.IsNullOrWhiteSpace(listen))
@@ -72,6 +74,10 @@ internal static class ConfigManager
             if (!string.IsNullOrWhiteSpace(savedName))
                 name = savedName;
 
+            var configuredRecordingDirectory = node["recording_dir"]?.GetValue<string>()?.Trim();
+            if (!string.IsNullOrWhiteSpace(configuredRecordingDirectory))
+                recordingDirectory = configuredRecordingDirectory;
+
             var httpsEnabled = node["https"]?["enabled"]?.GetValue<bool>() == true;
 
             var pu = node["public_url"]?.GetValue<string>()?.Trim();
@@ -98,7 +104,7 @@ internal static class ConfigManager
             Diagnostics.Log("Config load failed", ex);
         }
 
-        return new(bind, port, name, scheme, publicUrl);
+        return new(bind, port, name, scheme, publicUrl, recordingDirectory);
     }
 
     public static void Save(NetworkSettings settings)
@@ -120,6 +126,11 @@ internal static class ConfigManager
         root["listen_addr"] = $"{settings.BindAddress}:{settings.Port}";
         root["server_name"] = settings.ServerName;
         root["public_url"] = settings.PublicUrl;
+
+        var recordingDirectory = Path.GetFullPath(settings.RecordingDirectory.Trim());
+        Directory.CreateDirectory(recordingDirectory);
+        root["recording_dir"] = recordingDirectory;
+
         File.WriteAllText(ServerNamePath, settings.ServerName);
 
         var https = root["https"] as JsonObject ?? new JsonObject();
