@@ -26,6 +26,7 @@ internal static class ConfigManager
     public static string CertificateDirectory => Path.Combine(DataDirectory, "certs");
     public static string AutoCertificatePath => Path.Combine(CertificateDirectory, "confgts-server.crt");
     public static string AutoKeyPath => Path.Combine(CertificateDirectory, "confgts-server.key");
+    public static string DefaultRecordingsDirectory => Path.Combine(DataDirectory, "recordings");
 
     public static NetworkSettings Load()
     {
@@ -239,6 +240,160 @@ internal static class ConfigManager
         catch
         {
             return false;
+        }
+    }
+
+    public static string GetRecordingsDirectory()
+    {
+        try
+        {
+            if (File.Exists(ConfigPath))
+            {
+                var root = JsonNode.Parse(File.ReadAllText(ConfigPath)) as JsonObject;
+                var configured = root?["recordings_path"]?.GetValue<string>()?.Trim();
+                if (!string.IsNullOrWhiteSpace(configured))
+                    return Path.GetFullPath(Environment.ExpandEnvironmentVariables(configured));
+            }
+
+            var defaultInfo = new DirectoryInfo(DefaultRecordingsDirectory);
+            if (defaultInfo.Exists &&
+                defaultInfo.Attributes.HasFlag(FileAttributes.ReparsePoint))
+            {
+                var resolved = defaultInfo.ResolveLinkTarget(true);
+                if (resolved is not null)
+                    return resolved.FullName;
+            }
+        }
+        catch (Exception ex)
+        {
+            Diagnostics.Log("Recording directory load failed", ex);
+        }
+
+        return DefaultRecordingsDirectory;
+    }
+
+    public static async Task ApplyRecordingDirectoryAsync(string requestedPath)
+    {
+        var target = Path.GetFullPath(Environment.ExpandEnvironmentVariables((requestedPath ?? "").Trim()));
+        if (string.IsNullOrWhiteSpace(target))
+            throw new InvalidOperationException("Каталог записей не указан.");
+
+        Directory.CreateDirectory(target);
+
+        await RunAsync("sc.exe", "stop ConfGTSServer", ignoreExitCode: true);
+        await Task.Delay(900);
+
+        try
+        {
+            var linkPath = DefaultRecordingsDirectory;
+            Directory.CreateDirectory(DataDirectory);
+
+            string? previousTarget = null;
+            var linkInfo = new DirectoryInfo(linkPath);
+            var isLink = linkInfo.Exists && linkInfo.Attributes.HasFlag(FileAttributes.ReparsePoint);
+
+            if (isLink)
+            {
+                try
+                {
+                    previousTarget = linkInfo.ResolveLinkTarget(true)?.FullName;
+                }
+                catch
+                {
+                }
+            }
+
+            if (PathsEqual(target, linkPath))
+            {
+                if (isLink)
+                {
+                    Directory.Delete(linkPath);
+                    Directory.CreateDirectory(linkPath);
+                    if (!string.IsNullOrWhiteSpace(previousTarget) && Directory.Exists(previousTarget))
+                        CopyDirectoryContents(previousTarget, linkPath);
+                }
+                else
+                {
+                    Directory.CreateDirectory(linkPath);
+                }
+            }
+            else
+            {
+                if (isLink)
+                {
+                    if (!string.IsNullOrWhiteSpace(previousTarget) &&
+                        Directory.Exists(previousTarget) &&
+                        !PathsEqual(previousTarget, target))
+                    {
+                        CopyDirectoryContents(previousTarget, target);
+                    }
+
+                    Directory.Delete(linkPath);
+                }
+                else if (Directory.Exists(linkPath))
+                {
+                    CopyDirectoryContents(linkPath, target);
+                    Directory.Delete(linkPath, true);
+                }
+
+                var output = await RunAsync(
+                    "cmd.exe",
+                    $"/d /c mklink /J \"{linkPath}\" \"{target}\"",
+                    ignoreExitCode: false);
+
+                Diagnostics.Log($"Recording junction created: {linkPath} -> {target}. {output.Trim()}");
+            }
+
+            SaveRecordingDirectorySetting(target);
+        }
+        finally
+        {
+            await RunAsync("sc.exe", "start ConfGTSServer", ignoreExitCode: false);
+        }
+    }
+
+    private static void SaveRecordingDirectorySetting(string path)
+    {
+        Directory.CreateDirectory(DataDirectory);
+
+        JsonObject root;
+        try
+        {
+            root = File.Exists(ConfigPath)
+                ? (JsonNode.Parse(File.ReadAllText(ConfigPath)) as JsonObject ?? new JsonObject())
+                : new JsonObject();
+        }
+        catch
+        {
+            root = new JsonObject();
+        }
+
+        root["recordings_path"] = path;
+
+        var tmp = ConfigPath + ".tmp";
+        File.WriteAllText(tmp, root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+        File.Move(tmp, ConfigPath, true);
+    }
+
+    private static void CopyDirectoryContents(string source, string destination)
+    {
+        if (!Directory.Exists(source))
+            return;
+
+        Directory.CreateDirectory(destination);
+
+        foreach (var directory in Directory.GetDirectories(source, "*", SearchOption.AllDirectories))
+        {
+            var relative = Path.GetRelativePath(source, directory);
+            Directory.CreateDirectory(Path.Combine(destination, relative));
+        }
+
+        foreach (var file in Directory.GetFiles(source, "*", SearchOption.AllDirectories))
+        {
+            var relative = Path.GetRelativePath(source, file);
+            var destinationFile = Path.Combine(destination, relative);
+            Directory.CreateDirectory(Path.GetDirectoryName(destinationFile)!);
+            File.Copy(file, destinationFile, true);
         }
     }
 
