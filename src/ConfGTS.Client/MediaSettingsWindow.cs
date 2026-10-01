@@ -14,8 +14,10 @@ using Windows.Media.Audio;
 using Windows.Media.Capture;
 using Windows.Media.Capture.Frames;
 using Windows.Media.Core;
+using Windows.Media.Devices;
 using Windows.Media.MediaProperties;
 using Windows.Media.Playback;
+using Windows.Media.Render;
 using Windows.Storage.Streams;
 
 namespace ConfGTS.Client;
@@ -278,7 +280,7 @@ public sealed class MediaSettingsPanel : Grid
         }
     }
 
-    private UIElement BuildMicrophoneCard()
+    private FrameworkElement BuildMicrophoneCard()
     {
         var panel = CardPanel("\uE720", "Микрофон");
 
@@ -344,7 +346,7 @@ public sealed class MediaSettingsPanel : Grid
         return Card(panel);
     }
 
-    private UIElement BuildSpeakerCard()
+    private FrameworkElement BuildSpeakerCard()
     {
         var panel = CardPanel("\uE767", "Динамики / наушники");
 
@@ -400,7 +402,7 @@ public sealed class MediaSettingsPanel : Grid
         return Card(panel);
     }
 
-    private UIElement BuildCameraCard()
+    private FrameworkElement BuildCameraCard()
     {
         var panel = CardPanel("\uE8B8", "Камера");
 
