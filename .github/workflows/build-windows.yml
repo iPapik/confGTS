@@ -171,11 +171,10 @@ jobs:
         run: |
           $client = Get-Content '.\src\ConfGTS.Client\MainWindow.xaml.cs' -Raw -Encoding UTF8
           $project = Get-Content '.\src\ConfGTS.Client\ConfGTS.Client.csproj' -Raw -Encoding UTF8
-          if ($project -notmatch '<UseWindowsForms>true</UseWindowsForms>') {
-            throw 'WinForms tray support is not enabled in the client project.'
+          if ($client -notmatch 'ShellNotifyIcon' -or $client -notmatch 'SetWindowSubclass') {
+            throw 'Native Win32 tray support is missing from the client.'
           }
           foreach ($token in @(
-            'System.Windows.Forms.NotifyIcon',
             'AppWindow_Closing',
             'HideMainWindow',
             'ShowApplicationSettingsAsync',
