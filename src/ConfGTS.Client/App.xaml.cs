@@ -6,7 +6,7 @@ namespace ConfGTS.Client;
 
 public partial class App : Application
 {
-    private const string SingleInstanceMutexName = "Global\\ConfGTS.Client.SingleInstance";
+    private const string SingleInstanceMutexName = "Local\\ConfGTS.Client.SingleInstance";
     private const uint ActivateExistingMessage = 0x8000 + 74; // WM_APP + 74
 
     private Mutex? _singleInstanceMutex;
@@ -43,7 +43,8 @@ public partial class App : Application
             {
                 StartupDiagnostics.Log("Another ConfGTS client instance is already running; activating it.");
                 ActivateExistingInstance();
-                Exit();
+                _singleInstanceMutex.Dispose();
+                Environment.Exit(0);
                 return;
             }
 
