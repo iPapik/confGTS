@@ -149,7 +149,8 @@ jobs:
               $serverSettings -notmatch 'FolderPicker' -or
               $serverSettings -notmatch '_recordingDirBox' -or
               $configManager -notmatch 'recording_dir' -or
-              $configManager -notmatch 'RecordingDirectory') {
+              $configManager -notmatch 'RecordingDirectory' -or
+              $configManager -notmatch 'MigrateRecordingDirectory') {
             throw 'Server recording-directory selector/persistence is missing.'
           }
 
@@ -561,6 +562,6 @@ jobs:
           - в ConfGTS Server Settings добавлен выбор каталога хранения записей через FolderPicker;
           - путь сохраняется в config.json как recording_dir;
           - каталог создаётся при сохранении и применяется после перезапуска службы;
-          - существующие записи автоматически не перемещаются.
+          - при смене каталога служба останавливается, существующие записи безопасно переносятся в новый каталог и затем служба запускается снова.
           '@ | Set-Content 'artifacts\RELEASE-NOTES.md' -Encoding utf8
           gh release create v0.18.14 'artifacts\msi\ConfGTS-0.18.14-x64.msi' 'artifacts\setup\ConfGTS-Setup-0.18.14-x64.exe' 'artifacts\server-msi\ConfGTS-Server-0.18.14-x64.msi' 'artifacts\server-setup\ConfGTS-Server-Setup-0.18.14-x64.exe' 'artifacts\ConfGTS-Server-0.18.14-Source.zip' 'artifacts\SHA256SUMS.txt' --target '${{ github.sha }}' --title 'ConfGTS 0.18.14' --notes-file 'artifacts\RELEASE-NOTES.md'
