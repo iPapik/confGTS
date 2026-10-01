@@ -311,13 +311,28 @@ public sealed class SettingsWindow : Window
             if (string.IsNullOrWhiteSpace(recordingDirectory))
                 throw new InvalidOperationException("Укажите каталог для хранения записей конференций.");
 
-            ConfigManager.Save(new NetworkSettings(bind, port, name, scheme, publicUrl, recordingDirectory));
+            _serviceStatus.Text = "Остановка службы перед сохранением…";
+            await ConfigManager.StopServiceAsync();
+            var serviceNeedsStart = true;
+            try
+            {
+                ConfigManager.Save(new NetworkSettings(bind, port, name, scheme, publicUrl, recordingDirectory));
+                _serviceStatus.Text = "Настройки сохранены. Запуск службы…";
+                await ConfigManager.StartServiceAsync();
+                serviceNeedsStart = false;
+            }
+            finally
+            {
+                if (serviceNeedsStart)
+                {
+                    try { await ConfigManager.StartServiceAsync(); }
+                    catch (Exception startEx) { Diagnostics.Log("Failed to restart service after save failure", startEx); }
+                }
+            }
 
-            _serviceStatus.Text = "Настройки сохранены. Перезапуск…";
-            await ConfigManager.RestartServiceAsync();
             await RefreshServiceAsync();
             await CheckDnsAsync();
-            await ShowAsync("ConfGTS Server", "Настройки сохранены. Служба перезапущена.");
+            await ShowAsync("ConfGTS Server", "Настройки сохранены. Служба перезапущена. Каталог записей применён.");
         }
         catch (Exception ex)
         {
