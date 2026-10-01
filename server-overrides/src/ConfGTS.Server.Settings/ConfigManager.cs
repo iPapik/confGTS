@@ -26,7 +26,7 @@ internal static class ConfigManager
     public static string CertificateDirectory => Path.Combine(DataDirectory, "certs");
     public static string AutoCertificatePath => Path.Combine(CertificateDirectory, "confgts-server.crt");
     public static string AutoKeyPath => Path.Combine(CertificateDirectory, "confgts-server.key");
-    public static string DefaultRecordingsDirectory => Path.Combine(DataDirectory, "recordings");
+    public static string DefaultRecordingsDirectory => Path.Combine(DataDirectory, "Recordings");
 
     public static NetworkSettings Load()
     {
@@ -250,18 +250,14 @@ internal static class ConfigManager
             if (File.Exists(ConfigPath))
             {
                 var root = JsonNode.Parse(File.ReadAllText(ConfigPath)) as JsonObject;
-                var configured = root?["recordings_path"]?.GetValue<string>()?.Trim();
+                var configured = root?["recording_dir"]?.GetValue<string>()?.Trim();
+
+                // Compatibility with the first 0.18.14 beta implementation.
+                if (string.IsNullOrWhiteSpace(configured))
+                    configured = root?["recordings_path"]?.GetValue<string>()?.Trim();
+
                 if (!string.IsNullOrWhiteSpace(configured))
                     return Path.GetFullPath(Environment.ExpandEnvironmentVariables(configured));
-            }
-
-            var defaultInfo = new DirectoryInfo(DefaultRecordingsDirectory);
-            if (defaultInfo.Exists &&
-                defaultInfo.Attributes.HasFlag(FileAttributes.ReparsePoint))
-            {
-                var resolved = defaultInfo.ResolveLinkTarget(true);
-                if (resolved is not null)
-                    return resolved.FullName;
             }
         }
         catch (Exception ex)
@@ -274,77 +270,47 @@ internal static class ConfigManager
 
     public static async Task ApplyRecordingDirectoryAsync(string requestedPath)
     {
-        var target = Path.GetFullPath(Environment.ExpandEnvironmentVariables((requestedPath ?? "").Trim()));
-        if (string.IsNullOrWhiteSpace(target))
+        var raw = (requestedPath ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(raw))
             throw new InvalidOperationException("Каталог записей не указан.");
 
+        var target = Path.GetFullPath(Environment.ExpandEnvironmentVariables(raw));
         Directory.CreateDirectory(target);
+
+        var previous = GetRecordingsDirectory();
 
         await RunAsync("sc.exe", "stop ConfGTSServer", ignoreExitCode: true);
         await Task.Delay(900);
 
         try
         {
-            var linkPath = DefaultRecordingsDirectory;
+            if (!PathsEqual(previous, target) && Directory.Exists(previous))
+                CopyDirectoryContents(previous, target);
+
             Directory.CreateDirectory(DataDirectory);
 
-            string? previousTarget = null;
-            var linkInfo = new DirectoryInfo(linkPath);
-            var isLink = linkInfo.Exists && linkInfo.Attributes.HasFlag(FileAttributes.ReparsePoint);
-
-            if (isLink)
+            JsonObject root;
+            try
             {
-                try
-                {
-                    previousTarget = linkInfo.ResolveLinkTarget(true)?.FullName;
-                }
-                catch
-                {
-                }
+                root = File.Exists(ConfigPath)
+                    ? (JsonNode.Parse(File.ReadAllText(ConfigPath)) as JsonObject ?? new JsonObject())
+                    : new JsonObject();
+            }
+            catch
+            {
+                root = new JsonObject();
             }
 
-            if (PathsEqual(target, linkPath))
-            {
-                if (isLink)
-                {
-                    Directory.Delete(linkPath);
-                    Directory.CreateDirectory(linkPath);
-                    if (!string.IsNullOrWhiteSpace(previousTarget) && Directory.Exists(previousTarget))
-                        CopyDirectoryContents(previousTarget, linkPath);
-                }
-                else
-                {
-                    Directory.CreateDirectory(linkPath);
-                }
-            }
-            else
-            {
-                if (isLink)
-                {
-                    if (!string.IsNullOrWhiteSpace(previousTarget) &&
-                        Directory.Exists(previousTarget) &&
-                        !PathsEqual(previousTarget, target))
-                    {
-                        CopyDirectoryContents(previousTarget, target);
-                    }
+            // The Go server already natively supports recording_dir. Store the
+            // selected path directly instead of depending on a filesystem junction.
+            root["recording_dir"] = target;
+            root.Remove("recordings_path");
 
-                    Directory.Delete(linkPath);
-                }
-                else if (Directory.Exists(linkPath))
-                {
-                    CopyDirectoryContents(linkPath, target);
-                    Directory.Delete(linkPath, true);
-                }
+            var tmp = ConfigPath + ".tmp";
+            File.WriteAllText(tmp, root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+            File.Move(tmp, ConfigPath, true);
 
-                var output = await RunAsync(
-                    "cmd.exe",
-                    $"/d /c mklink /J \"{linkPath}\" \"{target}\"",
-                    ignoreExitCode: false);
-
-                Diagnostics.Log($"Recording junction created: {linkPath} -> {target}. {output.Trim()}");
-            }
-
-            SaveRecordingDirectorySetting(target);
+            Diagnostics.Log($"Recording directory configured: {target}");
         }
         finally
         {
@@ -352,32 +318,9 @@ internal static class ConfigManager
         }
     }
 
-    private static void SaveRecordingDirectorySetting(string path)
-    {
-        Directory.CreateDirectory(DataDirectory);
-
-        JsonObject root;
-        try
-        {
-            root = File.Exists(ConfigPath)
-                ? (JsonNode.Parse(File.ReadAllText(ConfigPath)) as JsonObject ?? new JsonObject())
-                : new JsonObject();
-        }
-        catch
-        {
-            root = new JsonObject();
-        }
-
-        root["recordings_path"] = path;
-
-        var tmp = ConfigPath + ".tmp";
-        File.WriteAllText(tmp, root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
-        File.Move(tmp, ConfigPath, true);
-    }
-
     private static void CopyDirectoryContents(string source, string destination)
     {
-        if (!Directory.Exists(source))
+        if (!Directory.Exists(source) || PathsEqual(source, destination))
             return;
 
         Directory.CreateDirectory(destination);
@@ -393,6 +336,17 @@ internal static class ConfigManager
             var relative = Path.GetRelativePath(source, file);
             var destinationFile = Path.Combine(destination, relative);
             Directory.CreateDirectory(Path.GetDirectoryName(destinationFile)!);
+
+            // Keep an existing destination copy if it is at least as new and the
+            // same size. This avoids rewriting large recording files unnecessarily.
+            if (File.Exists(destinationFile))
+            {
+                var src = new FileInfo(file);
+                var dst = new FileInfo(destinationFile);
+                if (src.Length == dst.Length && dst.LastWriteTimeUtc >= src.LastWriteTimeUtc)
+                    continue;
+            }
+
             File.Copy(file, destinationFile, true);
         }
     }
