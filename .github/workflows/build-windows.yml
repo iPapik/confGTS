@@ -169,7 +169,8 @@ jobs:
       - name: Validate tray, auto-login and compact sidebar changes
         shell: pwsh
         run: |
-          $client = Get-Content '.\src\ConfGTS.Client\MainWindow.xaml.cs' -Raw -Encoding UTF8
+          $client = (Get-Content '.\src\ConfGTS.Client\MainWindow.xaml.cs' -Raw -Encoding UTF8) + [Environment]::NewLine +
+                    (Get-Content '.\src\ConfGTS.Client\App.xaml.cs' -Raw -Encoding UTF8)
           $project = Get-Content '.\src\ConfGTS.Client\ConfGTS.Client.csproj' -Raw -Encoding UTF8
           if ($client -notmatch 'ShellNotifyIcon' -or $client -notmatch 'SetWindowSubclass') {
             throw 'Native Win32 tray support is missing from the client.'
