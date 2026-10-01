@@ -701,13 +701,15 @@ if (Test-Path $serverBundle) {
     if (-not $bundle.Contains('Variable Name="InstallFolder"')) {
         $bundle = $bundle.Replace(
             '    <BootstrapperApplication>',
-            '    <Variable Name="InstallFolder" Type="string" Value="[ProgramFiles64Folder]ГТС\ConfGTS Server\" Persisted="yes" bal:Overridable="yes" />' +
+            '    <Variable Name="InstallFolder" Type="formatted" Value="[ProgramFiles64Folder]ГТС\ConfGTS Server" Persisted="yes" bal:Overridable="yes" />' +
             [Environment]::NewLine + [Environment]::NewLine + '    <BootstrapperApplication>')
     }
     $bundle = $bundle.Replace('SuppressOptionsUI="yes"', 'SuppressOptionsUI="no"')
+    $bundle = $bundle.Replace('Type="string" Value="[ProgramFiles64Folder]ГТС\ConfGTS Server\"', 'Type="formatted" Value="[ProgramFiles64Folder]ГТС\ConfGTS Server"')
+    $bundle = $bundle.Replace('LaunchTarget="[InstallFolder]ConfGTS.Server.Settings.exe"', 'LaunchTarget="[InstallFolder]\ConfGTS.Server.Settings.exe"')
     $bundle = $bundle.Replace(
         'LaunchTarget="[ProgramFiles64Folder]ГТС\ConfGTS Server\ConfGTS.Server.Settings.exe"',
-        'LaunchTarget="[InstallFolder]ConfGTS.Server.Settings.exe"')
+        'LaunchTarget="[InstallFolder]\ConfGTS.Server.Settings.exe"')
     if ($bundle -notmatch '<MsiProperty Name="INSTALLFOLDER" Value="\[InstallFolder\]"') {
         $bundle = [regex]::Replace(
             $bundle,
