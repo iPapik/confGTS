@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using ConfGTS.Client.Services;
@@ -45,6 +46,7 @@ public sealed class MainWindow : Window
     private readonly TextBlock _dashboardServerText = new();
     private readonly StackPanel _conferenceSidebarSection = new();
     private readonly StackPanel _contactsSidebarSection = new();
+    private IReadOnlyList<RoomInfo> _lastRooms = Array.Empty<RoomInfo>();
 
     private bool _passwordVisible;
     private bool _dashboardRefreshRunning;
@@ -556,6 +558,7 @@ public sealed class MainWindow : Window
             var rooms = (await roomsTask)
                 .Where(r => r.Enabled)
                 .ToList();
+            _lastRooms = rooms;
             var contacts = (await contactsTask)
                 .OrderBy(c => c.EffectiveName, StringComparer.CurrentCultureIgnoreCase)
                 .ToList();
@@ -753,11 +756,7 @@ public sealed class MainWindow : Window
     {
         _mainConferencePanel.Children.Clear();
 
-        var room = rooms.FirstOrDefault(r =>
-                       r.Name.Equals("Общая конференция", StringComparison.OrdinalIgnoreCase))
-                   ?? rooms.FirstOrDefault();
-
-        if (room is null)
+        if (rooms.Count == 0)
         {
             _mainConferencePanel.Children.Add(Card(new StackPanel
             {
@@ -765,14 +764,14 @@ public sealed class MainWindow : Window
                 {
                     new TextBlock
                     {
-                        Text = "Постоянная конференция не найдена",
+                        Text = "Доступные конференции не найдены",
                         FontSize = 22,
                         FontWeight = FontWeights.SemiBold,
                         Foreground = Brush(Navy)
                     },
                     new TextBlock
                     {
-                        Text = "Проверьте конференции на сервере ConfGTS.",
+                        Text = "Проверьте список конференций на сервере ConfGTS.",
                         Foreground = Brush(Muted),
                         Margin = new Thickness(0, 6, 0, 0)
                     }
@@ -781,64 +780,90 @@ public sealed class MainWindow : Window
             return;
         }
 
-        var conferenceCard = new Border
+        if (rooms.Count > 1)
         {
-            Background = Brush("#FFFFFF"),
-            BorderBrush = Brush(Line),
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(22),
-            Padding = new Thickness(30),
-            MinHeight = 190
-        };
+            _mainConferencePanel.Children.Add(new TextBlock
+            {
+                Text = "Конференции",
+                FontSize = 28,
+                FontWeight = FontWeights.Bold,
+                Foreground = Brush(Navy),
+                Margin = new Thickness(0, 0, 0, 4)
+            });
+        }
 
-        var grid = new Grid();
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        grid.ColumnDefinitions.Add(new ColumnDefinition());
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
-        var icon = new Border
+        foreach (var room in rooms)
         {
-            Width = 78,
-            Height = 78,
-            CornerRadius = new CornerRadius(20),
-            Background = Gradient(),
-            Margin = new Thickness(0, 0, 22, 0)
-        };
-        icon.Child = new FontIcon
-        {
-            Glyph = "\uE714",
-            FontSize = 32,
-            Foreground = Brush("#FFFFFF"),
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center
-        };
-        grid.Children.Add(icon);
+            var conferenceCard = new Border
+            {
+                Background = Brush("#FFFFFF"),
+                BorderBrush = Brush(Line),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(22),
+                Padding = new Thickness(26),
+                MinHeight = 150
+            };
 
-        var detail = new StackPanel
-        {
-            Spacing = 7,
-            VerticalAlignment = VerticalAlignment.Center
-        };
-        Grid.SetColumn(detail, 1);
-        detail.Children.Add(new TextBlock
-        {
-            Text = room.Name,
-            FontSize = 30,
-            FontWeight = FontWeights.Bold,
-            Foreground = Brush(Navy)
-        });
-        grid.Children.Add(detail);
+            var grid = new Grid();
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            grid.ColumnDefinitions.Add(new ColumnDefinition());
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-        var join = PrimaryActionButton("Подключиться");
-        join.MinWidth = 170;
-        join.VerticalAlignment = VerticalAlignment.Center;
-        join.Margin = new Thickness(24, 0, 0, 0);
-        join.Click += async (_, _) => await OpenConferenceAsync(room);
-        Grid.SetColumn(join, 2);
-        grid.Children.Add(join);
+            var icon = new Border
+            {
+                Width = 66,
+                Height = 66,
+                CornerRadius = new CornerRadius(18),
+                Background = Gradient(),
+                Margin = new Thickness(0, 0, 20, 0)
+            };
+            icon.Child = new FontIcon
+            {
+                Glyph = "\uE714",
+                FontSize = 28,
+                Foreground = Brush("#FFFFFF"),
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            grid.Children.Add(icon);
 
-        conferenceCard.Child = grid;
-        _mainConferencePanel.Children.Add(conferenceCard);
+            var detail = new StackPanel
+            {
+                Spacing = 5,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            Grid.SetColumn(detail, 1);
+            detail.Children.Add(new TextBlock
+            {
+                Text = room.Name,
+                FontSize = 24,
+                FontWeight = FontWeights.Bold,
+                Foreground = Brush(Navy),
+                TextWrapping = TextWrapping.Wrap
+            });
+            if (!string.IsNullOrWhiteSpace(room.Description))
+            {
+                detail.Children.Add(new TextBlock
+                {
+                    Text = room.Description,
+                    FontSize = 12,
+                    Foreground = Brush(Muted),
+                    TextWrapping = TextWrapping.Wrap
+                });
+            }
+            grid.Children.Add(detail);
+
+            var join = PrimaryActionButton("Подключиться");
+            join.MinWidth = 150;
+            join.VerticalAlignment = VerticalAlignment.Center;
+            join.Margin = new Thickness(20, 0, 0, 0);
+            join.Click += async (_, _) => await OpenConferenceAsync(room);
+            Grid.SetColumn(join, 2);
+            grid.Children.Add(join);
+
+            conferenceCard.Child = grid;
+            _mainConferencePanel.Children.Add(conferenceCard);
+        }
     }
 
     private async Task OpenConferenceAsync(RoomInfo room)
@@ -2008,6 +2033,7 @@ public sealed class MainWindow : Window
     private async void ConferencesButton_Click(object sender, RoutedEventArgs e)
     {
         await CloseInlineSettingsAsync();
+        RenderMainConference(_lastRooms);
         ShowDashboardSection(showContacts: false);
     }
 
@@ -2485,15 +2511,36 @@ public sealed class MainWindow : Window
         var parts = (value ?? "")
             .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
-        // AD display names in the organization are normally "Фамилия Имя Отчество".
-        // Show them in the requested compact form: "Имя О. Фамилия.".
+        if (parts.Length == 0)
+            return "";
+
+        var textInfo = CultureInfo.GetCultureInfo("ru-RU").TextInfo;
+        string NamePart(string part)
+        {
+            var normalized = (part ?? "").Trim();
+            if (normalized.Length == 0)
+                return normalized;
+            return textInfo.ToTitleCase(normalized.ToLower(CultureInfo.GetCultureInfo("ru-RU")));
+        }
+
+        // AD display names are normally "Фамилия Имя Отчество".
+        // Requested presentation: "Иван И. Иванов.".
         if (parts.Length >= 3)
-            return $"{parts[1]} {char.ToUpperInvariant(parts[2][0])}. {parts[0]}.";
+        {
+            var surname = NamePart(parts[0]);
+            var firstName = NamePart(parts[1]);
+            var patronymic = NamePart(parts[2]);
+            return $"{firstName} {char.ToUpper(patronymic[0], CultureInfo.GetCultureInfo("ru-RU"))}. {surname}.";
+        }
 
         if (parts.Length == 2)
-            return $"{parts[1]} {char.ToUpperInvariant(parts[0][0])}.";
+        {
+            var surname = NamePart(parts[0]);
+            var firstName = NamePart(parts[1]);
+            return $"{firstName} {surname}.";
+        }
 
-        return value?.Trim() ?? "";
+        return NamePart(parts[0]);
     }
 
     private static string Initials(string value)
