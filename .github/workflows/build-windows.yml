@@ -317,7 +317,7 @@ jobs:
         shell: pwsh
         run: |
           $setup = (Resolve-Path 'artifacts\setup\ConfGTS-Setup-0.18.14-x64.exe').Path
-          $customClientDir = Join-Path $env:ProgramFiles 'ConfGTS-CI-EXE-Custom'
+          $customClientDir = 'C:\ConfGTS-CI-EXE-Custom'
           $installedExe = Join-Path $customClientDir 'ConfGTS.Client.exe'
           $startMenu = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\ConfGTS\ConfGTS.lnk'
           $desktop = Join-Path ([Environment]::GetFolderPath('CommonDesktopDirectory')) 'ConfGTS.lnk'
@@ -462,7 +462,7 @@ jobs:
           }
 
           $setup = (Resolve-Path 'artifacts\server-setup\ConfGTS-Server-Setup-0.18.14-x64.exe').Path
-          $serverDir = Join-Path $env:ProgramFiles 'ConfGTS-Server-CI-EXE-Custom'
+          $serverDir = 'C:\ConfGTS-Server-CI-EXE-Custom'
           $serverExe = Join-Path $serverDir 'ConfGTSServer.exe'
           $settingsExe = Join-Path $serverDir 'ConfGTS.Server.Settings.exe'
           $ffmpegExe = Join-Path $serverDir 'ffmpeg.exe'
