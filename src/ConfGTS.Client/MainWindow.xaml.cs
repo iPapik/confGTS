@@ -282,33 +282,53 @@ public sealed class MainWindow : Window
         passwordHost.Children.Add(revealButton);
         panel.Children.Add(passwordHost);
 
-        // Keep the native checkbox only for its state/indicator, but render the
-        // caption separately. This avoids two WinUI theme bugs seen in production:
-        // the caption disappearing and the unchecked square becoming transparent on hover.
-        _rememberMeBox.Content = null;
-        _rememberMeBox.Width = 26;
-        _rememberMeBox.Height = 30;
-        _rememberMeBox.MinWidth = 26;
-        _rememberMeBox.MinHeight = 30;
-        _rememberMeBox.Padding = new Thickness(0);
-        _rememberMeBox.Margin = new Thickness(0);
-        _rememberMeBox.HorizontalAlignment = HorizontalAlignment.Left;
-        _rememberMeBox.VerticalAlignment = VerticalAlignment.Center;
-        _rememberMeBox.Resources["CheckBoxCheckBackgroundFillUnchecked"] = Brush("#FFFFFF");
-        _rememberMeBox.Resources["CheckBoxCheckBackgroundFillUncheckedPointerOver"] = Brush("#F4FAFD");
-        _rememberMeBox.Resources["CheckBoxCheckBackgroundFillUncheckedPressed"] = Brush("#E8F4F9");
-        _rememberMeBox.Resources["CheckBoxCheckBackgroundStrokeUnchecked"] = Brush("#6F9DB8");
-        _rememberMeBox.Resources["CheckBoxCheckBackgroundStrokeUncheckedPointerOver"] = Brush(Blue);
-        _rememberMeBox.Resources["CheckBoxCheckBackgroundStrokeUncheckedPressed"] = Brush(Navy);
-        _rememberMeBox.Resources["CheckBoxCheckBackgroundFillChecked"] = Brush(Blue);
-        _rememberMeBox.Resources["CheckBoxCheckBackgroundFillCheckedPointerOver"] = Brush("#117FA8");
-        _rememberMeBox.Resources["CheckBoxCheckBackgroundFillCheckedPressed"] = Brush(Navy);
-        _rememberMeBox.Resources["CheckBoxCheckBackgroundStrokeChecked"] = Brush(Blue);
-        _rememberMeBox.Resources["CheckBoxCheckBackgroundStrokeCheckedPointerOver"] = Brush("#117FA8");
-        _rememberMeBox.Resources["CheckBoxCheckBackgroundStrokeCheckedPressed"] = Brush(Navy);
-        _rememberMeBox.Resources["CheckBoxCheckGlyphForegroundChecked"] = Brush("#FFFFFF");
-        _rememberMeBox.Resources["CheckBoxCheckGlyphForegroundCheckedPointerOver"] = Brush("#FFFFFF");
-        _rememberMeBox.Resources["CheckBoxCheckGlyphForegroundCheckedPressed"] = Brush("#FFFFFF");
+        // Keep CheckBox only as the persisted boolean state. The visible control is
+        // drawn by ConfGTS itself, so Windows theme templates cannot hide either
+        // the square or the caption on hover.
+        _rememberMeBox.Visibility = Visibility.Collapsed;
+        _rememberMeBox.IsHitTestVisible = false;
+
+        var rememberIndicator = new Border
+        {
+            Width = 20,
+            Height = 20,
+            CornerRadius = new CornerRadius(3),
+            Background = Brush("#FFFFFF"),
+            BorderBrush = Brush("#6F9DB8"),
+            BorderThickness = new Thickness(2),
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        var rememberGlyph = new TextBlock
+        {
+            Text = "✓",
+            FontSize = 14,
+            FontWeight = FontWeights.Bold,
+            Foreground = Brush("#FFFFFF"),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            Visibility = Visibility.Collapsed
+        };
+        rememberIndicator.Child = rememberGlyph;
+
+        void RefreshRememberVisual(bool pointerOver = false)
+        {
+            var isChecked = _rememberMeBox.IsChecked == true;
+            rememberGlyph.Visibility = isChecked ? Visibility.Visible : Visibility.Collapsed;
+            rememberIndicator.Background = isChecked
+                ? Brush(pointerOver ? "#117FA8" : Blue)
+                : Brush(pointerOver ? "#F0F8FC" : "#FFFFFF");
+            rememberIndicator.BorderBrush = isChecked
+                ? Brush(pointerOver ? Navy : Blue)
+                : Brush(pointerOver ? Blue : "#6F9DB8");
+        }
+
+        var rememberText = new TextBlock
+        {
+            Text = "Запомнить меня",
+            Foreground = Brush(Text),
+            FontSize = 13,
+            VerticalAlignment = VerticalAlignment.Center
+        };
 
         var rememberRow = new StackPanel
         {
@@ -318,17 +338,18 @@ public sealed class MainWindow : Window
             HorizontalAlignment = HorizontalAlignment.Left,
             VerticalAlignment = VerticalAlignment.Center
         };
-        rememberRow.Children.Add(_rememberMeBox);
-
-        var rememberText = new TextBlock
-        {
-            Text = "Запомнить меня",
-            Foreground = Brush(Text),
-            FontSize = 13,
-            VerticalAlignment = VerticalAlignment.Center
-        };
-        rememberText.Tapped += (_, _) => _rememberMeBox.IsChecked = _rememberMeBox.IsChecked != true;
+        rememberRow.Children.Add(rememberIndicator);
         rememberRow.Children.Add(rememberText);
+        rememberRow.Tapped += (_, _) =>
+        {
+            _rememberMeBox.IsChecked = _rememberMeBox.IsChecked != true;
+            RefreshRememberVisual();
+        };
+        rememberRow.PointerEntered += (_, _) => RefreshRememberVisual(pointerOver: true);
+        rememberRow.PointerExited += (_, _) => RefreshRememberVisual();
+        _rememberMeBox.Checked += (_, _) => RefreshRememberVisual();
+        _rememberMeBox.Unchecked += (_, _) => RefreshRememberVisual();
+        RefreshRememberVisual();
         panel.Children.Add(rememberRow);
 
         _loginButton.Height = 54;
