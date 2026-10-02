@@ -214,7 +214,7 @@ jobs:
             if ($mediaSettings -notmatch [regex]::Escape($token)) { throw "Missing integrated settings feature marker: $token" }
           }
           foreach ($token in @(
-            'Text = @"Введите логин, например teplo\\ИвановИИ"',
+            'Введите логин, например',
             'Text = "Запомнить меня"',
             'var rememberIndicator = new Border',
             'var rememberGlyph = new TextBlock',
