@@ -209,12 +209,37 @@ public sealed class MainWindow : Window
         });
 
         panel.Children.Add(Label("Логин"));
-        _loginBox.PlaceholderText = "Логин";
+        _loginBox.PlaceholderText = "";
         _loginBox.IsSpellCheckEnabled = false;
         _loginBox.IsTextPredictionEnabled = false;
         StyleLoginTextBox(_loginBox);
         _loginBox.KeyDown += LoginField_KeyDown;
-        panel.Children.Add(_loginBox);
+
+        // Draw our own placeholder above the WinUI TextBox. On some Windows
+        // themes the template-level PlaceholderText becomes invisible when the
+        // field receives focus, which made the login field look completely blank.
+        var loginHost = new Grid();
+        loginHost.Children.Add(_loginBox);
+        var loginPlaceholder = new TextBlock
+        {
+            Text = @"Введите логин, например teplo\ИвановИИ",
+            Foreground = Brush("#8194A7"),
+            FontSize = 16,
+            Margin = new Thickness(13, 0, 44, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+            IsHitTestVisible = false
+        };
+        loginPlaceholder.Visibility = string.IsNullOrWhiteSpace(_loginBox.Text)
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        _loginBox.TextChanged += (_, _) =>
+        {
+            loginPlaceholder.Visibility = string.IsNullOrEmpty(_loginBox.Text)
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+        };
+        loginHost.Children.Add(loginPlaceholder);
+        panel.Children.Add(loginHost);
 
         panel.Children.Add(Label("Пароль"));
         _passwordBox.PlaceholderText = "Введите пароль";
@@ -257,23 +282,76 @@ public sealed class MainWindow : Window
         passwordHost.Children.Add(revealButton);
         panel.Children.Add(passwordHost);
 
-        // Use the native WinUI CheckBox as a whole control. The previous
-        // hand-built 20 px host clipped the indicator on some Windows themes,
-        // leaving only the caption visible.
-        _rememberMeBox.Content = "Запомнить меня";
-        _rememberMeBox.MinWidth = 150;
-        _rememberMeBox.MinHeight = 32;
-        _rememberMeBox.Padding = new Thickness(0);
-        _rememberMeBox.Margin = new Thickness(0, 3, 0, 3);
-        _rememberMeBox.HorizontalAlignment = HorizontalAlignment.Left;
-        _rememberMeBox.Foreground = Brush(Text);
-        _rememberMeBox.FontSize = 13;
-        _rememberMeBox.Resources["CheckBoxCheckBackgroundFillUnchecked"] = Brush("#FFFFFF");
-        _rememberMeBox.Resources["CheckBoxCheckBackgroundStrokeUnchecked"] = Brush("#8EACC0");
-        _rememberMeBox.Resources["CheckBoxCheckBackgroundFillChecked"] = Brush(Blue);
-        _rememberMeBox.Resources["CheckBoxCheckBackgroundStrokeChecked"] = Brush(Blue);
-        _rememberMeBox.Resources["CheckBoxCheckGlyphForegroundChecked"] = Brush("#FFFFFF");
-        panel.Children.Add(_rememberMeBox);
+        // Keep CheckBox only as the persisted boolean state. The visible control is
+        // drawn by ConfGTS itself, so Windows theme templates cannot hide either
+        // the square or the caption on hover.
+        _rememberMeBox.Visibility = Visibility.Collapsed;
+        _rememberMeBox.IsHitTestVisible = false;
+
+        var rememberIndicator = new Border
+        {
+            Width = 20,
+            Height = 20,
+            CornerRadius = new CornerRadius(3),
+            Background = Brush("#FFFFFF"),
+            BorderBrush = Brush("#6F9DB8"),
+            BorderThickness = new Thickness(2),
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        var rememberGlyph = new TextBlock
+        {
+            Text = "✓",
+            FontSize = 14,
+            FontWeight = FontWeights.Bold,
+            Foreground = Brush("#FFFFFF"),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            Visibility = Visibility.Collapsed
+        };
+        rememberIndicator.Child = rememberGlyph;
+
+        void RefreshRememberVisual(bool pointerOver = false)
+        {
+            var isChecked = _rememberMeBox.IsChecked == true;
+            rememberGlyph.Visibility = isChecked ? Visibility.Visible : Visibility.Collapsed;
+            rememberIndicator.Background = isChecked
+                ? Brush(pointerOver ? "#117FA8" : Blue)
+                : Brush(pointerOver ? "#F0F8FC" : "#FFFFFF");
+            rememberIndicator.BorderBrush = isChecked
+                ? Brush(pointerOver ? Navy : Blue)
+                : Brush(pointerOver ? Blue : "#6F9DB8");
+        }
+
+        var rememberText = new TextBlock
+        {
+            Text = "Запомнить меня",
+            Foreground = Brush(Text),
+            FontSize = 13,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+
+        var rememberRow = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 8,
+            Margin = new Thickness(0, 3, 0, 3),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        rememberRow.Children.Add(_rememberMeBox);
+        rememberRow.Children.Add(rememberIndicator);
+        rememberRow.Children.Add(rememberText);
+        rememberRow.Tapped += (_, _) =>
+        {
+            _rememberMeBox.IsChecked = _rememberMeBox.IsChecked != true;
+            RefreshRememberVisual();
+        };
+        rememberRow.PointerEntered += (_, _) => RefreshRememberVisual(pointerOver: true);
+        rememberRow.PointerExited += (_, _) => RefreshRememberVisual();
+        _rememberMeBox.Checked += (_, _) => RefreshRememberVisual();
+        _rememberMeBox.Unchecked += (_, _) => RefreshRememberVisual();
+        RefreshRememberVisual();
+        panel.Children.Add(rememberRow);
 
         _loginButton.Height = 54;
         _loginButton.HorizontalAlignment = HorizontalAlignment.Stretch;
@@ -336,7 +414,7 @@ public sealed class MainWindow : Window
 
         panel.Children.Add(new TextBlock
         {
-            Text = "Версия 0.18.15 beta  |  © ГТС, 2026",
+            Text = "Версия 0.18.16 beta  |  © ГТС, 2026",
             FontSize = 11,
             Foreground = Brush("#8A9BAC"),
             HorizontalAlignment = HorizontalAlignment.Center,
@@ -1990,7 +2068,14 @@ public sealed class MainWindow : Window
         _loginView.Visibility = Visibility.Collapsed;
         _dashboardView.Visibility = Visibility.Visible;
         await ShowInlineSettingsAsync();
-        StartupDiagnostics.Log("Settings smoke test completed.");
+        StartupDiagnostics.Log("Settings smoke test opened.");
+
+        // Keep the integrated settings view alive long enough to catch delayed
+        // WinUI/Media Foundation failures that happen after the click handler
+        // returns. The production crash reported for 0.18.15 happened in this
+        // post-open window.
+        await Task.Delay(TimeSpan.FromSeconds(4));
+        StartupDiagnostics.Log("Settings smoke test stability window completed.");
     }
 
     private async void LogoutButton_Click(object sender, RoutedEventArgs e) =>

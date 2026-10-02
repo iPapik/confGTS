@@ -11,7 +11,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: confgts-windows-main
+  group: confgts-windows-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
@@ -46,11 +46,11 @@ jobs:
           [IO.File]::WriteAllBytes($zip, [Convert]::FromBase64String($builder.ToString()))
           Expand-Archive $zip -DestinationPath '.' -Force
 
-      - name: Apply ConfGTS Server 0.18.15 overlays
+      - name: Apply ConfGTS Server 0.18.16 overlays
         shell: pwsh
         run: .\server-overrides\apply.ps1
 
-      - name: Validate 0.18.15 server UI changes
+      - name: Validate 0.18.16 server UI changes
         shell: pwsh
         run: |
           $admin = Get-Content '.\server\admin.go' -Raw -Encoding UTF8
@@ -157,7 +157,7 @@ jobs:
       - name: Package server source
         shell: pwsh
         run: |
-          $stage = Join-Path $env:RUNNER_TEMP 'ConfGTS-Server-0.18.15-Source'
+          $stage = Join-Path $env:RUNNER_TEMP 'ConfGTS-Server-0.18.16-Source'
           Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Force -Path $stage | Out-Null
           Copy-Item '.\go.mod' $stage -Force
@@ -168,7 +168,7 @@ jobs:
           Copy-Item '.\Installer\Server' (Join-Path $stage 'Installer\Server') -Recurse -Force
           Copy-Item '.\build-server.ps1' $stage -Force
           New-Item -ItemType Directory -Force -Path '.\artifacts' | Out-Null
-          Compress-Archive -Path "$stage\*" -DestinationPath '.\artifacts\ConfGTS-Server-0.18.15-Source.zip' -Force
+          Compress-Archive -Path "$stage\*" -DestinationPath '.\artifacts\ConfGTS-Server-0.18.16-Source.zip' -Force
 
       - name: Validate tray, auto-login and compact sidebar changes
         shell: pwsh
@@ -213,10 +213,31 @@ jobs:
           )) {
             if ($mediaSettings -notmatch [regex]::Escape($token)) { throw "Missing integrated settings feature marker: $token" }
           }
-          if ($client -notmatch '_rememberMeBox\.Content = "Запомнить меня"' -or $client -match '_rememberMeBox\.Width = 20') {
-            throw 'Remember-me checkbox visual fix is missing.'
+          foreach ($token in @(
+            'Введите логин, например',
+            'Text = "Запомнить меня"',
+            'var rememberIndicator = new Border',
+            'var rememberGlyph = new TextBlock',
+            'rememberRow.PointerEntered',
+            'rememberRow.PointerExited',
+            '_rememberMeBox.Visibility = Visibility.Collapsed',
+            '_microphoneTestButton',
+            '_cameraTestButton',
+            'SafeRestartMicrophoneMeterAsync',
+            'SafeRestartCameraPreviewAsync',
+            'initialized without acquiring media devices'
+          )) {
+            if (($client + [Environment]::NewLine + $mediaSettings) -notmatch [regex]::Escape($token)) {
+              throw "Missing 0.18.16 login/settings stability marker: $token"
+            }
           }
-          Write-Host 'Tray, remembered auto-login and compact sidebar markers are present.' -ForegroundColor Green
+          $initializeMatch = [regex]::Match(
+            $mediaSettings,
+            'public async Task InitializeAsync\(\)[\s\S]*?public async Task ShutdownAsync')
+          if (!$initializeMatch.Success -or $initializeMatch.Value -match 'RestartDiagnosticsAsync\(\)') {
+            throw 'Settings initialization still auto-acquires camera/microphone hardware.'
+          }
+          Write-Host 'Tray, login visuals and safe integrated settings markers are present.' -ForegroundColor Green
 
       - name: Validate custom install folders and recording storage settings
         shell: pwsh
@@ -263,14 +284,14 @@ jobs:
         run: |
           $required = @(
             'artifacts\publish\ConfGTS.Client.exe',
-            'artifacts\msi\ConfGTS-0.18.15-x64.msi',
-            'artifacts\setup\ConfGTS-Setup-0.18.15-x64.exe',
+            'artifacts\msi\ConfGTS-0.18.16-x64.msi',
+            'artifacts\setup\ConfGTS-Setup-0.18.16-x64.exe',
             'artifacts\server-publish\ConfGTSServer.exe',
             'artifacts\server-publish\ConfGTS.Server.Settings.exe',
             'artifacts\server-publish\ffmpeg.exe',
-            'artifacts\server-msi\ConfGTS-Server-0.18.15-x64.msi',
-            'artifacts\server-setup\ConfGTS-Server-Setup-0.18.15-x64.exe',
-            'artifacts\ConfGTS-Server-0.18.15-Source.zip'
+            'artifacts\server-msi\ConfGTS-Server-0.18.16-x64.msi',
+            'artifacts\server-setup\ConfGTS-Server-Setup-0.18.16-x64.exe',
+            'artifacts\ConfGTS-Server-0.18.16-Source.zip'
           )
           foreach ($file in $required) {
             if (!(Test-Path $file)) { throw "Missing artifact: $file" }
@@ -312,10 +333,35 @@ jobs:
 
           Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
 
+      - name: Launch-test integrated settings after authorization shell
+        shell: pwsh
+        run: |
+          $startupLog = "$env:LOCALAPPDATA\ConfGTS\logs\startup.log"
+          Remove-Item $startupLog -Force -ErrorAction SilentlyContinue
+          $exe = (Resolve-Path 'artifacts\publish\ConfGTS.Client.exe').Path
+          $p = Start-Process $exe -ArgumentList '--self-test-settings' -PassThru
+          Start-Sleep -Seconds 10
+          $log = if (Test-Path $startupLog) { Get-Content $startupLog -Raw } else { '' }
+
+          # For unpackaged WinUI, the process object returned by Start-Process
+          # is not a reliable liveness signal when command-line activation is used.
+          # The application itself writes the stronger regression markers below.
+          if ($log -notmatch 'Settings smoke test opened\.' -or
+              $log -notmatch 'Settings smoke test stability window completed\.' -or
+              $log -notmatch 'Integrated ConfGTS settings initialized without acquiring media devices\.' -or
+              $log -notmatch 'Media settings opened successfully\.' -or
+              $log -match 'Fatal error|Unhandled WinUI exception|AppDomain unhandled|XAML parsing failed') {
+            if (Test-Path $startupLog) { Get-Content $startupLog -Tail 160 }
+            if (!$p.HasExited) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
+            throw 'Integrated settings smoke test failed.'
+          }
+
+          if (!$p.HasExited) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
+
       - name: Test client MSI installation, shortcuts and startup
         shell: pwsh
         run: |
-          $msi = (Resolve-Path 'artifacts\msi\ConfGTS-0.18.15-x64.msi').Path
+          $msi = (Resolve-Path 'artifacts\msi\ConfGTS-0.18.16-x64.msi').Path
           $customClientDir = Join-Path $env:ProgramFiles 'ConfGTS-CI-Custom'
           $installedExe = Join-Path $customClientDir 'ConfGTS.Client.exe'
           $startMenu = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\ConfGTS\ConfGTS.lnk'
@@ -346,7 +392,7 @@ jobs:
       - name: Test client EXE default Program Files path
         shell: pwsh
         run: |
-          $setup = (Resolve-Path 'artifacts\setup\ConfGTS-Setup-0.18.15-x64.exe').Path
+          $setup = (Resolve-Path 'artifacts\setup\ConfGTS-Setup-0.18.16-x64.exe').Path
           $defaultDir = Join-Path $env:ProgramFiles 'ГТС\ConfGTS'
           $installedExe = Join-Path $defaultDir 'ConfGTS.Client.exe'
 
@@ -363,7 +409,7 @@ jobs:
       - name: Test client EXE custom install folder
         shell: pwsh
         run: |
-          $setup = (Resolve-Path 'artifacts\setup\ConfGTS-Setup-0.18.15-x64.exe').Path
+          $setup = (Resolve-Path 'artifacts\setup\ConfGTS-Setup-0.18.16-x64.exe').Path
           $customClientDir = 'C:\ConfGTS-CI-EXE-Custom'
           $installedExe = Join-Path $customClientDir 'ConfGTS.Client.exe'
           $startMenu = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\ConfGTS\ConfGTS.lnk'
@@ -397,7 +443,7 @@ jobs:
             throw "ConfGTS Server health endpoint did not become ready: $Uri"
           }
 
-          $msi = (Resolve-Path 'artifacts\server-msi\ConfGTS-Server-0.18.15-x64.msi').Path
+          $msi = (Resolve-Path 'artifacts\server-msi\ConfGTS-Server-0.18.16-x64.msi').Path
           $serverDir = Join-Path $env:ProgramFiles 'ConfGTS-Server-CI-Custom'
           $serverExe = Join-Path $serverDir 'ConfGTSServer.exe'
           $settingsExe = Join-Path $serverDir 'ConfGTS.Server.Settings.exe'
@@ -419,7 +465,7 @@ jobs:
           if ($svc.Status -ne 'Running') { Start-Service 'ConfGTSServer' }
 
           $health = Wait-Server 'http://127.0.0.1:8090/health'
-          if ($health.version -ne '0.18.15') { throw "Unexpected server version: $($health.version)" }
+          if ($health.version -ne '0.18.16') { throw "Unexpected server version: $($health.version)" }
 
           $nameHealth = Wait-Server ("http://{0}:8090/health" -f $env:COMPUTERNAME)
           if ($nameHealth.ok -ne $true) { throw "Server is not reachable by Windows computer name." }
@@ -487,7 +533,7 @@ jobs:
       - name: Test server EXE default Program Files path
         shell: pwsh
         run: |
-          $setup = (Resolve-Path 'artifacts\server-setup\ConfGTS-Server-Setup-0.18.15-x64.exe').Path
+          $setup = (Resolve-Path 'artifacts\server-setup\ConfGTS-Server-Setup-0.18.16-x64.exe').Path
           $defaultDir = Join-Path $env:ProgramFiles 'ГТС\ConfGTS Server'
           $serverExe = Join-Path $defaultDir 'ConfGTSServer.exe'
 
@@ -517,7 +563,7 @@ jobs:
             throw "ConfGTS Server health endpoint did not become ready: $Uri"
           }
 
-          $setup = (Resolve-Path 'artifacts\server-setup\ConfGTS-Server-Setup-0.18.15-x64.exe').Path
+          $setup = (Resolve-Path 'artifacts\server-setup\ConfGTS-Server-Setup-0.18.16-x64.exe').Path
           $serverDir = 'C:\ConfGTS-Server-CI-EXE-Custom'
           $serverExe = Join-Path $serverDir 'ConfGTSServer.exe'
           $settingsExe = Join-Path $serverDir 'ConfGTS.Server.Settings.exe'
@@ -531,7 +577,7 @@ jobs:
           }
 
           $health = Wait-Server 'http://127.0.0.1:8090/health'
-          if ($health.version -ne '0.18.15') { throw "Unexpected server version: $($health.version)" }
+          if ($health.version -ne '0.18.16') { throw "Unexpected server version: $($health.version)" }
           [void](Wait-Server ("http://{0}:8090/health" -f $env:COMPUTERNAME))
 
           $web = Invoke-WebRequest -Uri 'http://127.0.0.1:8090/server-login' -UseBasicParsing -TimeoutSec 5
@@ -546,11 +592,11 @@ jobs:
         shell: pwsh
         run: |
           $files = @(
-            'artifacts\msi\ConfGTS-0.18.15-x64.msi',
-            'artifacts\setup\ConfGTS-Setup-0.18.15-x64.exe',
-            'artifacts\server-msi\ConfGTS-Server-0.18.15-x64.msi',
-            'artifacts\server-setup\ConfGTS-Server-Setup-0.18.15-x64.exe',
-            'artifacts\ConfGTS-Server-0.18.15-Source.zip'
+            'artifacts\msi\ConfGTS-0.18.16-x64.msi',
+            'artifacts\setup\ConfGTS-Setup-0.18.16-x64.exe',
+            'artifacts\server-msi\ConfGTS-Server-0.18.16-x64.msi',
+            'artifacts\server-setup\ConfGTS-Server-Setup-0.18.16-x64.exe',
+            'artifacts\ConfGTS-Server-0.18.16-Source.zip'
           )
           $lines = foreach ($file in $files) {
             $hash = Get-FileHash $file -Algorithm SHA256
@@ -562,16 +608,16 @@ jobs:
       - name: Upload tested packages
         uses: actions/upload-artifact@v4
         with:
-          name: ConfGTS-0.18.15-tested
+          name: ConfGTS-0.18.16-tested
           if-no-files-found: error
           retention-days: 30
           compression-level: 0
           path: |
-            artifacts/msi/ConfGTS-0.18.15-x64.msi
-            artifacts/setup/ConfGTS-Setup-0.18.15-x64.exe
-            artifacts/server-msi/ConfGTS-Server-0.18.15-x64.msi
-            artifacts/server-setup/ConfGTS-Server-Setup-0.18.15-x64.exe
-            artifacts/ConfGTS-Server-0.18.15-Source.zip
+            artifacts/msi/ConfGTS-0.18.16-x64.msi
+            artifacts/setup/ConfGTS-Setup-0.18.16-x64.exe
+            artifacts/server-msi/ConfGTS-Server-0.18.16-x64.msi
+            artifacts/server-setup/ConfGTS-Server-Setup-0.18.16-x64.exe
+            artifacts/ConfGTS-Server-0.18.16-Source.zip
             artifacts/SHA256SUMS.txt
 
       - name: Publish GitHub Release
@@ -580,10 +626,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release delete v0.18.15 --cleanup-tag --yes 2>$null
-          if ($LASTEXITCODE -ne 0) { Write-Host 'No previous v0.18.15 release to delete.' }
+          gh release delete v0.18.16 --cleanup-tag --yes 2>$null
+          if ($LASTEXITCODE -ne 0) { Write-Host 'No previous v0.18.16 release to delete.' }
           @'
-          ConfGTS 0.18.15.
+          ConfGTS 0.18.16.
 
           Окно и системный трей:
           - ConfGTS теперь работает как один экземпляр: повторный запуск ярлыка активирует уже запущенный клиент из трея вместо запуска второго процесса;
@@ -596,7 +642,12 @@ jobs:
           - добавлен живой индикатор уровня выбранного микрофона через Windows AudioGraph;
           - добавлен нативный предпросмотр выбранной веб-камеры;
           - добавлен тест выбранного устройства вывода: сначала звучит левый, затем правый канал;
-          - исправлено отображение квадрата «Запомнить меня» на экране входа.
+          - поле логина снова показывает подсказку «Введите логин…» независимо от темы и фокуса;
+          - подпись «Запомнить меня» вынесена из проблемного шаблона WinUI CheckBox и больше не исчезает;
+          - квадрат «Запомнить меня» остаётся видимым при наведении, нажатии и в отмеченном состоянии;
+          - открытие настроек больше не захватывает микрофон/камеру автоматически: это устраняет падение клиента на проблемных USB/Bluetooth/Media Foundation драйверах;
+          - микрофон и камера запускаются только после явного выбора/кнопки проверки, при этом индикатор уровня и предпросмотр сохранены;
+          - CI отдельно открывает встроенные настройки в активной оболочке клиента и проверяет, что процесс не завершается.
 
           Навигация и контакты:
           - сохранена компактная левая панель и отдельные разделы «Конференции» / «Контакты»;
@@ -617,4 +668,4 @@ jobs:
 
           Все исправления 0.18.13 и 0.18.12 сохранены.
           '@ | Set-Content 'artifacts\RELEASE-NOTES.md' -Encoding utf8
-          gh release create v0.18.15 'artifacts\msi\ConfGTS-0.18.15-x64.msi' 'artifacts\setup\ConfGTS-Setup-0.18.15-x64.exe' 'artifacts\server-msi\ConfGTS-Server-0.18.15-x64.msi' 'artifacts\server-setup\ConfGTS-Server-Setup-0.18.15-x64.exe' 'artifacts\ConfGTS-Server-0.18.15-Source.zip' 'artifacts\SHA256SUMS.txt' --target '${{ github.sha }}' --title 'ConfGTS 0.18.15' --notes-file 'artifacts\RELEASE-NOTES.md'
+          gh release create v0.18.16 'artifacts\msi\ConfGTS-0.18.16-x64.msi' 'artifacts\setup\ConfGTS-Setup-0.18.16-x64.exe' 'artifacts\server-msi\ConfGTS-Server-0.18.16-x64.msi' 'artifacts\server-setup\ConfGTS-Server-Setup-0.18.16-x64.exe' 'artifacts\ConfGTS-Server-0.18.16-Source.zip' 'artifacts\SHA256SUMS.txt' --target '${{ github.sha }}' --title 'ConfGTS 0.18.16' --notes-file 'artifacts\RELEASE-NOTES.md'

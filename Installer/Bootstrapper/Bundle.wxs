@@ -3,7 +3,7 @@
      xmlns:bal="http://wixtoolset.org/schemas/v4/wxs/bal">
   <Bundle Name="ConfGTS"
           Manufacturer="СГМУП Городские тепловые сети"
-          Version="0.18.15"
+          Version="0.18.16"
           IconSourceFile="!(bindpath.assets)\ConfGTS.ico"
           UpgradeCode="9C5D2F51-7B95-4D1E-9842-83450C9315E7">
     <Variable Name="InstallFolder" Type="formatted" Value="[ProgramFiles64Folder]ГТС\ConfGTS" Persisted="yes" bal:Overridable="yes" />
@@ -17,7 +17,7 @@
           SuppressOptionsUI="no" />
     </BootstrapperApplication>
     <Chain>
-      <MsiPackage SourceFile="!(bindpath.msi)\ConfGTS-0.18.15-x64.msi" Vital="yes">
+      <MsiPackage SourceFile="!(bindpath.msi)\ConfGTS-0.18.16-x64.msi" Vital="yes">
         <MsiProperty Name="INSTALLFOLDER" Value="[InstallFolder]" />
       </MsiPackage>
     </Chain>
