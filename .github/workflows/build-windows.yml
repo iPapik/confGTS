@@ -343,19 +343,20 @@ jobs:
           Start-Sleep -Seconds 10
           $log = if (Test-Path $startupLog) { Get-Content $startupLog -Raw } else { '' }
 
-          if ($p.HasExited) {
-            if (Test-Path $startupLog) { Get-Content $startupLog -Tail 160 }
-            throw 'Client exited while opening integrated settings.'
-          }
-          if ($log -notmatch 'Settings smoke test completed\.' -or
+          # For unpackaged WinUI, the process object returned by Start-Process
+          # is not a reliable liveness signal when command-line activation is used.
+          # The application itself writes the stronger regression markers below.
+          if ($log -notmatch 'Settings smoke test opened\.' -or
+              $log -notmatch 'Settings smoke test stability window completed\.' -or
               $log -notmatch 'Integrated ConfGTS settings initialized without acquiring media devices\.' -or
+              $log -notmatch 'Media settings opened successfully\.' -or
               $log -match 'Fatal error|Unhandled WinUI exception|AppDomain unhandled|XAML parsing failed') {
             if (Test-Path $startupLog) { Get-Content $startupLog -Tail 160 }
-            Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+            if (!$p.HasExited) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
             throw 'Integrated settings smoke test failed.'
           }
 
-          Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+          if (!$p.HasExited) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
 
       - name: Test client MSI installation, shortcuts and startup
         shell: pwsh
