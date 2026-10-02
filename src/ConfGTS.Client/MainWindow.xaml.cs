@@ -2068,7 +2068,14 @@ public sealed class MainWindow : Window
         _loginView.Visibility = Visibility.Collapsed;
         _dashboardView.Visibility = Visibility.Visible;
         await ShowInlineSettingsAsync();
-        StartupDiagnostics.Log("Settings smoke test completed.");
+        StartupDiagnostics.Log("Settings smoke test opened.");
+
+        // Keep the integrated settings view alive long enough to catch delayed
+        // WinUI/Media Foundation failures that happen after the click handler
+        // returns. The production crash reported for 0.18.15 happened in this
+        // post-open window.
+        await Task.Delay(TimeSpan.FromSeconds(4));
+        StartupDiagnostics.Log("Settings smoke test stability window completed.");
     }
 
     private async void LogoutButton_Click(object sender, RoutedEventArgs e) =>
