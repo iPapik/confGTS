@@ -213,10 +213,29 @@ jobs:
           )) {
             if ($mediaSettings -notmatch [regex]::Escape($token)) { throw "Missing integrated settings feature marker: $token" }
           }
-          if ($client -notmatch '_rememberMeBox\.Content = "Запомнить меня"' -or $client -match '_rememberMeBox\.Width = 20') {
-            throw 'Remember-me checkbox visual fix is missing.'
+          foreach ($token in @(
+            'Text = @"Введите логин, например teplo\\ИвановИИ"',
+            'Text = "Запомнить меня"',
+            'CheckBoxCheckBackgroundFillUncheckedPointerOver',
+            'CheckBoxCheckBackgroundStrokeUncheckedPointerOver',
+            'rememberText.Tapped',
+            '_microphoneTestButton',
+            '_cameraTestButton',
+            'SafeRestartMicrophoneMeterAsync',
+            'SafeRestartCameraPreviewAsync',
+            'initialized without acquiring media devices'
+          )) {
+            if (($client + [Environment]::NewLine + $mediaSettings) -notmatch [regex]::Escape($token)) {
+              throw "Missing 0.18.16 login/settings stability marker: $token"
+            }
           }
-          Write-Host 'Tray, remembered auto-login and compact sidebar markers are present.' -ForegroundColor Green
+          $initializeMatch = [regex]::Match(
+            $mediaSettings,
+            'public async Task InitializeAsync\(\)[\s\S]*?public async Task ShutdownAsync')
+          if (!$initializeMatch.Success -or $initializeMatch.Value -match 'RestartDiagnosticsAsync\(\)') {
+            throw 'Settings initialization still auto-acquires camera/microphone hardware.'
+          }
+          Write-Host 'Tray, login visuals and safe integrated settings markers are present.' -ForegroundColor Green
 
       - name: Validate custom install folders and recording storage settings
         shell: pwsh
@@ -309,6 +328,30 @@ jobs:
             throw "Existing ConfGTS instance exited during single-instance handoff."
           }
           Write-Host 'Single-instance desktop relaunch handoff passed.' -ForegroundColor Green
+
+          Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+
+      - name: Launch-test integrated settings after authorization shell
+        shell: pwsh
+        run: |
+          $startupLog = "$env:LOCALAPPDATA\ConfGTS\logs\startup.log"
+          Remove-Item $startupLog -Force -ErrorAction SilentlyContinue
+          $exe = (Resolve-Path 'artifacts\publish\ConfGTS.Client.exe').Path
+          $p = Start-Process $exe -ArgumentList '--self-test-settings' -PassThru
+          Start-Sleep -Seconds 10
+          $log = if (Test-Path $startupLog) { Get-Content $startupLog -Raw } else { '' }
+
+          if ($p.HasExited) {
+            if (Test-Path $startupLog) { Get-Content $startupLog -Tail 160 }
+            throw 'Client exited while opening integrated settings.'
+          }
+          if ($log -notmatch 'Settings smoke test completed\.' -or
+              $log -notmatch 'Integrated ConfGTS settings initialized without acquiring media devices\.' -or
+              $log -match 'Fatal error|Unhandled WinUI exception|AppDomain unhandled|XAML parsing failed') {
+            if (Test-Path $startupLog) { Get-Content $startupLog -Tail 160 }
+            Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+            throw 'Integrated settings smoke test failed.'
+          }
 
           Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
 
@@ -596,7 +639,12 @@ jobs:
           - добавлен живой индикатор уровня выбранного микрофона через Windows AudioGraph;
           - добавлен нативный предпросмотр выбранной веб-камеры;
           - добавлен тест выбранного устройства вывода: сначала звучит левый, затем правый канал;
-          - исправлено отображение квадрата «Запомнить меня» на экране входа.
+          - поле логина снова показывает подсказку «Введите логин…» независимо от темы и фокуса;
+          - подпись «Запомнить меня» вынесена из проблемного шаблона WinUI CheckBox и больше не исчезает;
+          - квадрат «Запомнить меня» остаётся видимым при наведении, нажатии и в отмеченном состоянии;
+          - открытие настроек больше не захватывает микрофон/камеру автоматически: это устраняет падение клиента на проблемных USB/Bluetooth/Media Foundation драйверах;
+          - микрофон и камера запускаются только после явного выбора/кнопки проверки, при этом индикатор уровня и предпросмотр сохранены;
+          - CI отдельно открывает встроенные настройки в активной оболочке клиента и проверяет, что процесс не завершается.
 
           Навигация и контакты:
           - сохранена компактная левая панель и отдельные разделы «Конференции» / «Контакты»;
