@@ -11,7 +11,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: confgts-windows-main
+  group: confgts-windows-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
