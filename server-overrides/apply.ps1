@@ -809,7 +809,7 @@ if (Test-Path $serverBundle) {
     if ($bundle -notmatch '<MsiProperty Name="INSTALLFOLDER" Value="\[InstallFolder\]"') {
         $bundle = [regex]::Replace(
             $bundle,
-            '<MsiPackage([^>]+SourceFile="[^"]+ConfGTS-Server-0\.18\.15-x64\.msi"[^>]*)\s*/>',
+            '<MsiPackage([^>]+SourceFile="[^"]+ConfGTS-Server-0\.18\.16-x64\.msi"[^>]*)\s*/>',
             '<MsiPackage$1>' + [Environment]::NewLine +
             '        <MsiProperty Name="INSTALLFOLDER" Value="[InstallFolder]" />' + [Environment]::NewLine +
             '      </MsiPackage>',
