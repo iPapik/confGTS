@@ -209,12 +209,37 @@ public sealed class MainWindow : Window
         });
 
         panel.Children.Add(Label("Логин"));
-        _loginBox.PlaceholderText = "Логин";
+        _loginBox.PlaceholderText = "";
         _loginBox.IsSpellCheckEnabled = false;
         _loginBox.IsTextPredictionEnabled = false;
         StyleLoginTextBox(_loginBox);
         _loginBox.KeyDown += LoginField_KeyDown;
-        panel.Children.Add(_loginBox);
+
+        // Draw our own placeholder above the WinUI TextBox. On some Windows
+        // themes the template-level PlaceholderText becomes invisible when the
+        // field receives focus, which made the login field look completely blank.
+        var loginHost = new Grid();
+        loginHost.Children.Add(_loginBox);
+        var loginPlaceholder = new TextBlock
+        {
+            Text = @"Введите логин, например teplo\ИвановИИ",
+            Foreground = Brush("#8194A7"),
+            FontSize = 16,
+            Margin = new Thickness(13, 0, 44, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+            IsHitTestVisible = false
+        };
+        loginPlaceholder.Visibility = string.IsNullOrWhiteSpace(_loginBox.Text)
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        _loginBox.TextChanged += (_, _) =>
+        {
+            loginPlaceholder.Visibility = string.IsNullOrEmpty(_loginBox.Text)
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+        };
+        loginHost.Children.Add(loginPlaceholder);
+        panel.Children.Add(loginHost);
 
         panel.Children.Add(Label("Пароль"));
         _passwordBox.PlaceholderText = "Введите пароль";
@@ -257,23 +282,54 @@ public sealed class MainWindow : Window
         passwordHost.Children.Add(revealButton);
         panel.Children.Add(passwordHost);
 
-        // Use the native WinUI CheckBox as a whole control. The previous
-        // hand-built 20 px host clipped the indicator on some Windows themes,
-        // leaving only the caption visible.
-        _rememberMeBox.Content = "Запомнить меня";
-        _rememberMeBox.MinWidth = 150;
-        _rememberMeBox.MinHeight = 32;
+        // Keep the native checkbox only for its state/indicator, but render the
+        // caption separately. This avoids two WinUI theme bugs seen in production:
+        // the caption disappearing and the unchecked square becoming transparent on hover.
+        _rememberMeBox.Content = null;
+        _rememberMeBox.Width = 26;
+        _rememberMeBox.Height = 30;
+        _rememberMeBox.MinWidth = 26;
+        _rememberMeBox.MinHeight = 30;
         _rememberMeBox.Padding = new Thickness(0);
-        _rememberMeBox.Margin = new Thickness(0, 3, 0, 3);
+        _rememberMeBox.Margin = new Thickness(0);
         _rememberMeBox.HorizontalAlignment = HorizontalAlignment.Left;
-        _rememberMeBox.Foreground = Brush(Text);
-        _rememberMeBox.FontSize = 13;
+        _rememberMeBox.VerticalAlignment = VerticalAlignment.Center;
         _rememberMeBox.Resources["CheckBoxCheckBackgroundFillUnchecked"] = Brush("#FFFFFF");
-        _rememberMeBox.Resources["CheckBoxCheckBackgroundStrokeUnchecked"] = Brush("#8EACC0");
+        _rememberMeBox.Resources["CheckBoxCheckBackgroundFillUncheckedPointerOver"] = Brush("#F4FAFD");
+        _rememberMeBox.Resources["CheckBoxCheckBackgroundFillUncheckedPressed"] = Brush("#E8F4F9");
+        _rememberMeBox.Resources["CheckBoxCheckBackgroundStrokeUnchecked"] = Brush("#6F9DB8");
+        _rememberMeBox.Resources["CheckBoxCheckBackgroundStrokeUncheckedPointerOver"] = Brush(Blue);
+        _rememberMeBox.Resources["CheckBoxCheckBackgroundStrokeUncheckedPressed"] = Brush(Navy);
         _rememberMeBox.Resources["CheckBoxCheckBackgroundFillChecked"] = Brush(Blue);
+        _rememberMeBox.Resources["CheckBoxCheckBackgroundFillCheckedPointerOver"] = Brush("#117FA8");
+        _rememberMeBox.Resources["CheckBoxCheckBackgroundFillCheckedPressed"] = Brush(Navy);
         _rememberMeBox.Resources["CheckBoxCheckBackgroundStrokeChecked"] = Brush(Blue);
+        _rememberMeBox.Resources["CheckBoxCheckBackgroundStrokeCheckedPointerOver"] = Brush("#117FA8");
+        _rememberMeBox.Resources["CheckBoxCheckBackgroundStrokeCheckedPressed"] = Brush(Navy);
         _rememberMeBox.Resources["CheckBoxCheckGlyphForegroundChecked"] = Brush("#FFFFFF");
-        panel.Children.Add(_rememberMeBox);
+        _rememberMeBox.Resources["CheckBoxCheckGlyphForegroundCheckedPointerOver"] = Brush("#FFFFFF");
+        _rememberMeBox.Resources["CheckBoxCheckGlyphForegroundCheckedPressed"] = Brush("#FFFFFF");
+
+        var rememberRow = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 8,
+            Margin = new Thickness(0, 3, 0, 3),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        rememberRow.Children.Add(_rememberMeBox);
+
+        var rememberText = new TextBlock
+        {
+            Text = "Запомнить меня",
+            Foreground = Brush(Text),
+            FontSize = 13,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        rememberText.Tapped += (_, _) => _rememberMeBox.IsChecked = _rememberMeBox.IsChecked != true;
+        rememberRow.Children.Add(rememberText);
+        panel.Children.Add(rememberRow);
 
         _loginButton.Height = 54;
         _loginButton.HorizontalAlignment = HorizontalAlignment.Stretch;
@@ -336,7 +392,7 @@ public sealed class MainWindow : Window
 
         panel.Children.Add(new TextBlock
         {
-            Text = "Версия 0.18.15 beta  |  © ГТС, 2026",
+            Text = "Версия 0.18.16 beta  |  © ГТС, 2026",
             FontSize = 11,
             Foreground = Brush("#8A9BAC"),
             HorizontalAlignment = HorizontalAlignment.Center,
