@@ -2,7 +2,7 @@ $ErrorActionPreference = "Stop"
 
 $root = Split-Path -Parent $PSScriptRoot
 
-Write-Host "Applying ConfGTS Server 0.18.14 overlays..." -ForegroundColor Cyan
+Write-Host "Applying ConfGTS Server 0.18.15 overlays..." -ForegroundColor Cyan
 
 Copy-Item (Join-Path $PSScriptRoot "src\*") (Join-Path $root "src") -Recurse -Force
 Copy-Item (Join-Path $PSScriptRoot "server\*") (Join-Path $root "server") -Recurse -Force
@@ -85,7 +85,7 @@ func (s *Store) CanUploadEndedSessionRecording(sessionID, username string, maxAg
     }
 }
 
-# 0.18.14 stores browser MP4 directly. If MP4 recording is unavailable,
+# 0.18.15 stores browser MP4 directly. If MP4 recording is unavailable,
 # Chromium falls back to WebM; WebM is a Matroska subset and is stored as .mkv.
 $recordingContainerPattern = '(?ms)^\s*fn := sessionID \+ "_" \+ safe \+ "\.webm"\r?\n\s*r := Recording\{ID: newID\("rec_"\), RoomID: roomID, SessionID: sessionID, CaptureID: safe, Recorder: recorder, FileName: fn, StartedAt: time\.Now\(\), ContentType: contentType\}'
 $recordingContainerReplacement = @'
@@ -105,10 +105,95 @@ if ($recordingContainerRegex.IsMatch($store)) {
 
 Set-Content $storePath $store -Encoding UTF8 -NoNewline
 
+$ldapPath = Join-Path $root "server\ldap.go"
+$ldap = Get-Content $ldapPath -Raw -Encoding UTF8
+
+$ldap = $ldap.Replace(
+    'attrs := ber(0x30, berStr(0x04, "displayName"), berStr(0x04, "mail"), berStr(0x04, "memberOf"), berStr(0x04, "sAMAccountName"))',
+    'attrs := ber(0x30, berStr(0x04, "displayName"), berStr(0x04, "givenName"), berStr(0x04, "sn"), berStr(0x04, "middleName"), berStr(0x04, "mail"), berStr(0x04, "memberOf"), berStr(0x04, "sAMAccountName"))')
+
+$parseEntryPattern = '(?ms)^func parseSearchEntry\(op berNode, u \*User\) \{.*?^\}'
+$parseEntryReplacement = @'
+func parseSearchEntry(op berNode, u *User) {
+	if len(op.children) < 2 {
+		return
+	}
+	u.DN = string(op.children[0].value)
+	attrs := op.children[1]
+	var givenName, surname, middleName string
+	for _, pa := range attrs.children {
+		if len(pa.children) < 2 {
+			continue
+		}
+		name := strings.ToLower(string(pa.children[0].value))
+		vals := pa.children[1].children
+		for _, v := range vals {
+			s := strings.TrimSpace(string(v.value))
+			switch name {
+			case "displayname":
+				if s != "" {
+					u.DisplayName = s
+				}
+			case "givenname":
+				if s != "" {
+					givenName = s
+				}
+			case "sn":
+				if s != "" {
+					surname = s
+				}
+			case "middlename":
+				if s != "" {
+					middleName = s
+				}
+			case "mail":
+				if s != "" {
+					u.Email = s
+				}
+			case "memberof":
+				u.Groups = append(u.Groups, s)
+			}
+		}
+	}
+
+	// Prefer structured Active Directory attributes over displayName. This keeps
+	// the client/contact list stable even when displayName is configured as a
+	// login-like string. The requested presentation is "Имя О. Фамилия.".
+	if givenName != "" && surname != "" {
+		if middleName == "" {
+			// A number of AD schemas do not populate middleName but keep a normal
+			// "Фамилия Имя Отчество" in displayName. Recover the patronymic only
+			// when it is unambiguous.
+			parts := strings.Fields(u.DisplayName)
+			if len(parts) >= 3 &&
+				strings.EqualFold(parts[0], surname) &&
+				strings.EqualFold(parts[1], givenName) {
+				middleName = parts[2]
+			}
+		}
+
+		initial := ""
+		runes := []rune(strings.TrimSpace(middleName))
+		if len(runes) > 0 {
+			initial = strings.ToUpper(string(runes[0])) + ". "
+		}
+		u.DisplayName = strings.TrimSpace(givenName + " " + initial + surname + ".")
+	}
+}
+'@
+$ldapRegex = [regex]::new($parseEntryPattern)
+if ($ldapRegex.IsMatch($ldap)) {
+    $ldap = $ldapRegex.Replace($ldap, $parseEntryReplacement.Trim(), 1)
+} elseif (-not $ldap.Contains('Prefer structured Active Directory attributes over displayName')) {
+    throw 'LDAP contact-name normalization patch was not applied.'
+}
+
+Set-Content $ldapPath $ldap -Encoding UTF8 -NoNewline
+
 $mainPath = Join-Path $root "server\main.go"
 $main = Get-Content $mainPath -Raw -Encoding UTF8
-$main = $main.Replace('const Version = "0.16.0"', 'const Version = "0.18.14"')
-$main = $main.Replace('const Version = "0.16.1"', 'const Version = "0.18.14"')
+$main = $main.Replace('const Version = "0.16.0"', 'const Version = "0.18.15"')
+$main = $main.Replace('const Version = "0.16.1"', 'const Version = "0.18.15"')
 $main = $main.Replace('cfg.ListenAddr == ":8090" {', 'cfg.ListenAddr == ":8090" || cfg.ListenAddr == "0.0.0.0:8090" {')
 $main = $main.Replace('cfg.ListenAddr = "127.0.0.1:" + strconv.Itoa(n)', 'cfg.ListenAddr = "0.0.0.0:" + strconv.Itoa(n)')
 $main = $main.Replace('addr = "127.0.0.1:8090"', 'addr = "0.0.0.0:8090"')
@@ -566,16 +651,16 @@ $versionTargets = @(
     (Join-Path $root "src\ConfGTS.Server.Settings"),
     (Join-Path $root "build-server.ps1")
 )
-$versionPattern = '(?<!\d)0\.(?:16\.[01]|17\.0|18\.(?:0|1|2|7|11|13))(?!\d)'
+$versionPattern = '(?<!\d)0\.(?:16\.[01]|17\.0|18\.(?:0|1|2|7|11|13|14))(?!\d)'
 foreach ($target in $versionTargets) {
     if (Test-Path $target -PathType Leaf) {
         $text = Get-Content $target -Raw -Encoding UTF8
-        $text = [regex]::Replace($text, $versionPattern, '0.18.14')
+        $text = [regex]::Replace($text, $versionPattern, '0.18.15')
         Set-Content $target $text -Encoding UTF8 -NoNewline
     } elseif (Test-Path $target -PathType Container) {
         Get-ChildItem $target -Recurse -File -Include *.go,*.cs,*.xaml,*.csproj,*.wxs,*.wixproj,*.ps1 | ForEach-Object {
             $text = Get-Content $_.FullName -Raw -Encoding UTF8
-            $patched = [regex]::Replace($text, $versionPattern, '0.18.14')
+            $patched = [regex]::Replace($text, $versionPattern, '0.18.15')
             if ($patched -ne $text) {
                 Set-Content $_.FullName $patched -Encoding UTF8 -NoNewline
             }
@@ -696,29 +781,41 @@ $serverBundle = Join-Path $root "Installer\Server\Bootstrapper\Bundle.wxs"
 if (Test-Path $serverBundle) {
     $bundle = Get-Content $serverBundle -Raw -Encoding UTF8
     if (-not $bundle.Contains('IconSourceFile=')) {
-        $bundle = $bundle.Replace('          Version="0.18.14"', '          Version="0.18.14"' + [Environment]::NewLine + '          IconSourceFile="!(bindpath.assets)\ConfGTS.ico"')
+        $bundle = $bundle.Replace('          Version="0.18.15"', '          Version="0.18.15"' + [Environment]::NewLine + '          IconSourceFile="!(bindpath.assets)\ConfGTS.ico"')
     }
-    if (-not $bundle.Contains('Variable Name="InstallFolder"')) {
-        $bundle = $bundle.Replace(
-            '    <BootstrapperApplication>',
-            '    <Variable Name="InstallFolder" Type="formatted" Value="[ProgramFiles64Folder]ГТС\ConfGTS Server" Persisted="yes" bal:Overridable="yes" />' +
-            [Environment]::NewLine + [Environment]::NewLine + '    <BootstrapperApplication>')
-    }
+
+    # Always replace the Burn install-directory variable with the canonical
+    # declaration. Older reconstructed bundles may already contain a variable
+    # without bal:Overridable, which makes InstallFolder=... on the EXE command
+    # line silently fall back to the persisted/default Program Files path.
+    $bundle = [regex]::Replace(
+        $bundle,
+        '(?m)^\s*<Variable\s+Name="InstallFolder"[^>]*/>\s*\r?\n?',
+        '',
+        1)
+    $bundle = $bundle.Replace(
+        '    <BootstrapperApplication>',
+        '    <Variable Name="InstallFolder" Type="formatted" Value="[ProgramFiles64Folder]ГТС\ConfGTS Server" Persisted="yes" bal:Overridable="yes" />' +
+        [Environment]::NewLine + [Environment]::NewLine + '    <BootstrapperApplication>')
+
     $bundle = $bundle.Replace('SuppressOptionsUI="yes"', 'SuppressOptionsUI="no"')
-    $bundle = $bundle.Replace('Type="string" Value="[ProgramFiles64Folder]ГТС\ConfGTS Server\"', 'Type="formatted" Value="[ProgramFiles64Folder]ГТС\ConfGTS Server"')
-    $bundle = $bundle.Replace('LaunchTarget="[InstallFolder]ConfGTS.Server.Settings.exe"', 'LaunchTarget="[InstallFolder]\ConfGTS.Server.Settings.exe"')
     $bundle = $bundle.Replace(
         'LaunchTarget="[ProgramFiles64Folder]ГТС\ConfGTS Server\ConfGTS.Server.Settings.exe"',
         'LaunchTarget="[InstallFolder]\ConfGTS.Server.Settings.exe"')
+    $bundle = $bundle.Replace(
+        'LaunchTarget="[InstallFolder]ConfGTS.Server.Settings.exe"',
+        'LaunchTarget="[InstallFolder]\ConfGTS.Server.Settings.exe"')
+
     if ($bundle -notmatch '<MsiProperty Name="INSTALLFOLDER" Value="\[InstallFolder\]"') {
         $bundle = [regex]::Replace(
             $bundle,
-            '<MsiPackage([^>]+SourceFile="[^"]+ConfGTS-Server-0\.18\.14-x64\.msi"[^>]*)\s*/>',
+            '<MsiPackage([^>]+SourceFile="[^"]+ConfGTS-Server-0\.18\.15-x64\.msi"[^>]*)\s*/>',
             '<MsiPackage$1>' + [Environment]::NewLine +
             '        <MsiProperty Name="INSTALLFOLDER" Value="[InstallFolder]" />' + [Environment]::NewLine +
             '      </MsiPackage>',
             1)
     }
+
     Set-Content $serverBundle $bundle -Encoding UTF8 -NoNewline
 }
 
