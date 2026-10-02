@@ -338,6 +338,7 @@ public sealed class MainWindow : Window
             HorizontalAlignment = HorizontalAlignment.Left,
             VerticalAlignment = VerticalAlignment.Center
         };
+        rememberRow.Children.Add(_rememberMeBox);
         rememberRow.Children.Add(rememberIndicator);
         rememberRow.Children.Add(rememberText);
         rememberRow.Tapped += (_, _) =>
