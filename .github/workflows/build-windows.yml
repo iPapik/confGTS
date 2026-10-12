@@ -271,11 +271,19 @@ jobs:
           if ($overlay -notmatch 'WixUI_InstallDir' -or $overlay -notmatch 'Variable Name="InstallFolder" Type="formatted"' -or $overlay -notmatch 'Value="\[ProgramFiles64Folder\]ГТС\\ConfGTS Server"' -or $overlay -notmatch 'bal:Overridable="yes"' -or $overlay -notmatch 'SuppressOptionsUI="no"') {
             throw 'Server installer formatted custom-directory overlay is missing.'
           }
-          if ($generatedServerBundle -notmatch 'Variable Name="InstallFolder" Type="formatted"' -or
-              $generatedServerBundle -notmatch 'bal:Overridable="yes"' -or
-              $generatedServerBundle -notmatch 'MsiProperty Name="INSTALLFOLDER" Value="\[InstallFolder\]"' -or
-              $generatedServerBundle -notmatch 'LaunchTarget="\[InstallFolder\]\\ConfGTS.Server.Settings.exe"') {
-            throw 'Generated server EXE bundle does not forward an overridable InstallFolder correctly.'
+          # EXE distribution is now the Inno Setup wizard; the legacy Burn
+          # bootstrapper is retained only for fallback/local compatibility.
+          $clientWizard = Get-Content '.\Installer\Wizard\Client.iss' -Raw -Encoding UTF8
+          $serverWizard = Get-Content '.\Installer\Wizard\Server.iss' -Raw -Encoding UTF8
+          $storageHelper = Get-Content '.\Installer\Wizard\Configure-ServerStorage.ps1' -Raw -Encoding UTF8
+          if ($clientWizard -notmatch 'desktopicon' -or $clientWizard -notmatch 'startmenuicon' -or
+              $clientWizard -notmatch 'autostart' -or $clientWizard -notmatch 'PrepareToInstall') {
+            throw 'Client step-by-step installer options are missing.'
+          }
+          if ($serverWizard -notmatch 'CreateInputDirPage' -or $serverWizard -notmatch 'desktopicon' -or
+              $serverWizard -notmatch 'autostart' -or $serverWizard -notmatch 'PrepareToInstall' -or
+              $storageHelper -notmatch 'recording_dir') {
+            throw 'Server recording-folder and startup wizard options are missing.'
           }
           Write-Host 'Custom install paths and recording storage settings are present.' -ForegroundColor Green
 
