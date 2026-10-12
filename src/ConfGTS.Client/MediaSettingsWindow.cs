@@ -56,7 +56,7 @@ public sealed class MediaSettingsPanel : Grid
     private readonly Button _speakerTestButton = new();
     private readonly Button _cameraTestButton = new();
     private readonly Image _cameraPreview = new();
-    private readonly SoftwareBitmapSource _cameraBitmapSource = new();
+    private SoftwareBitmapSource? _cameraBitmapSource;
     private readonly Button _refreshButton = new();
 
     private List<DeviceChoice> _microphoneDevices = [];
@@ -80,10 +80,10 @@ public sealed class MediaSettingsPanel : Grid
     public MediaSettingsPanel(ApiClient api)
     {
         _api = api;
-        StartupDiagnostics.Log("MediaSettingsPanel 0.18.16 constructor started.");
+        StartupDiagnostics.Log("MediaSettingsPanel 0.18.17 constructor started.");
         Background = Brush(Bg);
         Children.Add(BuildUi());
-        StartupDiagnostics.Log("MediaSettingsPanel 0.18.16 constructor completed.");
+        StartupDiagnostics.Log("MediaSettingsPanel 0.18.17 constructor completed.");
     }
 
     public async Task InitializeAsync()
@@ -91,15 +91,22 @@ public sealed class MediaSettingsPanel : Grid
         ApplySavedValues();
         _serverBox.Text = _api.BaseUrl;
 
-        // Enumerating endpoints is safe and does not acquire camera/microphone
-        // hardware. Do not automatically open capture devices merely because the
-        // settings page was shown: on several USB/Bluetooth drivers that can
-        // destabilize the device stack and, in the worst case, terminate the process.
-        await RefreshDevicesAsync();
-        _microphoneLevelCaption.Text = "Выберите микрофон или нажмите «Проверить микрофон».";
-        if (_cameraDevices.Count > 0)
-            _cameraStatus.Text = "Камера выбрана. Нажмите «Показать изображение» для проверки.";
-        StartupDiagnostics.Log("Integrated ConfGTS settings initialized without acquiring media devices.");
+        // Windows audio/video endpoint enumeration can enter native vendor drivers
+        // and terminate the entire WinUI process (without a managed exception).
+        // The user must explicitly request discovery after the settings page opens.
+        EnsureEmptyPlaceholder(_microphone, "Нажмите «Обновить устройства»");
+        EnsureEmptyPlaceholder(_speaker, "Нажмите «Обновить устройства»");
+        EnsureEmptyPlaceholder(_camera, "Нажмите «Обновить устройства»");
+        _microphoneStatus.Text = "Для поиска микрофонов нажмите «Обновить устройства».";
+        _speakerStatus.Text = "Для поиска динамиков нажмите «Обновить устройства».";
+        _cameraStatus.Text = "Для поиска камер нажмите «Обновить устройства».";
+        _microphoneLevelCaption.Text = "Проверка микрофона запускается только вручную.";
+        _microphoneTestButton.IsEnabled = false;
+        _speakerTestButton.IsEnabled = false;
+        _cameraTestButton.IsEnabled = false;
+        _loading = false;
+        StartupDiagnostics.Log("Integrated ConfGTS settings initialized without device enumeration or media acquisition.");
+        await Task.CompletedTask;
     }
 
     public async Task ShutdownAsync()
@@ -190,6 +197,7 @@ public sealed class MediaSettingsPanel : Grid
         StyleSecondaryButton(_refreshButton);
         _refreshButton.Click += async (_, _) =>
         {
+            StartupDiagnostics.Log("User explicitly requested device enumeration.");
             await StopDiagnosticsAsync();
             await RefreshDevicesAsync();
             _microphoneLevelCaption.Text = "Устройства обновлены. Проверка запускается только по вашему действию.";
@@ -460,7 +468,6 @@ public sealed class MediaSettingsPanel : Grid
         panel.Children.Add(DeviceLabel("Устройство"));
         panel.Children.Add(_camera);
 
-        _cameraPreview.Source = _cameraBitmapSource;
         _cameraPreview.Stretch = Stretch.Uniform;
         _cameraPreview.HorizontalAlignment = HorizontalAlignment.Stretch;
         _cameraPreview.VerticalAlignment = VerticalAlignment.Stretch;
@@ -823,8 +830,6 @@ public sealed class MediaSettingsPanel : Grid
 
     private async Task StartCameraPreviewCoreAsync()
     {
-        _cameraPreview.Source = _cameraBitmapSource;
-
         if (!_settings.CameraEnabled)
         {
             _cameraStatus.Text = "Камера отключена.";
@@ -840,6 +845,8 @@ public sealed class MediaSettingsPanel : Grid
 
         try
         {
+            _cameraBitmapSource ??= new SoftwareBitmapSource();
+            _cameraPreview.Source = _cameraBitmapSource;
             var capture = new MediaCapture();
             await capture.InitializeAsync(new MediaCaptureInitializationSettings
             {
@@ -926,8 +933,9 @@ public sealed class MediaSettingsPanel : Grid
             {
                 try
                 {
-                    if (!_closed)
-                        await _cameraBitmapSource.SetBitmapAsync(copy);
+                    var bitmapSource = _cameraBitmapSource;
+                    if (!_closed && bitmapSource is not null)
+                        await bitmapSource.SetBitmapAsync(copy);
                 }
                 catch
                 {
