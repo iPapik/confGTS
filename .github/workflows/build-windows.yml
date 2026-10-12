@@ -343,23 +343,25 @@ jobs:
           Start-Sleep -Seconds 10
           $log = if (Test-Path $startupLog) { Get-Content $startupLog -Raw } else { '' }
 
-          # The regression we care about is the 0.18.15 behavior where opening
-          # settings terminated the client. Require the real process to still be
-          # alive after the stability window and require all open/initialization
-          # markers with no unhandled/fatal exception in the log.
-          $alive = !$p.HasExited
+          # Unpackaged WinUI may hand off from the process returned by
+          # Start-Process to the real application process. Find the running
+          # client by its executable path rather than trusting $p.HasExited.
+          $live = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+            Where-Object { $_.ExecutablePath -and [string]::Equals($_.ExecutablePath, $exe, [StringComparison]::OrdinalIgnoreCase) })
+          $alive = $live.Count -gt 0
+
           if (!$alive -or
               $log -notmatch 'Settings smoke test opened\.' -or
               $log -notmatch 'Integrated ConfGTS settings initialized without acquiring media devices\.' -or
               $log -notmatch 'Media settings opened successfully\.' -or
               $log -match 'Fatal error|Unhandled WinUI exception|AppDomain unhandled|XAML parsing failed') {
             if (Test-Path $startupLog) { Get-Content $startupLog -Tail 160 }
-            if (!$p.HasExited) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
+            foreach ($proc in $live) { Stop-Process -Id $proc.ProcessId -Force -ErrorAction SilentlyContinue }
             throw 'Integrated settings smoke test failed.'
           }
 
-          Write-Host 'Integrated settings stayed open without terminating the client.' -ForegroundColor Green
-          Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+          Write-Host 'Integrated settings stayed open without terminating the real client process.' -ForegroundColor Green
+          foreach ($proc in $live) { Stop-Process -Id $proc.ProcessId -Force -ErrorAction SilentlyContinue }
 
       - name: Test client MSI installation, shortcuts and startup
         shell: pwsh
