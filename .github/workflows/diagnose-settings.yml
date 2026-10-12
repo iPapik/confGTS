@@ -32,14 +32,22 @@ jobs:
           New-ItemProperty -Path $key -Name DumpFolder -Value "$env:RUNNER_TEMP" -PropertyType ExpandString -Force | Out-Null
 
           $logPath = "$env:LOCALAPPDATA\ConfGTS\logs\startup.log"
-          Remove-Item $logPath -Force -ErrorAction SilentlyContinue
           $exe = (Resolve-Path 'artifacts\publish\ConfGTS.Client.exe').Path
-          $p = Start-Process $exe -ArgumentList '--self-test-settings' -PassThru
-          Start-Sleep -Seconds 9
-          $p.Refresh()
-          Write-Host "Launch PID: $($p.Id), HasExited=$($p.HasExited)"
-          if ($p.HasExited) { Write-Host "ExitCode=$($p.ExitCode)" }
-          if (Test-Path $logPath) { Get-Content $logPath -Tail 100 }
+          foreach ($scope in @('header','connection','microphone','speaker','camera','full')) {
+            Get-Process 'ConfGTS.Client' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Milliseconds 500
+            Remove-Item $logPath -Force -ErrorAction SilentlyContinue
+            Write-Host "=== Testing Settings UI Scope: $scope ==="
+            $p = Start-Process $exe -ArgumentList @('--self-test-settings',("--settings-test-scope=" + $scope)) -PassThru
+            Start-Sleep -Seconds 6
+            $p.Refresh()
+            $log = if (Test-Path $logPath) { Get-Content $logPath -Raw } else { '' }
+            Write-Host "RESULT scope=$scope exited=$($p.HasExited) exitcode=$(if ($p.HasExited) {$p.ExitCode} else {'running'})"
+            Write-Host "RESULT scope=$scope opened=$($log.Contains('Settings smoke test opened.')) stable=$($log.Contains('Settings smoke test stability window completed.'))"
+            if (Test-Path $logPath) { Get-Content $logPath -Tail 20 }
+            if (!$p.HasExited) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
+            Start-Sleep -Milliseconds 400
+          }
 
           $events = Get-WinEvent -FilterHashtable @{
               LogName = 'Application'
