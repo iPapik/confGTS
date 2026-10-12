@@ -1,0 +1,73 @@
+name: Diagnose ConfGTS settings native process exit
+on:
+  push:
+    branches: ['0.18.17']
+    paths:
+      - 'src/ConfGTS.Client/**'
+      - '.github/workflows/diagnose-settings.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  reproduce-settings-exit:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Build executable
+        shell: pwsh
+        run: .\build-client.ps1
+      - name: Launch, collect native crash events and minidumps
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $key = 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\ConfGTS.Client.exe'
+          New-Item -Path $key -Force | Out-Null
+          New-ItemProperty -Path $key -Name DumpType -Value 1 -PropertyType DWord -Force | Out-Null
+          New-ItemProperty -Path $key -Name DumpFolder -Value "$env:RUNNER_TEMP" -PropertyType ExpandString -Force | Out-Null
+
+          $logPath = "$env:LOCALAPPDATA\ConfGTS\logs\startup.log"
+          Remove-Item $logPath -Force -ErrorAction SilentlyContinue
+          $exe = (Resolve-Path 'artifacts\publish\ConfGTS.Client.exe').Path
+          $p = Start-Process $exe -ArgumentList '--self-test-settings' -PassThru
+          Start-Sleep -Seconds 9
+          $p.Refresh()
+          Write-Host "Launch PID: $($p.Id), HasExited=$($p.HasExited)"
+          if ($p.HasExited) { Write-Host "ExitCode=$($p.ExitCode)" }
+          if (Test-Path $logPath) { Get-Content $logPath -Tail 100 }
+
+          $events = Get-WinEvent -FilterHashtable @{
+              LogName = 'Application'
+              StartTime = (Get-Date).AddMinutes(-5)
+            } -ErrorAction SilentlyContinue |
+            Where-Object { $_.Id -in @(1000,1001,1002,1026,33) } |
+            Select-Object -First 20 TimeCreated, ProviderName, Id, Message
+          Write-Host '=== Windows application error / WER events ==='
+          $events | Format-List | Out-String -Width 200 | Write-Host
+
+          $dump = Get-ChildItem $env:RUNNER_TEMP -Recurse -Filter '*ConfGTS*.dmp' -ErrorAction SilentlyContinue |
+            Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if ($dump) {
+            Write-Host "Native crash dump: $($dump.FullName)"
+            $debuggers = @(
+              'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\cdb.exe',
+              'C:\Program Files\Windows Kits\10\Debuggers\x64\cdb.exe'
+            )
+            $cdb = $debuggers | Where-Object { Test-Path $_ } | Select-Object -First 1
+            if ($cdb) { & $cdb -z $dump.FullName -c '!analyze -v; k; q' | Out-String -Width 240 | Write-Host }
+          }
+          if (!$p.HasExited) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
+      - name: Upload crash evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ConfGTS-settings-crash-evidence
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/*ConfGTS*.dmp
+            ${{ runner.temp }}/**/*ConfGTS*.dmp
