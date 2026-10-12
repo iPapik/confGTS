@@ -2072,10 +2072,13 @@ public sealed class MainWindow : Window
 
         // Keep the integrated settings view alive long enough to catch delayed
         // WinUI/Media Foundation failures that happen after the click handler
-        // returns. The production crash reported for 0.18.15 happened in this
-        // post-open window.
-        await Task.Delay(TimeSpan.FromSeconds(4));
-        StartupDiagnostics.Log("Settings smoke test stability window completed.");
+        // returns. Log the heartbeat from a worker task so the regression marker
+        // does not depend on a DispatcherQueue continuation being scheduled.
+        await Task.Run(async () =>
+        {
+            await Task.Delay(TimeSpan.FromSeconds(4));
+            StartupDiagnostics.Log("Settings smoke test stability window completed.");
+        });
     }
 
     private async void LogoutButton_Click(object sender, RoutedEventArgs e) =>
