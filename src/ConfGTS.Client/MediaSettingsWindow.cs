@@ -50,7 +50,11 @@ public sealed class MediaSettingsPanel : Grid
     private readonly TextBlock _microphoneStatus = new();
     private readonly TextBlock _speakerStatus = new();
     private readonly TextBlock _cameraStatus = new();
-    private readonly ProgressBar _microphoneLevel = new();
+    // Draw the level bar with plain Borders. Native WinUI ProgressBar default
+    // style triggers a 0xC000027B / 0x800F1000 XAML fail-fast on some runtimes.
+    private readonly Border _microphoneLevelTrack = new();
+    private readonly Border _microphoneLevelFill = new();
+    private double _microphoneLevelValue;
     private readonly TextBlock _microphoneLevelCaption = new();
     private readonly Button _microphoneTestButton = new();
     private readonly Button _speakerTestButton = new();
@@ -355,13 +359,17 @@ public sealed class MediaSettingsPanel : Grid
             SaveSettings();
         };
 
-        _microphoneLevel.Minimum = 0;
-        _microphoneLevel.Maximum = 100;
-        _microphoneLevel.Value = 0;
-        _microphoneLevel.Height = 10;
-        _microphoneLevel.HorizontalAlignment = HorizontalAlignment.Stretch;
-        _microphoneLevel.Foreground = Brush(Blue);
-        _microphoneLevel.Background = Brush("#DDEAF1");
+        _microphoneLevelTrack.Height = 10;
+        _microphoneLevelTrack.HorizontalAlignment = HorizontalAlignment.Stretch;
+        _microphoneLevelTrack.Background = Brush("#DDEAF1");
+        _microphoneLevelTrack.CornerRadius = new CornerRadius(5);
+        _microphoneLevelFill.Height = 10;
+        _microphoneLevelFill.Width = 0;
+        _microphoneLevelFill.HorizontalAlignment = HorizontalAlignment.Left;
+        _microphoneLevelFill.Background = Brush(Blue);
+        _microphoneLevelFill.CornerRadius = new CornerRadius(5);
+        _microphoneLevelTrack.Child = _microphoneLevelFill;
+        _microphoneLevelTrack.SizeChanged += (_, _) => RefreshMicrophoneMeterWidth();
 
         _microphoneLevelCaption.Text = "Выберите микрофон или нажмите «Проверить микрофон».";
         _microphoneLevelCaption.FontSize = 12;
@@ -378,11 +386,23 @@ public sealed class MediaSettingsPanel : Grid
         panel.Children.Add(_microphone);
         panel.Children.Add(_microphoneVolume);
         panel.Children.Add(DeviceLabel("Индикация входного сигнала"));
-        panel.Children.Add(_microphoneLevel);
+        panel.Children.Add(_microphoneLevelTrack);
         panel.Children.Add(_microphoneLevelCaption);
         panel.Children.Add(_microphoneTestButton);
         panel.Children.Add(_microphoneStatus);
         return Card(panel);
+    }
+
+    private void SetMicrophoneLevel(double value)
+    {
+        _microphoneLevelValue = Math.Clamp(value, 0, 100);
+        RefreshMicrophoneMeterWidth();
+    }
+
+    private void RefreshMicrophoneMeterWidth()
+    {
+        _microphoneLevelFill.Width = Math.Max(0,
+            _microphoneLevelTrack.ActualWidth * _microphoneLevelValue / 100.0);
     }
 
     private FrameworkElement BuildSpeakerCard()
@@ -644,7 +664,7 @@ public sealed class MediaSettingsPanel : Grid
         catch (Exception ex)
         {
             StartupDiagnostics.Log("Safe microphone diagnostics restart failed.", ex);
-            _microphoneLevel.Value = 0;
+            SetMicrophoneLevel(0);
             _microphoneLevelCaption.Text = "Проверку микрофона не удалось запустить.";
             _microphoneStatus.Text = ex.Message;
         }
@@ -709,7 +729,7 @@ public sealed class MediaSettingsPanel : Grid
 
     private async Task StartMicrophoneMeterCoreAsync()
     {
-        _microphoneLevel.Value = 0;
+        SetMicrophoneLevel(0);
 
         if (!_settings.MicrophoneEnabled)
         {
@@ -758,7 +778,7 @@ public sealed class MediaSettingsPanel : Grid
         catch (Exception ex)
         {
             StartupDiagnostics.Log("Microphone level meter start failed.", ex);
-            _microphoneLevel.Value = 0;
+            SetMicrophoneLevel(0);
             _microphoneLevelCaption.Text = "Не удалось получить уровень выбранного микрофона.";
             _microphoneStatus.Text = ex.Message;
         }
@@ -790,7 +810,7 @@ public sealed class MediaSettingsPanel : Grid
         try { output?.Dispose(); } catch { }
         try { graph?.Dispose(); } catch { }
 
-        _microphoneLevel.Value = 0;
+        SetMicrophoneLevel(0);
         await Task.CompletedTask;
     }
 
@@ -833,7 +853,7 @@ public sealed class MediaSettingsPanel : Grid
             DispatcherQueue.TryEnqueue(() =>
             {
                 if (!_closed)
-                    _microphoneLevel.Value = percent;
+                    SetMicrophoneLevel(percent);
             });
         }
         catch
