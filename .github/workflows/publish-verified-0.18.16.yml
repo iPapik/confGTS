@@ -1,0 +1,105 @@
+name: Publish verified ConfGTS 0.18.16 installers
+
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/publish-verified-0.18.16.yml']
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  publish-verified-packages:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Validate the successful Windows build
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          result="$(gh api repos/${{ github.repository }}/actions/runs/38197566243 --jq '.conclusion')"
+          head="$(gh api repos/${{ github.repository }}/actions/runs/38197566243 --jq '.head_sha')"
+          test "$result" = success
+          test "$head" = c7f1afdb014de8187d0d201830bf21a8175ed1a5
+          echo "Verified Windows run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/38197566243"
+
+      - name: Download verified Windows packages from successful run
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p verified
+          gh run download 38197566243 --repo "${{ github.repository }}" --name ConfGTS-0.18.16-tested --dir verified
+
+      - name: Verify file set and SHA-256 hashes
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib, re
+
+          root = Path("verified")
+          required = [
+              "ConfGTS-0.18.16-x64.msi",
+              "ConfGTS-Setup-0.18.16-x64.exe",
+              "ConfGTS-Server-0.18.16-x64.msi",
+              "ConfGTS-Server-Setup-0.18.16-x64.exe",
+              "ConfGTS-Server-0.18.16-Source.zip",
+          ]
+          names = required + ["SHA256SUMS.txt"]
+          paths = {}
+          for name in names:
+              candidates = list(root.rglob(name))
+              if len(candidates) != 1:
+                  raise SystemExit(f"Expected exactly one {name}, got {len(candidates)}")
+              paths[name] = candidates[0]
+          checks = {}
+          for line in paths["SHA256SUMS.txt"].read_text(encoding="utf-8-sig").splitlines():
+              match = re.fullmatch(r"([0-9A-Fa-f]{64})\s+\*?(.+?)\s*", line)
+              if match:
+                  checks[Path(match.group(2)).name] = match.group(1).lower()
+          if any(name not in checks for name in required):
+              raise SystemExit("SHA256SUMS.txt is incomplete")
+          for name in required:
+              sha256 = hashlib.sha256()
+              with paths[name].open("rb") as stream:
+                  for chunk in iter(lambda: stream.read(4 * 1024 * 1024), b""):
+                      sha256.update(chunk)
+              if sha256.hexdigest() != checks[name]:
+                  raise SystemExit(f"SHA256 mismatch for {name}")
+              print(f"Verified: {name}")
+          Path("upload-files.txt").write_text(
+              "\n".join(str(paths[name]) for name in names) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Publish GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view v0.18.16 --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "Version v0.18.16 is already published; not overwriting it."
+            exit 0
+          fi
+          cat > RELEASE-NOTES.md <<'EOF'
+          ConfGTS 0.18.16 (Windows x64).
+
+          - Restored the visible login field hint and remember-me caption.
+          - Replaced unstable theme-dependent remember-me checkbox visual with stable client-drawn control.
+          - Reworked integrated settings startup to avoid automatically accessing microphone/camera devices on opening.
+          - Installer packages were built and validated by successful Windows GitHub Actions run 38197566243.
+          - Real-device verification of microphone, camera, and Bluetooth configurations is still recommended.
+          
+          Select ConfGTS-Setup-0.18.16-x64.exe for the normal desktop installer, or ConfGTS-0.18.16-x64.msi for deployment.
+          EOF
+          mapfile -t files < upload-files.txt
+          gh release create v0.18.16 "${files[@]}" --repo "${{ github.repository }}" --target 4b7dd27c53d96f9b2fd3a46d59df6497edd720a8 --title "ConfGTS 0.18.16" --notes-file RELEASE-NOTES.md
+          echo "Published https://github.com/${{ github.repository }}/releases/tag/v0.18.16"
