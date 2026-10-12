@@ -16,7 +16,7 @@ if ($LASTEXITCODE -ne 0) { throw "MSI build failed" }
 
 $msi = Get-ChildItem $msiOut -Filter *.msi -Recurse | Select-Object -First 1
 if (-not $msi) { throw "MSI not found" }
-$finalMsi = Join-Path $msiOut "ConfGTS-0.18.16-x64.msi"
+$finalMsi = Join-Path $msiOut "ConfGTS-0.18.17-x64.msi"
 if ($msi.FullName -ne $finalMsi) { Copy-Item $msi.FullName $finalMsi -Force }
 
 dotnet build (Join-Path $root "Installer\Bootstrapper\ConfGTS.Bootstrapper.wixproj") -c Release -p:MsiDir="$msiOut" -p:OutputPath="$setupOut\"
@@ -24,8 +24,11 @@ if ($LASTEXITCODE -ne 0) { throw "EXE bootstrapper build failed" }
 
 $exe = Get-ChildItem $setupOut -Filter *.exe -Recurse | Select-Object -First 1
 if (-not $exe) { throw "EXE installer not found" }
-$finalExe = Join-Path $setupOut "ConfGTS-Setup-0.18.16-x64.exe"
+$finalExe = Join-Path $setupOut "ConfGTS-Setup-0.18.17-x64.exe"
 if ($exe.FullName -ne $finalExe) { Copy-Item $exe.FullName $finalExe -Force }
 
 Write-Host "MSI: $finalMsi" -ForegroundColor Green
 Write-Host "EXE: $finalExe" -ForegroundColor Green
+# The interactive Windows EXE now uses a real multi-page wizard.
+& (Join-Path $root 'Installer\Wizard\Build-Wizard.ps1') -Client
+if ($LASTEXITCODE -ne 0) { throw 'Client interactive EXE compilation failed.' }
