@@ -52,7 +52,9 @@ public sealed class MediaSettingsPanel : Grid
     private readonly TextBlock _cameraStatus = new();
     private readonly ProgressBar _microphoneLevel = new();
     private readonly TextBlock _microphoneLevelCaption = new();
+    private readonly Button _microphoneTestButton = new();
     private readonly Button _speakerTestButton = new();
+    private readonly Button _cameraTestButton = new();
     private readonly Image _cameraPreview = new();
     private readonly SoftwareBitmapSource _cameraBitmapSource = new();
     private readonly Button _refreshButton = new();
@@ -78,19 +80,26 @@ public sealed class MediaSettingsPanel : Grid
     public MediaSettingsPanel(ApiClient api)
     {
         _api = api;
-        StartupDiagnostics.Log("MediaSettingsPanel 0.18.15 constructor started.");
+        StartupDiagnostics.Log("MediaSettingsPanel 0.18.16 constructor started.");
         Background = Brush(Bg);
         Children.Add(BuildUi());
-        StartupDiagnostics.Log("MediaSettingsPanel 0.18.15 constructor completed.");
+        StartupDiagnostics.Log("MediaSettingsPanel 0.18.16 constructor completed.");
     }
 
     public async Task InitializeAsync()
     {
         ApplySavedValues();
         _serverBox.Text = _api.BaseUrl;
+
+        // Enumerating endpoints is safe and does not acquire camera/microphone
+        // hardware. Do not automatically open capture devices merely because the
+        // settings page was shown: on several USB/Bluetooth drivers that can
+        // destabilize the device stack and, in the worst case, terminate the process.
         await RefreshDevicesAsync();
-        await RestartDiagnosticsAsync();
-        StartupDiagnostics.Log("Integrated ConfGTS settings initialized.");
+        _microphoneLevelCaption.Text = "Выберите микрофон или нажмите «Проверить микрофон».";
+        if (_cameraDevices.Count > 0)
+            _cameraStatus.Text = "Камера выбрана. Нажмите «Показать изображение» для проверки.";
+        StartupDiagnostics.Log("Integrated ConfGTS settings initialized without acquiring media devices.");
     }
 
     public async Task ShutdownAsync()
@@ -183,7 +192,9 @@ public sealed class MediaSettingsPanel : Grid
         {
             await StopDiagnosticsAsync();
             await RefreshDevicesAsync();
-            await RestartDiagnosticsAsync();
+            _microphoneLevelCaption.Text = "Устройства обновлены. Проверка запускается только по вашему действию.";
+            if (_cameraDevices.Count > 0)
+                _cameraStatus.Text = "Устройства обновлены. Нажмите «Показать изображение» для проверки камеры.";
         };
         actions.Children.Add(_refreshButton);
 
@@ -297,7 +308,7 @@ public sealed class MediaSettingsPanel : Grid
                     _settings.MicrophoneName = name;
                 });
             SaveSettings();
-            await RestartMicrophoneMeterAsync();
+            await SafeRestartMicrophoneMeterAsync();
         };
 
         _microphoneEnabled.Header = "Использовать микрофон в конференции";
@@ -308,7 +319,7 @@ public sealed class MediaSettingsPanel : Grid
             _microphone.IsEnabled = _microphoneEnabled.IsOn;
             _microphoneVolume.IsEnabled = _microphoneEnabled.IsOn;
             SaveSettings();
-            await RestartMicrophoneMeterAsync();
+            await SafeRestartMicrophoneMeterAsync();
         };
 
         _microphoneVolume.Minimum = 0;
@@ -330,9 +341,14 @@ public sealed class MediaSettingsPanel : Grid
         _microphoneLevel.Foreground = Brush(Blue);
         _microphoneLevel.Background = Brush("#DDEAF1");
 
-        _microphoneLevelCaption.Text = "Уровень микрофона — говорите, чтобы проверить сигнал";
+        _microphoneLevelCaption.Text = "Выберите микрофон или нажмите «Проверить микрофон».";
         _microphoneLevelCaption.FontSize = 12;
         _microphoneLevelCaption.Foreground = Brush(Muted);
+
+        _microphoneTestButton.Content = "● Проверить микрофон";
+        StyleSecondaryButton(_microphoneTestButton);
+        _microphoneTestButton.HorizontalAlignment = HorizontalAlignment.Left;
+        _microphoneTestButton.Click += async (_, _) => await SafeRestartMicrophoneMeterAsync();
 
         ConfigureStatus(_microphoneStatus);
         panel.Children.Add(_microphoneEnabled);
@@ -342,6 +358,7 @@ public sealed class MediaSettingsPanel : Grid
         panel.Children.Add(DeviceLabel("Индикация входного сигнала"));
         panel.Children.Add(_microphoneLevel);
         panel.Children.Add(_microphoneLevelCaption);
+        panel.Children.Add(_microphoneTestButton);
         panel.Children.Add(_microphoneStatus);
         return Card(panel);
     }
@@ -419,7 +436,7 @@ public sealed class MediaSettingsPanel : Grid
                     _settings.CameraName = name;
                 });
             SaveSettings();
-            await RestartCameraPreviewAsync();
+            await SafeRestartCameraPreviewAsync();
         };
 
         _cameraEnabled.Header = "Использовать камеру в конференции";
@@ -429,8 +446,13 @@ public sealed class MediaSettingsPanel : Grid
             _settings.CameraEnabled = _cameraEnabled.IsOn;
             _camera.IsEnabled = _cameraEnabled.IsOn;
             SaveSettings();
-            await RestartCameraPreviewAsync();
+            await SafeRestartCameraPreviewAsync();
         };
+
+        _cameraTestButton.Content = "▶ Показать изображение";
+        StyleSecondaryButton(_cameraTestButton);
+        _cameraTestButton.HorizontalAlignment = HorizontalAlignment.Left;
+        _cameraTestButton.Click += async (_, _) => await SafeRestartCameraPreviewAsync();
 
         ConfigureStatus(_cameraStatus);
 
@@ -456,6 +478,7 @@ public sealed class MediaSettingsPanel : Grid
 
         panel.Children.Add(DeviceLabel("Предпросмотр изображения"));
         panel.Children.Add(previewHost);
+        panel.Children.Add(_cameraTestButton);
         panel.Children.Add(_cameraStatus);
         return Card(panel);
     }
@@ -540,7 +563,9 @@ public sealed class MediaSettingsPanel : Grid
             _camera.IsEnabled = _settings.CameraEnabled;
             _microphoneVolume.IsEnabled = _settings.MicrophoneEnabled;
             _speakerVolume.IsEnabled = _settings.SpeakerEnabled;
+            _microphoneTestButton.IsEnabled = _settings.MicrophoneEnabled && _microphoneDevices.Count > 0;
             _speakerTestButton.IsEnabled = _settings.SpeakerEnabled && _speakerDevices.Count > 0;
+            _cameraTestButton.IsEnabled = _settings.CameraEnabled && _cameraDevices.Count > 0;
 
             _microphoneStatus.Text = _microphoneDevices.Count == 0
                 ? "Микрофон не найден. В конференцию всё равно можно подключиться."
@@ -586,6 +611,34 @@ public sealed class MediaSettingsPanel : Grid
         finally
         {
             _diagnosticsGate.Release();
+        }
+    }
+
+    private async Task SafeRestartMicrophoneMeterAsync()
+    {
+        try
+        {
+            await RestartMicrophoneMeterAsync();
+        }
+        catch (Exception ex)
+        {
+            StartupDiagnostics.Log("Safe microphone diagnostics restart failed.", ex);
+            _microphoneLevel.Value = 0;
+            _microphoneLevelCaption.Text = "Проверку микрофона не удалось запустить.";
+            _microphoneStatus.Text = ex.Message;
+        }
+    }
+
+    private async Task SafeRestartCameraPreviewAsync()
+    {
+        try
+        {
+            await RestartCameraPreviewAsync();
+        }
+        catch (Exception ex)
+        {
+            StartupDiagnostics.Log("Safe camera diagnostics restart failed.", ex);
+            _cameraStatus.Text = "Предпросмотр недоступен: " + ex.Message;
         }
     }
 

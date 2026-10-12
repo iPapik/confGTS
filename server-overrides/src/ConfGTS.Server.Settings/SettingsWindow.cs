@@ -101,7 +101,7 @@ public sealed class SettingsWindow : Window
 
         var footer = new TextBlock
         {
-            Text = "ConfGTS Server Settings 0.18.15  |  Городские тепловые сети",
+            Text = "ConfGTS Server Settings 0.18.16  |  Городские тепловые сети",
             Foreground = Brush("#8194A7"),
             FontSize = 12,
             HorizontalAlignment = HorizontalAlignment.Center,
