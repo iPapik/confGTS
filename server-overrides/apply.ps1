@@ -2,7 +2,7 @@ $ErrorActionPreference = "Stop"
 
 $root = Split-Path -Parent $PSScriptRoot
 
-Write-Host "Applying ConfGTS Server 0.18.16 overlays..." -ForegroundColor Cyan
+Write-Host "Applying ConfGTS Server 0.18.17 overlays..." -ForegroundColor Cyan
 
 Copy-Item (Join-Path $PSScriptRoot "src\*") (Join-Path $root "src") -Recurse -Force
 Copy-Item (Join-Path $PSScriptRoot "server\*") (Join-Path $root "server") -Recurse -Force
@@ -85,7 +85,7 @@ func (s *Store) CanUploadEndedSessionRecording(sessionID, username string, maxAg
     }
 }
 
-# 0.18.16 stores browser MP4 directly. If MP4 recording is unavailable,
+# 0.18.17 stores browser MP4 directly. If MP4 recording is unavailable,
 # Chromium falls back to WebM; WebM is a Matroska subset and is stored as .mkv.
 $recordingContainerPattern = '(?ms)^\s*fn := sessionID \+ "_" \+ safe \+ "\.webm"\r?\n\s*r := Recording\{ID: newID\("rec_"\), RoomID: roomID, SessionID: sessionID, CaptureID: safe, Recorder: recorder, FileName: fn, StartedAt: time\.Now\(\), ContentType: contentType\}'
 $recordingContainerReplacement = @'
@@ -192,8 +192,8 @@ Set-Content $ldapPath $ldap -Encoding UTF8 -NoNewline
 
 $mainPath = Join-Path $root "server\main.go"
 $main = Get-Content $mainPath -Raw -Encoding UTF8
-$main = $main.Replace('const Version = "0.16.0"', 'const Version = "0.18.16"')
-$main = $main.Replace('const Version = "0.16.1"', 'const Version = "0.18.16"')
+$main = $main.Replace('const Version = "0.16.0"', 'const Version = "0.18.17"')
+$main = $main.Replace('const Version = "0.16.1"', 'const Version = "0.18.17"')
 $main = $main.Replace('cfg.ListenAddr == ":8090" {', 'cfg.ListenAddr == ":8090" || cfg.ListenAddr == "0.0.0.0:8090" {')
 $main = $main.Replace('cfg.ListenAddr = "127.0.0.1:" + strconv.Itoa(n)', 'cfg.ListenAddr = "0.0.0.0:" + strconv.Itoa(n)')
 $main = $main.Replace('addr = "127.0.0.1:8090"', 'addr = "0.0.0.0:8090"')
@@ -651,16 +651,16 @@ $versionTargets = @(
     (Join-Path $root "src\ConfGTS.Server.Settings"),
     (Join-Path $root "build-server.ps1")
 )
-$versionPattern = '(?<!\d)0\.(?:16\.[01]|17\.0|18\.(?:0|1|2|7|11|13|14))(?!\d)'
+$versionPattern = '(?<!\d)0\.(?:16\.[01]|17\.0|18\.(?:0|1|2|7|11|13|14|16))(?!\d)'
 foreach ($target in $versionTargets) {
     if (Test-Path $target -PathType Leaf) {
         $text = Get-Content $target -Raw -Encoding UTF8
-        $text = [regex]::Replace($text, $versionPattern, '0.18.16')
+        $text = [regex]::Replace($text, $versionPattern, '0.18.17')
         Set-Content $target $text -Encoding UTF8 -NoNewline
     } elseif (Test-Path $target -PathType Container) {
         Get-ChildItem $target -Recurse -File -Include *.go,*.cs,*.xaml,*.csproj,*.wxs,*.wixproj,*.ps1 | ForEach-Object {
             $text = Get-Content $_.FullName -Raw -Encoding UTF8
-            $patched = [regex]::Replace($text, $versionPattern, '0.18.16')
+            $patched = [regex]::Replace($text, $versionPattern, '0.18.17')
             if ($patched -ne $text) {
                 Set-Content $_.FullName $patched -Encoding UTF8 -NoNewline
             }
@@ -674,6 +674,14 @@ foreach ($target in $versionTargets) {
 $buildServerPath = Join-Path $root "build-server.ps1"
 if (Test-Path $buildServerPath) {
     $buildServer = Get-Content $buildServerPath -Raw -Encoding UTF8
+    if (-not $buildServer.Contains('Installer\Wizard\Build-Wizard.ps1')) {
+        $buildServer += [Environment]::NewLine + @'
+# Replace the legacy Burn EXE with the interactive step-by-step server wizard.
+& (Join-Path $PSScriptRoot 'Installer\Wizard\Build-Wizard.ps1') -Server
+if ($LASTEXITCODE -ne 0) { throw 'Server interactive EXE compilation failed.' }
+'@ + [Environment]::NewLine
+        Set-Content $buildServerPath $buildServer -Encoding UTF8 -NoNewline
+    }
     if (-not $buildServer.Contains('ConfGTS bundled ffmpeg')) {
         $crtCopyAnchor = 'Copy-Item (Join-Path $crtDir "*.dll") $publish -Force'
         $ffmpegBuildBlock = @'
@@ -781,7 +789,7 @@ $serverBundle = Join-Path $root "Installer\Server\Bootstrapper\Bundle.wxs"
 if (Test-Path $serverBundle) {
     $bundle = Get-Content $serverBundle -Raw -Encoding UTF8
     if (-not $bundle.Contains('IconSourceFile=')) {
-        $bundle = $bundle.Replace('          Version="0.18.16"', '          Version="0.18.16"' + [Environment]::NewLine + '          IconSourceFile="!(bindpath.assets)\ConfGTS.ico"')
+        $bundle = $bundle.Replace('          Version="0.18.17"', '          Version="0.18.17"' + [Environment]::NewLine + '          IconSourceFile="!(bindpath.assets)\ConfGTS.ico"')
     }
 
     # Always replace the Burn install-directory variable with the canonical
