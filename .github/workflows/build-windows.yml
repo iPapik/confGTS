@@ -210,7 +210,7 @@ jobs:
             throw 'Application settings must be integrated into the main ConfGTS window, not opened as a dialog.'
           }
           foreach ($token in @(
-            'ProgressBar _microphoneLevel',
+            'Border _microphoneLevelFill',
             'AudioGraph',
             'MediaFrameReader',
             'SoftwareBitmapSource',
