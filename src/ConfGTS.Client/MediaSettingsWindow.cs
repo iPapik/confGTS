@@ -141,23 +141,37 @@ public sealed class MediaSettingsPanel : Grid
             HorizontalAlignment = HorizontalAlignment.Center
         };
 
+        // UI-only diagnostic: isolate which control needs a built-in WinUI style.
+        // Production startup (no --settings-test-scope argument) renders all cards.
+        var testScopeArg = Environment.GetCommandLineArgs()
+            .FirstOrDefault(arg => arg.StartsWith("--settings-test-scope=", StringComparison.OrdinalIgnoreCase));
+        var testScope = testScopeArg?.Split('=', 2)[1].Trim().ToLowerInvariant() ?? "full";
+        StartupDiagnostics.Log("Settings UI test scope: " + testScope);
         outer.Children.Add(BuildHeader());
-        outer.Children.Add(BuildConnectionCard());
+        if (testScope is "full" or "connection")
+            outer.Children.Add(BuildConnectionCard());
 
-        var audioGrid = new Grid { ColumnSpacing = 14 };
-        audioGrid.ColumnDefinitions.Add(new ColumnDefinition());
-        audioGrid.ColumnDefinitions.Add(new ColumnDefinition());
-
-        var microphoneCard = BuildMicrophoneCard();
-        Grid.SetColumn(microphoneCard, 0);
-        audioGrid.Children.Add(microphoneCard);
-
-        var speakerCard = BuildSpeakerCard();
-        Grid.SetColumn(speakerCard, 1);
-        audioGrid.Children.Add(speakerCard);
-
-        outer.Children.Add(audioGrid);
-        outer.Children.Add(BuildCameraCard());
+        if (testScope is "full" or "microphone" or "speaker")
+        {
+            var audioGrid = new Grid { ColumnSpacing = 14 };
+            audioGrid.ColumnDefinitions.Add(new ColumnDefinition());
+            audioGrid.ColumnDefinitions.Add(new ColumnDefinition());
+            if (testScope is "full" or "microphone")
+            {
+                var microphoneCard = BuildMicrophoneCard();
+                Grid.SetColumn(microphoneCard, 0);
+                audioGrid.Children.Add(microphoneCard);
+            }
+            if (testScope is "full" or "speaker")
+            {
+                var speakerCard = BuildSpeakerCard();
+                Grid.SetColumn(speakerCard, testScope == "full" ? 1 : 0);
+                audioGrid.Children.Add(speakerCard);
+            }
+            outer.Children.Add(audioGrid);
+        }
+        if (testScope is "full" or "camera")
+            outer.Children.Add(BuildCameraCard());
 
         scroll.Content = outer;
         root.Children.Add(scroll);
