@@ -80,6 +80,7 @@ public sealed class MediaSettingsPanel : Grid
 
     private bool _loading = true;
     private bool _closed;
+    private bool _audioTestRunning;
 
     public event EventHandler? CloseRequested;
 
@@ -361,30 +362,30 @@ public sealed class MediaSettingsPanel : Grid
         var panel = CardPanel("\uE720", "Микрофон");
 
         ConfigureCombo(_microphone, "Выберите микрофон");
-        _microphone.SelectionChanged += async (_, _) =>
+        _microphone.SelectionChanged += (_, _) =>
         {
             if (_loading) return;
-            SaveSelectedDevice(
-                _microphone,
-                _microphoneDevices,
-                (id, name) =>
-                {
-                    _settings.MicrophoneId = id;
-                    _settings.MicrophoneName = name;
-                });
+            SaveSelectedDevice(_microphone, _microphoneDevices, (id, name) =>
+            {
+                _settings.MicrophoneId = id;
+                _settings.MicrophoneName = name;
+            });
             SaveSettings();
-            await SafeRestartMicrophoneMeterAsync();
+            _microphoneLevelCaption.Text = "Микрофон не активен. Нажмите «Проверить микрофон».";
+            UpdateAudioTestSafety();
+            // Device selection NEVER opens an audio stream.
         };
 
         _microphoneEnabled.Header = "Использовать микрофон в конференции";
-        _microphoneEnabled.Toggled += async (_, _) =>
+        _microphoneEnabled.Toggled += (_, _) =>
         {
             if (_loading) return;
             _settings.MicrophoneEnabled = _microphoneEnabled.IsOn;
             _microphone.IsEnabled = _microphoneEnabled.IsOn;
             _microphoneVolume.IsEnabled = _microphoneEnabled.IsOn;
             SaveSettings();
-            await SafeRestartMicrophoneMeterAsync();
+            UpdateAudioTestSafety();
+            // A toggle must never start Bluetooth HFP capture.
         };
 
         _microphoneVolume.Minimum = 0;
@@ -466,6 +467,7 @@ public sealed class MediaSettingsPanel : Grid
                     _settings.SpeakerName = name;
                 });
             SaveSettings();
+            UpdateAudioTestSafety();
         };
 
         _speakerEnabled.Header = "Воспроизводить звук конференции";
@@ -475,8 +477,8 @@ public sealed class MediaSettingsPanel : Grid
             _settings.SpeakerEnabled = _speakerEnabled.IsOn;
             _speaker.IsEnabled = _speakerEnabled.IsOn;
             _speakerVolume.IsEnabled = _speakerEnabled.IsOn;
-            _speakerTestButton.IsEnabled = _speakerEnabled.IsOn;
             SaveSettings();
+            UpdateAudioTestSafety();
         };
 
         _speakerVolume.Minimum = 0;
@@ -680,6 +682,7 @@ public sealed class MediaSettingsPanel : Grid
                 : $"Найдено камер: {_cameraDevices.Count}. Выбранная камера будет показана выше.";
 
             SyncSelectedValues();
+            UpdateAudioTestSafety();
         }
         catch (Exception ex)
         {
@@ -696,6 +699,36 @@ public sealed class MediaSettingsPanel : Grid
             _refreshButton.IsEnabled = true;
             SaveSettings();
         }
+    }
+
+    private void UpdateAudioTestSafety()
+    {
+        if (_closed)
+        {
+            _microphoneTestButton.IsEnabled = false;
+            _speakerTestButton.IsEnabled = false;
+            return;
+        }
+
+        var mic = SelectedDevice(_microphone, _microphoneDevices);
+        var speaker = SelectedDevice(_speaker, _speakerDevices);
+        var micRisk = mic is not null && BluetoothAudioSafety.IsLikelyBluetooth(mic.Name, mic.Id);
+        var speakerRisk = speaker is not null && BluetoothAudioSafety.IsLikelyBluetooth(speaker.Name, speaker.Id);
+
+        _microphoneTestButton.IsEnabled = !_audioTestRunning && _settings.MicrophoneEnabled &&
+            mic is not null && !micRisk;
+        _speakerTestButton.IsEnabled = !_audioTestRunning && _settings.SpeakerEnabled &&
+            speaker is not null && !speakerRisk;
+
+        if (micRisk)
+            _microphoneStatus.Text = BluetoothAudioSafety.DiagnosticWarning;
+        else if (mic is not null && !_audioTestRunning)
+            _microphoneStatus.Text = "Устройство выбрано, но НЕ захвачено. Нажмите «Проверить микрофон».";
+
+        if (speakerRisk)
+            _speakerStatus.Text = BluetoothAudioSafety.DiagnosticWarning;
+        else if (speaker is not null && !_audioTestRunning)
+            _speakerStatus.Text = "Устройство выбрано, но НЕ открыто. Нажмите «Проверить левый и правый канал».";
     }
 
     private async Task RestartDiagnosticsAsync()
@@ -720,16 +753,43 @@ public sealed class MediaSettingsPanel : Grid
 
     private async Task SafeRestartMicrophoneMeterAsync()
     {
+        if (_audioTestRunning || _closed)
+            return;
+        var selected = SelectedDevice(_microphone, _microphoneDevices);
+        if (selected is null) { _microphoneStatus.Text = "Выберите микрофон."; return; }
+        if (BluetoothAudioSafety.IsLikelyBluetooth(selected.Name, selected.Id))
+        {
+            _microphoneStatus.Text = BluetoothAudioSafety.DiagnosticWarning;
+            StartupDiagnostics.Log("Blocked Bluetooth microphone diagnostic: " + selected.Name);
+            return;
+        }
+
+        _audioTestRunning = true;
+        UpdateAudioTestSafety();
+        await _diagnosticsGate.WaitAsync();
         try
         {
-            await RestartMicrophoneMeterAsync();
+            await StopMicrophoneMeterCoreAsync();
+            await StartMicrophoneMeterCoreAsync();
+            if (_microphoneGraph is not null)
+            {
+                // Bound duration ensures the microphone cannot be held indefinitely.
+                await Task.Delay(TimeSpan.FromSeconds(4));
+                _microphoneStatus.Text = "Проверка микрофона завершена. Устройство освобождено.";
+                StartupDiagnostics.Log("Microphone diagnostic capture stopped after 4 seconds.");
+            }
         }
         catch (Exception ex)
         {
-            StartupDiagnostics.Log("Safe microphone diagnostics restart failed.", ex);
-            SetMicrophoneLevel(0);
-            _microphoneLevelCaption.Text = "Проверку микрофона не удалось запустить.";
-            _microphoneStatus.Text = ex.Message;
+            StartupDiagnostics.Log("Safe microphone diagnostic failed.", ex);
+            _microphoneStatus.Text = "Ошибка проверки микрофона: " + ex.Message;
+        }
+        finally
+        {
+            await StopMicrophoneMeterCoreAsync();
+            _diagnosticsGate.Release();
+            _audioTestRunning = false;
+            UpdateAudioTestSafety();
         }
     }
 
@@ -810,7 +870,7 @@ public sealed class MediaSettingsPanel : Grid
         try
         {
             var device = await DeviceInformation.CreateFromIdAsync(selected.Id);
-            var graphResult = await AudioGraph.CreateAsync(new AudioGraphSettings(AudioRenderCategory.Communications)
+            var graphResult = await AudioGraph.CreateAsync(new AudioGraphSettings(AudioRenderCategory.Media)
             {
                 QuantumSizeSelectionMode = QuantumSizeSelectionMode.ClosestToDesired,
                 DesiredSamplesPerQuantum = 480
@@ -822,7 +882,7 @@ public sealed class MediaSettingsPanel : Grid
             _microphoneGraph = graphResult.Graph;
 
             var inputResult = await _microphoneGraph.CreateDeviceInputNodeAsync(
-                MediaCategory.Communications,
+                MediaCategory.Other,
                 _microphoneGraph.EncodingProperties,
                 device);
 
@@ -844,6 +904,8 @@ public sealed class MediaSettingsPanel : Grid
             SetMicrophoneLevel(0);
             _microphoneLevelCaption.Text = "Не удалось получить уровень выбранного микрофона.";
             _microphoneStatus.Text = ex.Message;
+            // Dispose even when CreateDeviceInputNodeAsync fails after graph creation.
+            await StopMicrophoneMeterCoreAsync();
         }
     }
 
