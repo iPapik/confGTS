@@ -2126,16 +2126,11 @@ public sealed class MainWindow : Window
 
     private async Task ShowInlineSettingsAsync()
     {
-        StartupDiagnostics.Log("Opening media settings.");
-
+        StartupDiagnostics.Log("Opening sidebar media settings.");
         if (_mediaSettingsPanel is not null)
             return;
 
-        // Keep the active WebView2 visible underneath the opaque settings panel.
-        // This avoids throttling requestAnimationFrame/MediaRecorder while settings
-        // are open and makes the panel a true in-conference overlay.
         _settingsOpenedFromConference = _conferenceHost is not null && !string.IsNullOrWhiteSpace(_activeRoomId);
-        _settingsConferenceSidebarVisible = _conferenceSidebarVisible;
         _settingsOpenedFromLogin = _loginView.Visibility == Visibility.Visible;
 
         if (_settingsOpenedFromLogin)
@@ -2144,58 +2139,40 @@ public sealed class MainWindow : Window
             _dashboardView.Visibility = Visibility.Visible;
         }
 
-        var panel = new MediaSettingsPanel(_api);
+        var panel = new MediaSettingsPanel(_api, compactSidebar: true);
         panel.CloseRequested += async (_, _) =>
         {
-            try
-            {
-                await CloseInlineSettingsAsync();
-            }
-            catch (Exception ex)
-            {
-                StartupDiagnostics.Log("Failed to close media settings.", ex);
-            }
+            try { await CloseInlineSettingsAsync(); }
+            catch (Exception ex) { StartupDiagnostics.Log("Failed to close sidebar settings.", ex); }
         };
 
         _mediaSettingsPanel = panel;
-
-        if (_dashboardMainScroll is not null)
-            _dashboardMainScroll.Visibility = Visibility.Collapsed;
-
-        _mainContentHost.Children.Add(panel);
+        if (_dashboardSidebarScroll is not null)
+            _dashboardSidebarScroll.Visibility = Visibility.Collapsed;
+        _dashboardSidebarColumn.Width = new GridLength(420);
+        _settingsSidebarHost.Visibility = Visibility.Visible;
+        _settingsSidebarHost.Children.Add(panel);
 
         try
         {
-            // This initialization is UI-only. Hardware enumeration happens only after
-            // the user explicitly presses "Обновить устройства" inside the panel.
             await panel.InitializeAsync();
             StartupDiagnostics.Log("Media settings opened successfully.");
         }
         catch
         {
             _mediaSettingsPanel = null;
-            _mainContentHost.Children.Remove(panel);
-            var restoreLogin = _settingsOpenedFromLogin;
-            _settingsOpenedFromConference = false;
-            _settingsConferenceSidebarVisible = false;
-            _settingsOpenedFromLogin = false;
-
-            if (restoreLogin)
+            _settingsSidebarHost.Children.Remove(panel);
+            _settingsSidebarHost.Visibility = Visibility.Collapsed;
+            if (_dashboardSidebarScroll is not null)
+                _dashboardSidebarScroll.Visibility = Visibility.Visible;
+            _dashboardSidebarColumn.Width = new GridLength(210);
+            if (_settingsOpenedFromLogin)
             {
                 _dashboardView.Visibility = Visibility.Collapsed;
                 _loginView.Visibility = Visibility.Visible;
             }
-            else if (_conferenceHost is not null && !string.IsNullOrWhiteSpace(_activeRoomId))
-            {
-                if (_dashboardMainScroll is not null)
-                    _dashboardMainScroll.Visibility = Visibility.Collapsed;
-                SetConferenceSidebarVisible(_settingsConferenceSidebarVisible);
-            }
-            else if (_dashboardMainScroll is not null)
-            {
-                _dashboardMainScroll.Visibility = Visibility.Visible;
-            }
-
+            _settingsOpenedFromConference = false;
+            _settingsOpenedFromLogin = false;
             throw;
         }
     }
@@ -2206,27 +2183,27 @@ public sealed class MainWindow : Window
         var returnToConference = _settingsOpenedFromConference &&
                                  _conferenceHost is not null &&
                                  !string.IsNullOrWhiteSpace(_activeRoomId);
-        var restoreSidebar = _settingsConferenceSidebarVisible;
         var restoreLogin = _settingsOpenedFromLogin;
 
         _settingsOpenedFromConference = false;
-        _settingsConferenceSidebarVisible = false;
         _settingsOpenedFromLogin = false;
 
         if (panel is not null)
         {
             _mediaSettingsPanel = null;
             await panel.ShutdownAsync();
-            _mainContentHost.Children.Remove(panel);
+            _settingsSidebarHost.Children.Remove(panel);
         }
 
-        if (returnToConference && _conferenceHost is not null)
+        _settingsSidebarHost.Visibility = Visibility.Collapsed;
+        if (_dashboardSidebarScroll is not null)
+            _dashboardSidebarScroll.Visibility = Visibility.Visible;
+        _dashboardSidebarColumn.Width = new GridLength(210);
+
+        if (returnToConference)
         {
             await ApplyConferenceMediaSettingsAsync();
-            if (_dashboardMainScroll is not null)
-                _dashboardMainScroll.Visibility = Visibility.Collapsed;
-            SetConferenceSidebarVisible(restoreSidebar);
-            StartupDiagnostics.Log("Returned from device settings to active conference " + _activeRoomId + ".");
+            StartupDiagnostics.Log("Returned to active conference after changing sidebar settings.");
             return;
         }
 
@@ -2237,8 +2214,8 @@ public sealed class MainWindow : Window
             return;
         }
 
-        if (_dashboardMainScroll is not null)
-            _dashboardMainScroll.Visibility = Visibility.Visible;
+        if (panel is not null && _isAuthenticated)
+            await _cameraStage.StartAsync();
     }
 
     private async void SettingsButton_Click(object sender, RoutedEventArgs e) =>
