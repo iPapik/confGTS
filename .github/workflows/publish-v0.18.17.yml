@@ -39,6 +39,19 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # upload-artifact preserves relative paths (msi/, setup/, server-msi/, etc).
+          # Flatten into artifacts/ so the release and SHA256 validation use one directory.
+          for name in \
+            ConfGTS-0.18.17-x64.msi \
+            ConfGTS-Setup-0.18.17-x64.exe \
+            ConfGTS-Server-0.18.17-x64.msi \
+            ConfGTS-Server-Setup-0.18.17-x64.exe \
+            ConfGTS-Server-0.18.17-Source.zip \
+            SHA256SUMS.txt; do
+            source="$(find artifacts -type f -name "$name" -print -quit)"
+            test -n "$source" || { echo "Missing $name in the downloaded artifact"; find artifacts -type f; exit 1; }
+            if [ "$source" != "artifacts/$name" ]; then mv "$source" "artifacts/$name"; fi
+          done
           for name in \
             ConfGTS-0.18.17-x64.msi \
             ConfGTS-Setup-0.18.17-x64.exe \
