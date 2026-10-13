@@ -86,10 +86,10 @@ public sealed class MediaSettingsPanel : Grid
     {
         _api = api;
         _compactSidebar = compactSidebar;
-        StartupDiagnostics.Log("MediaSettingsPanel 0.18.18 constructor started.");
+        StartupDiagnostics.Log("MediaSettingsPanel 0.18.19 constructor started.");
         Background = Brush(Bg);
         Children.Add(BuildUi());
-        StartupDiagnostics.Log("MediaSettingsPanel 0.18.18 constructor completed.");
+        StartupDiagnostics.Log("MediaSettingsPanel 0.18.19 constructor completed.");
     }
 
     public async Task InitializeAsync()
@@ -97,22 +97,26 @@ public sealed class MediaSettingsPanel : Grid
         ApplySavedValues();
         _serverBox.Text = _api.BaseUrl;
 
-        // Windows audio/video endpoint enumeration can enter native vendor drivers
-        // and terminate the entire WinUI process (without a managed exception).
-        // The user must explicitly request discovery after the settings page opens.
-        EnsureEmptyPlaceholder(_microphone, "Нажмите «Обновить устройства»");
-        EnsureEmptyPlaceholder(_speaker, "Нажмите «Обновить устройства»");
-        EnsureEmptyPlaceholder(_camera, "Нажмите «Обновить устройства»");
-        _microphoneStatus.Text = "Для поиска микрофонов нажмите «Обновить устройства».";
-        _speakerStatus.Text = "Для поиска динамиков нажмите «Обновить устройства».";
-        _cameraStatus.Text = "Для поиска камер нажмите «Обновить устройства».";
-        _microphoneLevelCaption.Text = "Проверка микрофона запускается только вручную.";
+        // Listing device endpoints does not acquire the microphone/camera.
+        // 0.18.18 left BOTH tests permanently disabled until the user manually
+        // pressed Refresh: enumerate here so that tests work immediately.
+        // We still never start actual recording/playback or camera capture here.
+        EnsureEmptyPlaceholder(_microphone, "Поиск микрофонов…");
+        EnsureEmptyPlaceholder(_speaker, "Поиск динамиков и наушников…");
+        EnsureEmptyPlaceholder(_camera, "Поиск камер…");
+        _microphoneStatus.Text = "Поиск доступных микрофонов…";
+        _speakerStatus.Text = "Поиск динамиков и наушников…";
+        _cameraStatus.Text = "Поиск камер…";
+        _microphoneLevelCaption.Text = "Тест микрофона запускается только кнопкой «Проверить микрофон».";
         _microphoneTestButton.IsEnabled = false;
         _speakerTestButton.IsEnabled = false;
         _cameraTestButton.IsEnabled = false;
         _loading = false;
-        StartupDiagnostics.Log("Integrated ConfGTS settings initialized without device enumeration or media acquisition.");
-        await Task.CompletedTask;
+
+        // Wait for the initial list before displaying the working settings page.
+        // Each FindAllAsync call is independently guarded by EnumerateAsync.
+        await RefreshDevicesAsync();
+        StartupDiagnostics.Log("Media settings initialized: endpoints discovered, capture and playback not acquired.");
     }
 
     public async Task ShutdownAsync()
@@ -412,7 +416,12 @@ public sealed class MediaSettingsPanel : Grid
         _microphoneTestButton.Content = "● Проверить микрофон";
         StyleSecondaryButton(_microphoneTestButton);
         _microphoneTestButton.HorizontalAlignment = HorizontalAlignment.Left;
-        _microphoneTestButton.Click += async (_, _) => await SafeRestartMicrophoneMeterAsync();
+        _microphoneTestButton.Click += async (_, _) =>
+        {
+            StartupDiagnostics.Log("User clicked test microphone.");
+            _microphoneStatus.Text = "Запуск проверки микрофона…";
+            await SafeRestartMicrophoneMeterAsync();
+        };
 
         ConfigureStatus(_microphoneStatus);
         panel.Children.Add(_microphoneEnabled);
@@ -483,7 +492,12 @@ public sealed class MediaSettingsPanel : Grid
         _speakerTestButton.Content = "▶ Проверить левый и правый канал";
         StyleSecondaryButton(_speakerTestButton);
         _speakerTestButton.HorizontalAlignment = HorizontalAlignment.Left;
-        _speakerTestButton.Click += async (_, _) => await TestSpeakersAsync();
+        _speakerTestButton.Click += async (_, _) =>
+        {
+            StartupDiagnostics.Log("User clicked test speakers/headphones.");
+            _speakerStatus.Text = "Подготовка звукового теста…";
+            await TestSpeakersAsync();
+        };
 
         ConfigureStatus(_speakerStatus);
         panel.Children.Add(_speakerEnabled);
@@ -640,6 +654,9 @@ public sealed class MediaSettingsPanel : Grid
             _speakerVolume.IsEnabled = _settings.SpeakerEnabled;
             _microphoneTestButton.IsEnabled = _settings.MicrophoneEnabled && _microphoneDevices.Count > 0;
             _speakerTestButton.IsEnabled = _settings.SpeakerEnabled && _speakerDevices.Count > 0;
+            StartupDiagnostics.Log(
+                $"Media test readiness: microphones={_microphoneDevices.Count}, speakers={_speakerDevices.Count}, " +
+                $"microphoneButton={_microphoneTestButton.IsEnabled}, speakerButton={_speakerTestButton.IsEnabled}.");
             _cameraTestButton.IsEnabled = _settings.CameraEnabled && _cameraDevices.Count > 0;
 
             _microphoneStatus.Text = _microphoneDevices.Count == 0
@@ -660,6 +677,8 @@ public sealed class MediaSettingsPanel : Grid
             EnsureEmptyPlaceholder(_microphone, "Микрофон не найден");
             EnsureEmptyPlaceholder(_speaker, "Динамики / наушники не найдены");
             EnsureEmptyPlaceholder(_camera, "Камера не найдена");
+            _microphoneStatus.Text = "Не удалось обновить устройства: " + ex.Message;
+            _speakerStatus.Text = "Не удалось обновить устройства: " + ex.Message;
         }
         finally
         {
@@ -1045,22 +1064,42 @@ public sealed class MediaSettingsPanel : Grid
             }
             stream.Seek(0);
 
+            // MediaPlayer opens sources asynchronously. In 0.18.18 Play() was
+            // called before MediaOpened and the two short delays could finish
+            // before the output driver had ever started playback.
             using var player = new MediaPlayer
             {
                 AudioDevice = device,
                 Volume = Math.Clamp(_speakerVolume.Value / 100.0, 0, 1),
-                Source = MediaSource.CreateFromStream(stream, "audio/wav")
+                AutoPlay = false
             };
+            var opened = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            player.MediaOpened += (_, _) => opened.TrySetResult(true);
+            player.MediaFailed += (_, e) =>
+                opened.TrySetException(new InvalidOperationException("Windows MediaPlayer: " + e.ErrorMessage));
 
-            _speakerStatus.Text = "Проверка: сейчас должен звучать ЛЕВЫЙ канал.";
+            player.Source = MediaSource.CreateFromStream(stream, "audio/wav");
+            _speakerStatus.Text = "Подготовка звукового устройства: " + selected.Name;
+            if (await Task.WhenAny(opened.Task, Task.Delay(TimeSpan.FromSeconds(8))) != opened.Task)
+                throw new TimeoutException("Устройство не начало воспроизведение за 8 секунд.");
+            await opened.Task;
+
+            if (player.Volume < 0.01)
+            {
+                _speakerStatus.Text = "Громкость теста 0%. Поднимите ползунок громкости и запустите проверку заново.";
+                return;
+            }
+
+            _speakerStatus.Text = "Слушайте: ЛЕВЫЙ канал (520 Гц).";
             player.Play();
-            await Task.Delay(950);
+            await Task.Delay(980);
 
-            _speakerStatus.Text = "Проверка: сейчас должен звучать ПРАВЫЙ канал.";
-            await Task.Delay(1000);
+            _speakerStatus.Text = "Слушайте: ПРАВЫЙ канал (680 Гц).";
+            await Task.Delay(1120);
 
             player.Pause();
-            _speakerStatus.Text = "Проверка завершена: левый → правый. Устройство: " + selected.Name;
+            _speakerStatus.Text = "Тест левый → правый завершён. Если звука не было, проверьте выбранный выход Windows: " + selected.Name;
+            StartupDiagnostics.Log("Speaker test completed on " + selected.Name);
         }
         catch (Exception ex)
         {
