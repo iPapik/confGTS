@@ -2045,10 +2045,11 @@ public sealed class MainWindow : Window
 
         if (!_mainContentHost.Children.Contains(_cameraStage) ||
             Grid.GetColumn(_mainContentHost) != 1 ||
-            _dashboardSidebar?.Visibility != Visibility.Visible ||
-            _settingsSidebarHost.Visibility != Visibility.Visible ||
-            _dashboardSidebarColumn.Width.Value < 400)
-            throw new InvalidOperationException("Settings displaced the permanent camera stage.");
+            _mediaSettingsPanel is null ||
+            !_dashboardView.Children.Contains(_mediaSettingsPanel) ||
+            Grid.GetColumn(_mediaSettingsPanel) != 0 ||
+            Grid.GetColumnSpan(_mediaSettingsPanel) != 2)
+            throw new InvalidOperationException("Media settings do not cover the full application window.");
 
         await CloseInlineSettingsAsync();
         ShowDashboardSection(showContacts: true);
@@ -2064,7 +2065,7 @@ public sealed class MainWindow : Window
 
         StartupDiagnostics.Log("Camera canvas persists through Contacts/Conferences sidebar navigation.");
         await ShowInlineSettingsAsync();
-        StartupDiagnostics.Log("Settings smoke test opened.");
+        StartupDiagnostics.Log("Settings smoke test opened. Full-window overlay verified.");
 
         // Keep the integrated settings view alive long enough to catch delayed
         // WinUI/Media Foundation failures that happen after the click handler
@@ -2148,7 +2149,7 @@ public sealed class MainWindow : Window
 
     private async Task ShowInlineSettingsAsync()
     {
-        StartupDiagnostics.Log("Opening sidebar media settings.");
+        StartupDiagnostics.Log("Opening full-window media settings.");
         if (_mediaSettingsPanel is not null)
             return;
 
@@ -2161,40 +2162,47 @@ public sealed class MainWindow : Window
             _dashboardView.Visibility = Visibility.Visible;
         }
 
-        var panel = new MediaSettingsPanel(_api, compactSidebar: true);
+        // The local preview and the settings camera test must not both own
+        // the same USB camera. Keep the active conference WebView alive, though.
+        if (!_settingsOpenedFromConference)
+            await _cameraStage.StopAsync();
+
+        // Add an opaque overlay ABOVE both the sidebar and camera/conference.
+        // It spans the entire application client area, not only one column.
+        var panel = new MediaSettingsPanel(_api);
         panel.CloseRequested += async (_, _) =>
         {
             try { await CloseInlineSettingsAsync(); }
-            catch (Exception ex) { StartupDiagnostics.Log("Failed to close sidebar settings.", ex); }
+            catch (Exception ex) { StartupDiagnostics.Log("Failed to close full-window settings.", ex); }
         };
 
         _mediaSettingsPanel = panel;
-        if (_dashboardSidebarScroll is not null)
-            _dashboardSidebarScroll.Visibility = Visibility.Collapsed;
-        _dashboardSidebarColumn.Width = new GridLength(420);
-        _settingsSidebarHost.Visibility = Visibility.Visible;
-        _settingsSidebarHost.Children.Add(panel);
+        Grid.SetColumn(panel, 0);
+        Grid.SetColumnSpan(panel, 2);
+        _dashboardView.Children.Add(panel);
 
         try
         {
             await panel.InitializeAsync();
-            StartupDiagnostics.Log("Media settings opened successfully.");
+            StartupDiagnostics.Log("Full-window media settings opened and devices discovered.");
         }
         catch
         {
             _mediaSettingsPanel = null;
-            _settingsSidebarHost.Children.Remove(panel);
-            _settingsSidebarHost.Visibility = Visibility.Collapsed;
-            if (_dashboardSidebarScroll is not null)
-                _dashboardSidebarScroll.Visibility = Visibility.Visible;
-            _dashboardSidebarColumn.Width = new GridLength(210);
-            if (_settingsOpenedFromLogin)
+            _dashboardView.Children.Remove(panel);
+            var restoreLogin = _settingsOpenedFromLogin;
+            _settingsOpenedFromConference = false;
+            _settingsOpenedFromLogin = false;
+
+            if (restoreLogin)
             {
                 _dashboardView.Visibility = Visibility.Collapsed;
                 _loginView.Visibility = Visibility.Visible;
             }
-            _settingsOpenedFromConference = false;
-            _settingsOpenedFromLogin = false;
+            else if (_isAuthenticated && _conferenceHost is null)
+            {
+                await _cameraStage.StartAsync();
+            }
             throw;
         }
     }
@@ -2202,6 +2210,9 @@ public sealed class MainWindow : Window
     private async Task CloseInlineSettingsAsync()
     {
         var panel = _mediaSettingsPanel;
+        if (panel is null)
+            return;
+
         var returnToConference = _settingsOpenedFromConference &&
                                  _conferenceHost is not null &&
                                  !string.IsNullOrWhiteSpace(_activeRoomId);
@@ -2209,23 +2220,15 @@ public sealed class MainWindow : Window
 
         _settingsOpenedFromConference = false;
         _settingsOpenedFromLogin = false;
+        _mediaSettingsPanel = null;
 
-        if (panel is not null)
-        {
-            _mediaSettingsPanel = null;
-            await panel.ShutdownAsync();
-            _settingsSidebarHost.Children.Remove(panel);
-        }
-
-        _settingsSidebarHost.Visibility = Visibility.Collapsed;
-        if (_dashboardSidebarScroll is not null)
-            _dashboardSidebarScroll.Visibility = Visibility.Visible;
-        _dashboardSidebarColumn.Width = new GridLength(210);
+        try { await panel.ShutdownAsync(); }
+        finally { _dashboardView.Children.Remove(panel); }
 
         if (returnToConference)
         {
             await ApplyConferenceMediaSettingsAsync();
-            StartupDiagnostics.Log("Returned to active conference after changing sidebar settings.");
+            StartupDiagnostics.Log("Returned to active conference after full-window settings.");
             return;
         }
 
@@ -2236,7 +2239,7 @@ public sealed class MainWindow : Window
             return;
         }
 
-        if (panel is not null && _isAuthenticated)
+        if (_isAuthenticated && _conferenceHost is null)
             await _cameraStage.StartAsync();
     }
 
