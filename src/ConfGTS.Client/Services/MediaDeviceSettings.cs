@@ -15,6 +15,9 @@ public sealed class MediaDeviceSettings
     public bool MicrophoneEnabled { get; set; } = true;
     public bool SpeakerEnabled { get; set; } = true;
     public bool CameraEnabled { get; set; } = true;
+    // Opt-in: an automatic preview otherwise opens the USB camera as soon as
+    // Windows restores a remembered login, even before the user sees a sign-in form.
+    public bool AutoPreviewOnLogin { get; set; } = false;
 
     private static string SettingsPath =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
