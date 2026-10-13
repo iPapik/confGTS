@@ -66,6 +66,9 @@ public sealed class MainWindow : Window
     private int _dashboardFailureCount;
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _dashboardTimer;
     private readonly Grid _mainContentHost = new();
+    private readonly CameraStagePreview _cameraStage = new();
+    private readonly Grid _settingsSidebarHost = new() { Visibility = Visibility.Collapsed };
+    private ScrollViewer? _dashboardSidebarScroll;
     private readonly ColumnDefinition _dashboardSidebarColumn = new() { Width = new GridLength(210) };
     private Border? _dashboardSidebar;
     private ScrollViewer? _dashboardMainScroll;
@@ -453,6 +456,7 @@ public sealed class MainWindow : Window
             Margin = new Thickness(0, 14, 0, 10)
         };
         Grid.SetRow(sidebarScroll, 1);
+        _dashboardSidebarScroll = sidebarScroll;
 
         var sidebarContent = new StackPanel { Spacing = 10 };
 
@@ -471,6 +475,10 @@ public sealed class MainWindow : Window
 
         sidebarScroll.Content = sidebarContent;
         sideGrid.Children.Add(sidebarScroll);
+
+        // Keep settings and tab content in the left column at all times.
+        Grid.SetRow(_settingsSidebarHost, 1);
+        sideGrid.Children.Add(_settingsSidebarHost);
 
         var footer = new StackPanel { Spacing = 9 };
         Grid.SetRow(footer, 2);
@@ -511,27 +519,8 @@ public sealed class MainWindow : Window
         sidebar.Child = sideGrid;
         _dashboardView.Children.Add(sidebar);
 
-        var mainScroll = new ScrollViewer
-        {
-            VerticalScrollBarVisibility = ScrollBarVisibility.Auto
-        };
-        _dashboardMainScroll = mainScroll;
-
-        var main = new StackPanel
-        {
-            Padding = new Thickness(34),
-            Spacing = 16
-        };
-
-        _mainConferencePanel.Spacing = 14;
-        main.Children.Add(_mainConferencePanel);
-
-        _mainContactsPanel.Spacing = 12;
-        _mainContactsPanel.Visibility = Visibility.Collapsed;
-        main.Children.Add(_mainContactsPanel);
-
-        mainScroll.Content = main;
-        _mainContentHost.Children.Add(mainScroll);
+        // Switching tabs does not replace the camera stage.
+        _mainContentHost.Children.Add(_cameraStage);
         Grid.SetColumn(_mainContentHost, 1);
         _dashboardView.Children.Add(_mainContentHost);
 
@@ -628,7 +617,6 @@ public sealed class MainWindow : Window
 
             RenderContacts(contacts);
             RenderConferences(rooms);
-            RenderMainConference(rooms);
             ShowDashboardSection(_showingContacts);
 
             _dashboardFailureCount = 0;
@@ -803,14 +791,7 @@ public sealed class MainWindow : Window
                 TextTrimming = TextTrimming.CharacterEllipsis
             });
             button.Content = stack;
-            button.Click += async (_, _) =>
-            {
-                await CloseInlineSettingsAsync();
-                await LeaveConferenceAsync(false);
-                if (_dashboardMainScroll is not null)
-                    _dashboardMainScroll.Visibility = Visibility.Visible;
-                RenderMainConference(new[] { room });
-            };
+            button.Click += async (_, _) => await OpenConferenceAsync(room);
             _conferenceSidebarPanel.Children.Add(button);
         }
     }
@@ -934,6 +915,8 @@ public sealed class MainWindow : Window
         await CloseInlineSettingsAsync();
         await LeaveConferenceAsync(false);
         StopDashboardTimer();
+        await _cameraStage.StopAsync();
+        _cameraStage.Visibility = Visibility.Collapsed;
 
         _dashboardServerText.Text = "●  Подключено";
         _dashboardServerText.Foreground = Brush("#278E55");
@@ -1850,7 +1833,12 @@ public sealed class MainWindow : Window
         }
 
         if (host is not null)
+        {
             _mainContentHost.Children.Remove(host);
+            _cameraStage.Visibility = Visibility.Visible;
+            if (_isAuthenticated)
+                await _cameraStage.StartAsync();
+        }
 
         SetConferenceLayout(false);
 
@@ -1988,6 +1976,7 @@ public sealed class MainWindow : Window
             _dashboardView.Visibility = Visibility.Visible;
             RenderLoadingDashboard();
 
+            await _cameraStage.StartAsync();
             await RefreshDashboardAsync();
             StartDashboardTimer();
         }
@@ -2031,35 +2020,20 @@ public sealed class MainWindow : Window
 
     private void SetConferenceLayout(bool conferenceMode)
     {
-        _conferenceSidebarVisible = false;
-
+        _conferenceSidebarVisible = true;
         if (_dashboardSidebar is not null)
-            _dashboardSidebar.Visibility = conferenceMode ? Visibility.Collapsed : Visibility.Visible;
-
-        _dashboardSidebarColumn.Width = conferenceMode
-            ? new GridLength(0)
-            : new GridLength(210);
-
-        Grid.SetColumn(_mainContentHost, conferenceMode ? 0 : 1);
-        Grid.SetColumnSpan(_mainContentHost, conferenceMode ? 2 : 1);
+            _dashboardSidebar.Visibility = Visibility.Visible;
+        _dashboardSidebarColumn.Width = new GridLength(
+            _mediaSettingsPanel is null ? 210 : 420);
+        Grid.SetColumn(_mainContentHost, 1);
+        Grid.SetColumnSpan(_mainContentHost, 1);
     }
 
     private void SetConferenceSidebarVisible(bool visible)
     {
-        if (_conferenceHost is null)
-            return;
-
-        _conferenceSidebarVisible = visible;
-
-        if (_dashboardSidebar is not null)
-            _dashboardSidebar.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
-
-        _dashboardSidebarColumn.Width = visible
-            ? new GridLength(210)
-            : new GridLength(0);
-
-        Grid.SetColumn(_mainContentHost, visible ? 1 : 0);
-        Grid.SetColumnSpan(_mainContentHost, visible ? 1 : 2);
+        // Conference navigation must never hide the permanent left panel.
+        _conferenceSidebarVisible = true;
+        SetConferenceLayout(_conferenceHost is not null);
     }
 
     internal async Task RunSettingsSmokeTestAsync()
@@ -2098,6 +2072,7 @@ public sealed class MainWindow : Window
         _passwordBox.Password = "";
         _isAuthenticated = false;
 
+        await _cameraStage.StopAsync();
         _dashboardView.Visibility = Visibility.Collapsed;
         _loginView.Visibility = Visibility.Visible;
         _loginError.Visibility = Visibility.Collapsed;
@@ -2106,7 +2081,6 @@ public sealed class MainWindow : Window
     private async void ConferencesButton_Click(object sender, RoutedEventArgs e)
     {
         await CloseInlineSettingsAsync();
-        RenderMainConference(_lastRooms);
         ShowDashboardSection(showContacts: false);
     }
 
@@ -2121,14 +2095,7 @@ public sealed class MainWindow : Window
         _showingContacts = showContacts;
         _conferenceSidebarSection.Visibility = showContacts ? Visibility.Collapsed : Visibility.Visible;
         _contactsSidebarSection.Visibility = showContacts ? Visibility.Visible : Visibility.Collapsed;
-        _mainConferencePanel.Visibility = showContacts ? Visibility.Collapsed : Visibility.Visible;
-        _mainContactsPanel.Visibility = showContacts ? Visibility.Visible : Visibility.Collapsed;
-
-        if (_dashboardMainScroll is not null)
-        {
-            _dashboardMainScroll.Visibility = Visibility.Visible;
-            _dashboardMainScroll.ChangeView(null, 0, null, true);
-        }
+        // The right-hand stage is independent of the active sidebar tab.
     }
 
     private async void ApplicationSettingsButton_Click(object sender, RoutedEventArgs e)
