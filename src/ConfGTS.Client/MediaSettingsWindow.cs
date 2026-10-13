@@ -722,33 +722,9 @@ public sealed class MediaSettingsPanel : Grid
 
         if (micRisk)
             _microphoneStatus.Text = BluetoothAudioSafety.DiagnosticWarning;
-        else if (mic is not null && !_audioTestRunning)
-            _microphoneStatus.Text = "Устройство выбрано, но НЕ захвачено. Нажмите «Проверить микрофон».";
 
         if (speakerRisk)
             _speakerStatus.Text = BluetoothAudioSafety.DiagnosticWarning;
-        else if (speaker is not null && !_audioTestRunning)
-            _speakerStatus.Text = "Устройство выбрано, но НЕ открыто. Нажмите «Проверить левый и правый канал».";
-    }
-
-    private async Task RestartDiagnosticsAsync()
-    {
-        await _diagnosticsGate.WaitAsync();
-        try
-        {
-            await StopMicrophoneMeterCoreAsync();
-            await StopCameraPreviewCoreAsync();
-
-            if (_closed)
-                return;
-
-            await StartMicrophoneMeterCoreAsync();
-            await StartCameraPreviewCoreAsync();
-        }
-        finally
-        {
-            _diagnosticsGate.Release();
-        }
     }
 
     private async Task SafeRestartMicrophoneMeterAsync()
@@ -803,21 +779,6 @@ public sealed class MediaSettingsPanel : Grid
         {
             StartupDiagnostics.Log("Safe camera diagnostics restart failed.", ex);
             _cameraStatus.Text = "Предпросмотр недоступен: " + ex.Message;
-        }
-    }
-
-    private async Task RestartMicrophoneMeterAsync()
-    {
-        await _diagnosticsGate.WaitAsync();
-        try
-        {
-            await StopMicrophoneMeterCoreAsync();
-            if (!_closed)
-                await StartMicrophoneMeterCoreAsync();
-        }
-        finally
-        {
-            _diagnosticsGate.Release();
         }
     }
 
