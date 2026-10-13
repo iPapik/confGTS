@@ -1,5 +1,5 @@
 ; ConfGTS Server interactive EXE wizard, using the service-enabled MSI.
-#define ConfVersion "0.18.17"
+#define ConfVersion "0.18.18"
 [Setup]
 AppId={{3BD7579A-8F73-41DD-97A6-6498CFB23444}
 AppName=ConfGTS Server
