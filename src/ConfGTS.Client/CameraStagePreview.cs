@@ -37,6 +37,12 @@ public sealed class CameraStagePreview : Grid
         Margin = new Thickness(24)
     };
     private readonly SemaphoreSlim _lifecycle = new(1, 1);
+    private readonly StackPanel _actions = new() { Spacing = 16, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+    private readonly Button _startButton = new() { Content = "Включить камеру", MinWidth = 180, Padding = new Thickness(18, 10, 18, 10) };
+    private readonly Button _stopButton = new() { Content = "Остановить камеру", Padding = new Thickness(12, 7, 12, 7), HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Bottom, Margin = new Thickness(20), Visibility = Visibility.Collapsed };
+    public event EventHandler? StartRequested;
+    public event EventHandler? StopRequested;
+    public bool IsRunning => _playing;
     private SoftwareBitmapSource? _bitmap;
     private MediaCapture? _capture;
     private MediaFrameReader? _reader;
@@ -47,8 +53,28 @@ public sealed class CameraStagePreview : Grid
     public CameraStagePreview()
     {
         Background = new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(255, 13, 23, 35));
+        _status.Text = "Камера не включена. Для предпросмотра нажмите кнопку.";
+        _status.HorizontalAlignment = HorizontalAlignment.Center;
+        _status.VerticalAlignment = VerticalAlignment.Center;
+        _status.Margin = new Thickness(20, 20, 20, 0);
+        _actions.Children.Add(_status);
+        _actions.Children.Add(_startButton);
+        _startButton.HorizontalAlignment = HorizontalAlignment.Center;
+        _startButton.Click += (_, _) => StartRequested?.Invoke(this, EventArgs.Empty);
+        _stopButton.Click += (_, _) => StopRequested?.Invoke(this, EventArgs.Empty);
         Children.Add(_image);
-        Children.Add(_status);
+        Children.Add(_actions);
+        Children.Add(_stopButton);
+    }
+
+    public void ShowPaused()
+    {
+        _status.Text = "Камера в режиме ожидания. Нажмите «Включить камеру».";
+        _status.Visibility = Visibility.Visible;
+        _actions.Visibility = Visibility.Visible;
+        _startButton.Visibility = Visibility.Visible;
+        _startButton.IsEnabled = true;
+        _stopButton.Visibility = Visibility.Collapsed;
     }
 
     public async Task StartAsync()
@@ -59,6 +85,10 @@ public sealed class CameraStagePreview : Grid
             await StopCoreAsync();
             _status.Text = "Подключение камеры…";
             _status.Visibility = Visibility.Visible;
+            _actions.Visibility = Visibility.Visible;
+            _startButton.IsEnabled = false;
+            _stopButton.Visibility = Visibility.Collapsed;
+            StartupDiagnostics.Log("Camera capture explicitly requested (not started by application startup).");
 
             var settings = MediaDeviceSettings.Load();
             if (!settings.CameraEnabled)
@@ -97,6 +127,30 @@ public sealed class CameraStagePreview : Grid
                 if (source is null)
                     throw new InvalidOperationException("Устройство не предоставляет видеопоток.");
 
+                // Use a lightweight native camera mode for the non-conference
+                // preview. Previously the driver could feed full 4K frames to
+                // CPU BGRA conversion on every callback and degrade browser video.
+                var mode = source.SupportedFormats
+                    .Where(x => x.VideoFormat.Width > 0 && x.VideoFormat.Height > 0)
+                    .OrderBy(x => x.VideoFormat.Width <= 640 && x.VideoFormat.Height <= 480 ? 0 : 1)
+                    .ThenBy(x => x.VideoFormat.Width <= 640 && x.VideoFormat.Height <= 480
+                        ? -((long)x.VideoFormat.Width * x.VideoFormat.Height)
+                        : (long)x.VideoFormat.Width * x.VideoFormat.Height)
+                    .FirstOrDefault();
+                if (mode is not null)
+                {
+                    try
+                    {
+                        await source.SetFormatAsync(mode);
+                        StartupDiagnostics.Log(
+                            $"Camera preview format: {mode.VideoFormat.Width}x{mode.VideoFormat.Height}.");
+                    }
+                    catch (Exception ex)
+                    {
+                        StartupDiagnostics.Log("Camera did not accept lightweight preview format.", ex);
+                    }
+                }
+
                 _bitmap ??= new SoftwareBitmapSource();
                 _image.Source = _bitmap;
 
@@ -110,6 +164,8 @@ public sealed class CameraStagePreview : Grid
                 if (startStatus != MediaFrameReaderStartStatus.Success)
                     throw new InvalidOperationException("Не удалось запустить видеопоток камеры.");
 
+                _actions.Visibility = Visibility.Collapsed;
+                _stopButton.Visibility = Visibility.Visible;
                 StartupDiagnostics.Log("Persistent camera stage started: " + selected.Name);
             }
             catch
@@ -124,9 +180,11 @@ public sealed class CameraStagePreview : Grid
             _status.Text = "Изображение с камеры недоступно";
             _status.Visibility = Visibility.Visible;
             StartupDiagnostics.Log("Persistent camera stage start failed.", ex);
+            _actions.Visibility = Visibility.Visible;
         }
         finally
         {
+            _startButton.IsEnabled = true;
             _lifecycle.Release();
         }
     }
@@ -155,7 +213,10 @@ public sealed class CameraStagePreview : Grid
         try { capture?.Dispose(); } catch { }
         _image.Source = null;
         _status.Visibility = Visibility.Visible;
+        _actions.Visibility = Visibility.Visible;
+        _stopButton.Visibility = Visibility.Collapsed;
         Interlocked.Exchange(ref _frameQueued, 0);
+        StartupDiagnostics.Log("Camera capture released.");
     }
 
     private void OnFrameArrived(MediaFrameReader sender, MediaFrameArrivedEventArgs args)
@@ -164,7 +225,7 @@ public sealed class CameraStagePreview : Grid
             return;
 
         var tick = Environment.TickCount64;
-        if (tick - Interlocked.Read(ref _lastFrameTick) < 75 ||
+        if (tick - Interlocked.Read(ref _lastFrameTick) < 125 ||
             Interlocked.CompareExchange(ref _frameQueued, 1, 0) != 0)
             return;
         Interlocked.Exchange(ref _lastFrameTick, tick);
