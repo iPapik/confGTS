@@ -2042,6 +2042,28 @@ public sealed class MainWindow : Window
         _loginView.Visibility = Visibility.Collapsed;
         _dashboardView.Visibility = Visibility.Visible;
         await ShowInlineSettingsAsync();
+
+        if (!_mainContentHost.Children.Contains(_cameraStage) ||
+            Grid.GetColumn(_mainContentHost) != 1 ||
+            _dashboardSidebar?.Visibility != Visibility.Visible ||
+            _settingsSidebarHost.Visibility != Visibility.Visible ||
+            _dashboardSidebarColumn.Width.Value < 400)
+            throw new InvalidOperationException("Settings displaced the permanent camera stage.");
+
+        await CloseInlineSettingsAsync();
+        ShowDashboardSection(showContacts: true);
+        if (_conferenceSidebarSection.Visibility != Visibility.Collapsed ||
+            _contactsSidebarSection.Visibility != Visibility.Visible ||
+            !_mainContentHost.Children.Contains(_cameraStage))
+            throw new InvalidOperationException("Contacts tab displaced the camera stage.");
+
+        ShowDashboardSection(showContacts: false);
+        if (_conferenceSidebarSection.Visibility != Visibility.Visible ||
+            !_mainContentHost.Children.Contains(_cameraStage))
+            throw new InvalidOperationException("Conference tab displaced the camera stage.");
+
+        StartupDiagnostics.Log("Camera canvas persists through Contacts/Conferences sidebar navigation.");
+        await ShowInlineSettingsAsync();
         StartupDiagnostics.Log("Settings smoke test opened.");
 
         // Keep the integrated settings view alive long enough to catch delayed
