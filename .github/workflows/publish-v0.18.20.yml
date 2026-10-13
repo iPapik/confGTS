@@ -1,0 +1,126 @@
+name: Publish ConfGTS 0.18.20 tested installers
+
+on:
+  push:
+    branches: ['0.18.20']
+    paths:
+      - '.github/workflows/publish-v0.18.20.yml'
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  publish-tested-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SOURCE_RUN_ID: '38352277712'
+      TESTED_SHA: '824cad11fea7f3ccfd4471512604b493bcef134b'
+    steps:
+      - name: Verify Windows build passed at the tagged commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          status="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID" --jq '.conclusion')"
+          commit="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID" --jq '.head_sha')"
+          test "$status" = success
+          test "$commit" = "$TESTED_SHA"
+      - name: Download exactly the successfully tested installers
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          gh run download "$SOURCE_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name ConfGTS-0.18.20-tested --dir artifacts
+      - name: Verify all six files and checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          # upload-artifact preserves relative paths (msi/, setup/, server-msi/, etc).
+          # Flatten into artifacts/ so the release and SHA256 validation use one directory.
+          for name in \
+            ConfGTS-0.18.20-x64.msi \
+            ConfGTS-Setup-0.18.20-x64.exe \
+            ConfGTS-Server-0.18.20-x64.msi \
+            ConfGTS-Server-Setup-0.18.20-x64.exe \
+            ConfGTS-Server-0.18.20-Source.zip \
+            SHA256SUMS.txt; do
+            source="$(find artifacts -type f -name "$name" -print -quit)"
+            test -n "$source" || { echo "Missing $name in the downloaded artifact"; find artifacts -type f; exit 1; }
+            if [ "$source" != "artifacts/$name" ]; then mv "$source" "artifacts/$name"; fi
+          done
+          for name in \
+            ConfGTS-0.18.20-x64.msi \
+            ConfGTS-Setup-0.18.20-x64.exe \
+            ConfGTS-Server-0.18.20-x64.msi \
+            ConfGTS-Server-Setup-0.18.20-x64.exe \
+            ConfGTS-Server-0.18.20-Source.zip \
+            SHA256SUMS.txt; do
+            test -s "artifacts/$name" || { echo "Missing $name"; exit 1; }
+          done
+          (cd artifacts && sha256sum -c SHA256SUMS.txt)
+      - name: Write release notes
+        shell: bash
+        run: |
+          cat > RELEASE-NOTES.md <<'EOF'
+          ## ConfGTS 0.18.20
+
+          ### Производительность и безопасный запуск
+          - Устранён автоматический захват камеры при авторизации по сохранённым учётным данным. После входа камера ожидает нажатия «Включить камеру».
+          - В настройках доступен отдельный выключенный по умолчанию переключатель «Автоматически включать камеру после входа».
+          - Когда приложение скрыто в системный трей, локальный предпросмотр прекращает захват кадров; при возвращении окна восстанавливается только ранее запрошенный предпросмотр.
+          - Если камера поддерживает облегчённый формат, используется небольшое разрешение (предпочтительно до 640x480), а частота преобразования кадров ограничена примерно 8 кадрами/с.
+          - Добавлен режим диагностики без автоматической авторизации: `ConfGTS.Client.exe --safe-startup`.
+          - Сохраняются полноэкранные настройки и тестирование микрофона/динамиков версии 0.18.19.
+
+          ### Диагностика
+          - Добавлен `tools/diagnose-startup.ps1` для сравнения потребления CPU/RAM клиентом ConfGTS, msedgewebview2, audiodg и браузером.
+          - Проверка Windows CI подтверждает запуск процесса без получения доступа к медиаустройствам до входа.
+          - Внимание: причина пропадания звука в браузере на конкретном ПК требует проверки; версия снижает вероятность конкуренции за устройства, но не гарантирует устранения проблем USB/Bluetooth-драйверов.
+
+          ### Что изменилось для пользователя
+          - Открытие ConfGTS больше не должно автоматически включать веб-камеру.
+          - Для просмотра локального видео справа нажмите «Включить камеру»; во время конференции камера работает согласно настройкам конференции.
+          - Чтобы сохранить прежнее поведение, включите автоматический предпросмотр в разделе «Настройки».
+
+          ### Файлы
+          - `ConfGTS-Setup-0.18.20-x64.exe` — интерактивный установщик клиента.
+          - `ConfGTS-0.18.20-x64.msi` — MSI клиента.
+          - `ConfGTS-Server-Setup-0.18.20-x64.exe` — интерактивный установщик сервера.
+          - `ConfGTS-Server-0.18.20-x64.msi` — MSI сервера.
+          - `ConfGTS-Server-0.18.20-Source.zip` — исходники серверной части.
+          - `SHA256SUMS.txt` — контрольные суммы.
+
+          Проверено в GitHub Actions: https://github.com/iPapik/confGTS/actions/runs/38352277712
+          EOF
+      - name: Publish GitHub release and the four installers
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view v0.18.20 --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo 'Release already exists; synchronize its files.'
+            gh release upload v0.18.20 artifacts/*.msi artifacts/*.exe \
+              artifacts/ConfGTS-Server-0.18.20-Source.zip artifacts/SHA256SUMS.txt \
+              --repo "$GITHUB_REPOSITORY" --clobber
+            gh release edit v0.18.20 --repo "$GITHUB_REPOSITORY" --notes-file RELEASE-NOTES.md
+          else
+            gh release create v0.18.20 \
+              artifacts/ConfGTS-0.18.20-x64.msi \
+              artifacts/ConfGTS-Setup-0.18.20-x64.exe \
+              artifacts/ConfGTS-Server-0.18.20-x64.msi \
+              artifacts/ConfGTS-Server-Setup-0.18.20-x64.exe \
+              artifacts/ConfGTS-Server-0.18.20-Source.zip \
+              artifacts/SHA256SUMS.txt \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$TESTED_SHA" \
+              --title 'ConfGTS 0.18.20' \
+              --notes-file RELEASE-NOTES.md
+          fi
+      - name: Check public release asset listing
+        shell: bash
+        run: |
+          gh release view v0.18.20 --repo "$GITHUB_REPOSITORY" \
+            --json url,assets --jq '{url:.url,assets:[.assets[].name]}'
