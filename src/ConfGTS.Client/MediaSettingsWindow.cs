@@ -48,6 +48,7 @@ public sealed class MediaSettingsPanel : Grid
     private readonly ToggleSwitch _microphoneEnabled = new();
     private readonly ToggleSwitch _speakerEnabled = new();
     private readonly ToggleSwitch _cameraEnabled = new();
+    private readonly ToggleSwitch _autoPreviewOnLogin = new();
     private readonly TextBlock _microphoneStatus = new();
     private readonly TextBlock _speakerStatus = new();
     private readonly TextBlock _cameraStatus = new();
@@ -529,6 +530,13 @@ public sealed class MediaSettingsPanel : Grid
             await SafeRestartCameraPreviewAsync();
         };
 
+        _autoPreviewOnLogin.Header = "Автоматически включать камеру после входа (увеличивает нагрузку)";
+        _autoPreviewOnLogin.Toggled += (_, _) =>
+        {
+            if (_loading) return;
+            _settings.AutoPreviewOnLogin = _autoPreviewOnLogin.IsOn;
+            SaveSettings();
+        };
         _cameraEnabled.Header = "Использовать камеру в конференции";
         _cameraEnabled.Toggled += async (_, _) =>
         {
@@ -547,6 +555,7 @@ public sealed class MediaSettingsPanel : Grid
         ConfigureStatus(_cameraStatus);
 
         panel.Children.Add(_cameraEnabled);
+        panel.Children.Add(_autoPreviewOnLogin);
         panel.Children.Add(DeviceLabel("Устройство"));
         panel.Children.Add(_camera);
 
@@ -607,6 +616,7 @@ public sealed class MediaSettingsPanel : Grid
         _microphoneEnabled.IsOn = _settings.MicrophoneEnabled;
         _speakerEnabled.IsOn = _settings.SpeakerEnabled;
         _cameraEnabled.IsOn = _settings.CameraEnabled;
+        _autoPreviewOnLogin.IsOn = _settings.AutoPreviewOnLogin;
         _microphoneVolume.Value = Math.Clamp(_settings.MicrophoneVolume, 0, 100);
         _speakerVolume.Value = Math.Clamp(_settings.SpeakerVolume, 0, 100);
     }
@@ -1295,6 +1305,7 @@ public sealed class MediaSettingsPanel : Grid
         _settings.MicrophoneEnabled = _microphoneEnabled.IsOn;
         _settings.SpeakerEnabled = _speakerEnabled.IsOn;
         _settings.CameraEnabled = _cameraEnabled.IsOn;
+        _settings.AutoPreviewOnLogin = _autoPreviewOnLogin.IsOn;
         _settings.Save();
     }
 
