@@ -1,5 +1,5 @@
 ; ConfGTS interactive EXE wizard; MSI continues to own product servicing and removal.
-#define ConfVersion "0.18.20"
+#define ConfVersion "0.18.21"
 [Setup]
 AppId={{CC8C0A11-1DC6-44D3-BA24-F2B79EDBF2F6}
 AppName=ConfGTS
