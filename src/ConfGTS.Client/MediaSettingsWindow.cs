@@ -1112,7 +1112,7 @@ public sealed class MediaSettingsPanel : Grid
 
     private async Task TestSpeakersAsync()
     {
-        if (!_speakerTestButton.IsEnabled)
+        if (_closed || _audioTestRunning)
             return;
 
         var selected = SelectedDevice(_speaker, _speakerDevices);
@@ -1122,9 +1122,29 @@ public sealed class MediaSettingsPanel : Grid
             return;
         }
 
-        _speakerTestButton.IsEnabled = false;
+        // NEVER open the risky Hands-Free/A2DP endpoint in a diagnostics tool.
+        // A broken USB Bluetooth driver can reset the entire adapter.
+        if (BluetoothAudioSafety.IsLikelyBluetooth(selected.Name, selected.Id))
+        {
+            _speakerStatus.Text = BluetoothAudioSafety.DiagnosticWarning;
+            StartupDiagnostics.Log("Blocked Bluetooth speaker diagnostic: " + selected.Name);
+            return;
+        }
+
+        if (_speakerVolume.Value < 1)
+        {
+            _speakerStatus.Text = "Громкость 0%. Увеличьте громкость в настройках ConfGTS.";
+            return;
+        }
+
+        _audioTestRunning = true;
+        UpdateAudioTestSafety();
+        await _diagnosticsGate.WaitAsync();
         try
         {
+            // Mutual exclusion: capture and playback cannot run together.
+            await StopMicrophoneMeterCoreAsync();
+
             var device = await DeviceInformation.CreateFromIdAsync(selected.Id);
             using var stream = new InMemoryRandomAccessStream();
             using (var writer = new DataWriter(stream))
@@ -1136,12 +1156,10 @@ public sealed class MediaSettingsPanel : Grid
             }
             stream.Seek(0);
 
-            // MediaPlayer opens sources asynchronously. In 0.18.18 Play() was
-            // called before MediaOpened and the two short delays could finish
-            // before the output driver had ever started playback.
             using var player = new MediaPlayer
             {
                 AudioDevice = device,
+                AudioCategory = MediaPlayerAudioCategory.Media,
                 Volume = Math.Clamp(_speakerVolume.Value / 100.0, 0, 1),
                 AutoPlay = false
             };
@@ -1151,37 +1169,32 @@ public sealed class MediaSettingsPanel : Grid
                 opened.TrySetException(new InvalidOperationException("Windows MediaPlayer: " + e.ErrorMessage));
 
             player.Source = MediaSource.CreateFromStream(stream, "audio/wav");
-            _speakerStatus.Text = "Подготовка звукового устройства: " + selected.Name;
-            // Some Media Foundation drivers only open the stream once playback is requested.
+            _speakerStatus.Text = "Начало воспроизведения: " + selected.Name;
+            StartupDiagnostics.Log("Starting non-communications speaker test on " + selected.Name);
+
             player.Play();
-            if (await Task.WhenAny(opened.Task, Task.Delay(TimeSpan.FromSeconds(8))) != opened.Task)
-                throw new TimeoutException("Устройство не начало воспроизведение за 8 секунд.");
+            if (await Task.WhenAny(opened.Task, Task.Delay(TimeSpan.FromSeconds(5))) != opened.Task)
+                throw new TimeoutException("Драйвер не открыл устройство за 5 секунд.");
+
             await opened.Task;
-
-            if (player.Volume < 0.01)
-            {
-                _speakerStatus.Text = "Громкость теста 0%. Поднимите ползунок громкости и запустите проверку заново.";
-                return;
-            }
-
-            _speakerStatus.Text = "Слушайте: ЛЕВЫЙ канал (520 Гц).";
-            await Task.Delay(980);
-
-            _speakerStatus.Text = "Слушайте: ПРАВЫЙ канал (680 Гц).";
-            await Task.Delay(1120);
+            _speakerStatus.Text = "Проверка левого и правого каналов…";
+            await Task.Delay(2150);
 
             player.Pause();
-            _speakerStatus.Text = "Тест левый → правый завершён. Если звука не было, проверьте выбранный выход Windows: " + selected.Name;
-            StartupDiagnostics.Log("Speaker test completed on " + selected.Name);
+            player.Source = null;
+            _speakerStatus.Text = "Звуковой тест завершён, устройство освобождено: " + selected.Name;
+            StartupDiagnostics.Log("Speaker media-category test released: " + selected.Name);
         }
         catch (Exception ex)
         {
-            StartupDiagnostics.Log("Speaker channel test failed.", ex);
-            _speakerStatus.Text = "Не удалось воспроизвести тест: " + ex.Message;
+            StartupDiagnostics.Log("Safe speaker diagnostic failed.", ex);
+            _speakerStatus.Text = "Не удалось воспроизвести звук: " + ex.Message;
         }
         finally
         {
-            _speakerTestButton.IsEnabled = _settings.SpeakerEnabled && _speakerDevices.Count > 0;
+            _diagnosticsGate.Release();
+            _audioTestRunning = false;
+            UpdateAudioTestSafety();
         }
     }
 
