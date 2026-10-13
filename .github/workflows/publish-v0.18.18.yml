@@ -1,0 +1,122 @@
+name: Publish ConfGTS 0.18.18 tested installers
+
+on:
+  push:
+    branches: ['0.18.18']
+    paths:
+      - '.github/workflows/publish-v0.18.18.yml'
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  publish-tested-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SOURCE_RUN_ID: '38343100887'
+      TESTED_SHA: '4ccb27948471e55cccb8629bb11312719093f3e2'
+    steps:
+      - name: Verify Windows build passed at the tagged commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          status="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID" --jq '.conclusion')"
+          commit="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID" --jq '.head_sha')"
+          test "$status" = success
+          test "$commit" = "$TESTED_SHA"
+      - name: Download exactly the successfully tested installers
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          gh run download "$SOURCE_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name ConfGTS-0.18.18-tested --dir artifacts
+      - name: Verify all six files and checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          # upload-artifact preserves relative paths (msi/, setup/, server-msi/, etc).
+          # Flatten into artifacts/ so the release and SHA256 validation use one directory.
+          for name in \
+            ConfGTS-0.18.18-x64.msi \
+            ConfGTS-Setup-0.18.18-x64.exe \
+            ConfGTS-Server-0.18.18-x64.msi \
+            ConfGTS-Server-Setup-0.18.18-x64.exe \
+            ConfGTS-Server-0.18.18-Source.zip \
+            SHA256SUMS.txt; do
+            source="$(find artifacts -type f -name "$name" -print -quit)"
+            test -n "$source" || { echo "Missing $name in the downloaded artifact"; find artifacts -type f; exit 1; }
+            if [ "$source" != "artifacts/$name" ]; then mv "$source" "artifacts/$name"; fi
+          done
+          for name in \
+            ConfGTS-0.18.18-x64.msi \
+            ConfGTS-Setup-0.18.18-x64.exe \
+            ConfGTS-Server-0.18.18-x64.msi \
+            ConfGTS-Server-Setup-0.18.18-x64.exe \
+            ConfGTS-Server-0.18.18-Source.zip \
+            SHA256SUMS.txt; do
+            test -s "artifacts/$name" || { echo "Missing $name"; exit 1; }
+          done
+          (cd artifacts && sha256sum -c SHA256SUMS.txt)
+      - name: Write release notes
+        shell: bash
+        run: |
+          cat > RELEASE-NOTES.md <<'EOF'
+          ## ConfGTS 0.18.18
+
+          ### Новый постоянный видеопросмотр
+          - После входа локальная камера показывается на всю правую область главного окна.
+          - Вкладки «Контакты» и «Конференции» переключают только содержимое левой панели, не перезапуская изображение камеры.
+          - Нажатие на конференцию слева открывает видеосцену участников справа; панель навигации остаётся видимой.
+          - После выхода из конференции локальный предпросмотр камеры восстанавливается.
+          - При недоступной или отключённой камере показывается ненавязчивая заглушка, вход в программу не блокируется.
+          - Настройки подключения и аудио-/видеоустройств теперь открываются в расширяемой левой панели, не перекрывая правую область.
+          - Выбранная в настройках камера используется при следующем запуске предпросмотра.
+
+          ### Прочее
+          - Сохранено исправление аварийного завершения WinUI из 0.18.17 (индикатор уровня микрофона).
+          - Сохранены пошаговые EXE-установщики для клиента и сервера, включая выбор каталога записей.
+          - Полный Windows CI подтвердил сборку, запуск и установку MSI/EXE; живой видеопоток необходимо проверить на ПК с камерой.
+
+          ### Файлы
+          - `ConfGTS-Setup-0.18.18-x64.exe` — интерактивный установщик клиента.
+          - `ConfGTS-0.18.18-x64.msi` — MSI клиента.
+          - `ConfGTS-Server-Setup-0.18.18-x64.exe` — интерактивный установщик сервера.
+          - `ConfGTS-Server-0.18.18-x64.msi` — MSI сервера.
+          - `ConfGTS-Server-0.18.18-Source.zip` — исходники серверной части.
+          - `SHA256SUMS.txt` — контрольные суммы.
+
+          Проверено в GitHub Actions: https://github.com/iPapik/confGTS/actions/runs/38343100887
+          EOF
+      - name: Publish GitHub release and the four installers
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view v0.18.18 --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo 'Release already exists; synchronize its files.'
+            gh release upload v0.18.18 artifacts/*.msi artifacts/*.exe \
+              artifacts/ConfGTS-Server-0.18.18-Source.zip artifacts/SHA256SUMS.txt \
+              --repo "$GITHUB_REPOSITORY" --clobber
+            gh release edit v0.18.18 --repo "$GITHUB_REPOSITORY" --notes-file RELEASE-NOTES.md
+          else
+            gh release create v0.18.18 \
+              artifacts/ConfGTS-0.18.18-x64.msi \
+              artifacts/ConfGTS-Setup-0.18.18-x64.exe \
+              artifacts/ConfGTS-Server-0.18.18-x64.msi \
+              artifacts/ConfGTS-Server-Setup-0.18.18-x64.exe \
+              artifacts/ConfGTS-Server-0.18.18-Source.zip \
+              artifacts/SHA256SUMS.txt \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$TESTED_SHA" \
+              --title 'ConfGTS 0.18.18' \
+              --notes-file RELEASE-NOTES.md
+          fi
+      - name: Check public release asset listing
+        shell: bash
+        run: |
+          gh release view v0.18.18 --repo "$GITHUB_REPOSITORY" \
+            --json url,assets --jq '{url:.url,assets:[.assets[].name]}'
