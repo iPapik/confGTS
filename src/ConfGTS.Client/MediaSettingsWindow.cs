@@ -1080,6 +1080,8 @@ public sealed class MediaSettingsPanel : Grid
 
             player.Source = MediaSource.CreateFromStream(stream, "audio/wav");
             _speakerStatus.Text = "Подготовка звукового устройства: " + selected.Name;
+            // Some Media Foundation drivers only open the stream once playback is requested.
+            player.Play();
             if (await Task.WhenAny(opened.Task, Task.Delay(TimeSpan.FromSeconds(8))) != opened.Task)
                 throw new TimeoutException("Устройство не начало воспроизведение за 8 секунд.");
             await opened.Task;
@@ -1091,7 +1093,6 @@ public sealed class MediaSettingsPanel : Grid
             }
 
             _speakerStatus.Text = "Слушайте: ЛЕВЫЙ канал (520 Гц).";
-            player.Play();
             await Task.Delay(980);
 
             _speakerStatus.Text = "Слушайте: ПРАВЫЙ канал (680 Гц).";
