@@ -1,0 +1,123 @@
+name: Publish ConfGTS 0.18.21 tested installers
+
+on:
+  push:
+    branches: ['0.18.21']
+    paths:
+      - '.github/workflows/publish-v0.18.21.yml'
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  publish-tested-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SOURCE_RUN_ID: '38359784113'
+      TESTED_SHA: '2fc159a9058192334c97a28e1a37a6a708ba2e03'
+    steps:
+      - name: Verify Windows build passed at the tagged commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          status="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID" --jq '.conclusion')"
+          commit="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID" --jq '.head_sha')"
+          test "$status" = success
+          test "$commit" = "$TESTED_SHA"
+      - name: Download exactly the successfully tested installers
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          gh run download "$SOURCE_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name ConfGTS-0.18.21-tested --dir artifacts
+      - name: Verify all six files and checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          # upload-artifact preserves relative paths (msi/, setup/, server-msi/, etc).
+          # Flatten into artifacts/ so the release and SHA256 validation use one directory.
+          for name in \
+            ConfGTS-0.18.21-x64.msi \
+            ConfGTS-Setup-0.18.21-x64.exe \
+            ConfGTS-Server-0.18.21-x64.msi \
+            ConfGTS-Server-Setup-0.18.21-x64.exe \
+            ConfGTS-Server-0.18.21-Source.zip \
+            SHA256SUMS.txt; do
+            source="$(find artifacts -type f -name "$name" -print -quit)"
+            test -n "$source" || { echo "Missing $name in the downloaded artifact"; find artifacts -type f; exit 1; }
+            if [ "$source" != "artifacts/$name" ]; then mv "$source" "artifacts/$name"; fi
+          done
+          for name in \
+            ConfGTS-0.18.21-x64.msi \
+            ConfGTS-Setup-0.18.21-x64.exe \
+            ConfGTS-Server-0.18.21-x64.msi \
+            ConfGTS-Server-Setup-0.18.21-x64.exe \
+            ConfGTS-Server-0.18.21-Source.zip \
+            SHA256SUMS.txt; do
+            test -s "artifacts/$name" || { echo "Missing $name"; exit 1; }
+          done
+          (cd artifacts && sha256sum -c SHA256SUMS.txt)
+      - name: Write release notes
+        shell: bash
+        run: |
+          cat > RELEASE-NOTES.md <<'EOF'
+          ## ConfGTS 0.18.21
+
+          ### Безопасная диагностика микрофона и динамиков
+          - Устранён неявный запуск микрофона при выборе устройства и изменении переключателя «Использовать микрофон».
+          - Проверка микрофона запускается только по кнопке, длится не более 4 секунд после открытия аудиографа и освобождает ресурсы даже при ошибке.
+          - Проверки микрофона и динамиков не выполняются одновременно.
+          - Диагностические потоки переключены из категории Communications в обычные категории Other/Media, чтобы не запрашивать телефонный аудиорежим без необходимости.
+          - Для обнаруженных Bluetooth/Hands-Free/A2DP-устройств прямые аудиотесты временно заблокированы с объяснением причины: ранее они вызывали сброс внешнего Bluetooth-адаптера.
+          - Встроенные микрофоны и проводные USB/аналоговые динамики продолжают проверяться. Распознавание Bluetooth по имени/идентификатору не гарантирует охват всех производителей.
+          - Bluetooth в конференциях не отключён: защита касается лишь встроенных диагностических кнопок. Физическую работу гарнитуры необходимо проверить на проблемном компьютере после диагностики драйвера.
+
+          ### Диагностика и предыдущие исправления
+          - Добавлен read-only скрипт `tools/diagnose-bluetooth.ps1`: статусы адаптеров и недавние события Windows PnP/USB/BTHUSB без изменения драйверов.
+          - Сохранены изменения 0.18.20: безопасный запуск, ручное включение камеры, остановка предпросмотра в трее, пониженная нагрузка на CPU.
+          - Полный Windows CI проверил сборку, запуск настроек и установку клиентских/серверных EXE и MSI.
+          - CI не располагает реальным Bluetooth-оборудованием; полная совместимость адаптера не утверждается.
+
+          ### Файлы
+          - `ConfGTS-Setup-0.18.21-x64.exe` — интерактивный установщик клиента.
+          - `ConfGTS-0.18.21-x64.msi` — MSI клиента.
+          - `ConfGTS-Server-Setup-0.18.21-x64.exe` — интерактивный установщик сервера.
+          - `ConfGTS-Server-0.18.21-x64.msi` — MSI сервера.
+          - `ConfGTS-Server-0.18.21-Source.zip` — исходники серверной части.
+          - `SHA256SUMS.txt` — контрольные суммы.
+
+          Проверено в GitHub Actions: https://github.com/iPapik/confGTS/actions/runs/38359784113
+          EOF
+      - name: Publish GitHub release and the four installers
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view v0.18.21 --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo 'Release already exists; synchronize its files.'
+            gh release upload v0.18.21 artifacts/*.msi artifacts/*.exe \
+              artifacts/ConfGTS-Server-0.18.21-Source.zip artifacts/SHA256SUMS.txt \
+              --repo "$GITHUB_REPOSITORY" --clobber
+            gh release edit v0.18.21 --repo "$GITHUB_REPOSITORY" --notes-file RELEASE-NOTES.md
+          else
+            gh release create v0.18.21 \
+              artifacts/ConfGTS-0.18.21-x64.msi \
+              artifacts/ConfGTS-Setup-0.18.21-x64.exe \
+              artifacts/ConfGTS-Server-0.18.21-x64.msi \
+              artifacts/ConfGTS-Server-Setup-0.18.21-x64.exe \
+              artifacts/ConfGTS-Server-0.18.21-Source.zip \
+              artifacts/SHA256SUMS.txt \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$TESTED_SHA" \
+              --title 'ConfGTS 0.18.21' \
+              --notes-file RELEASE-NOTES.md
+          fi
+      - name: Check public release asset listing
+        shell: bash
+        run: |
+          gh release view v0.18.21 --repo "$GITHUB_REPOSITORY" \
+            --json url,assets --jq '{url:.url,assets:[.assets[].name]}'
