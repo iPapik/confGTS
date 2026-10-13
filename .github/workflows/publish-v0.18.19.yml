@@ -1,0 +1,126 @@
+name: Publish ConfGTS 0.18.19 tested installers
+
+on:
+  push:
+    branches: ['0.18.19']
+    paths:
+      - '.github/workflows/publish-v0.18.19.yml'
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  publish-tested-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SOURCE_RUN_ID: '38346266464'
+      TESTED_SHA: '05dbbe4bdb7bba75ba0a47fb3c01a743580c02e5'
+    steps:
+      - name: Verify Windows build passed at the tagged commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          status="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID" --jq '.conclusion')"
+          commit="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID" --jq '.head_sha')"
+          test "$status" = success
+          test "$commit" = "$TESTED_SHA"
+      - name: Download exactly the successfully tested installers
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          gh run download "$SOURCE_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name ConfGTS-0.18.19-tested --dir artifacts
+      - name: Verify all six files and checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          # upload-artifact preserves relative paths (msi/, setup/, server-msi/, etc).
+          # Flatten into artifacts/ so the release and SHA256 validation use one directory.
+          for name in \
+            ConfGTS-0.18.19-x64.msi \
+            ConfGTS-Setup-0.18.19-x64.exe \
+            ConfGTS-Server-0.18.19-x64.msi \
+            ConfGTS-Server-Setup-0.18.19-x64.exe \
+            ConfGTS-Server-0.18.19-Source.zip \
+            SHA256SUMS.txt; do
+            source="$(find artifacts -type f -name "$name" -print -quit)"
+            test -n "$source" || { echo "Missing $name in the downloaded artifact"; find artifacts -type f; exit 1; }
+            if [ "$source" != "artifacts/$name" ]; then mv "$source" "artifacts/$name"; fi
+          done
+          for name in \
+            ConfGTS-0.18.19-x64.msi \
+            ConfGTS-Setup-0.18.19-x64.exe \
+            ConfGTS-Server-0.18.19-x64.msi \
+            ConfGTS-Server-Setup-0.18.19-x64.exe \
+            ConfGTS-Server-0.18.19-Source.zip \
+            SHA256SUMS.txt; do
+            test -s "artifacts/$name" || { echo "Missing $name"; exit 1; }
+          done
+          (cd artifacts && sha256sum -c SHA256SUMS.txt)
+      - name: Write release notes
+        shell: bash
+        run: |
+          cat > RELEASE-NOTES.md <<'EOF'
+          ## ConfGTS 0.18.19
+
+          ### Исправлены тесты микрофона и динамиков
+          - После открытия настроек устройство ввода/вывода автоматически обнаруживается: не нужно сначала нажимать «Обновить устройства».
+          - Кнопки «Проверить микрофон» и «Проверить левый и правый канал» становятся доступными при наличии включённых устройств.
+          - Микрофон показывает уровень входного сигнала после нажатия кнопки проверки.
+          - Аудиотест явно ждёт открытия звукового устройства и сообщает об ошибке, если вывести звук не удалось.
+          - Для USB/Bluetooth-устройств отправляется запрос воспроизведения до ожидания сигнала MediaOpened.
+          - При нулевой громкости вместо молчаливого прохождения теста отображается подсказка.
+
+          ### Полноэкранные настройки
+          - Настройки теперь открываются поверх ВСЕЙ рабочей области ConfGTS, а не только внутри левой панели.
+          - При открытии с главной страницы локальная камера временно освобождается для диагностических тестов.
+          - После закрытия настроек восстанавливается главный экран с камерой либо активная конференция.
+          - Сохранены изменения интерфейса и исправление WinUI из прошлых версий.
+
+          ### Контроль качества
+          - Клиент и сервер прошли Windows GitHub Actions, включая запуск настроек, проверку установочных EXE/MSI, каталогов и службы сервера.
+          - Физическое воспроизведение и захват звука на конкретном USB/Bluetooth-оборудовании необходимо проверить на рабочем ПК.
+
+          ### Файлы
+          - `ConfGTS-Setup-0.18.19-x64.exe` — интерактивный установщик клиента.
+          - `ConfGTS-0.18.19-x64.msi` — MSI клиента.
+          - `ConfGTS-Server-Setup-0.18.19-x64.exe` — интерактивный установщик сервера.
+          - `ConfGTS-Server-0.18.19-x64.msi` — MSI сервера.
+          - `ConfGTS-Server-0.18.19-Source.zip` — исходники серверной части.
+          - `SHA256SUMS.txt` — контрольные суммы.
+
+          Проверено в GitHub Actions: https://github.com/iPapik/confGTS/actions/runs/38346266464
+          EOF
+      - name: Publish GitHub release and the four installers
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view v0.18.19 --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo 'Release already exists; synchronize its files.'
+            gh release upload v0.18.19 artifacts/*.msi artifacts/*.exe \
+              artifacts/ConfGTS-Server-0.18.19-Source.zip artifacts/SHA256SUMS.txt \
+              --repo "$GITHUB_REPOSITORY" --clobber
+            gh release edit v0.18.19 --repo "$GITHUB_REPOSITORY" --notes-file RELEASE-NOTES.md
+          else
+            gh release create v0.18.19 \
+              artifacts/ConfGTS-0.18.19-x64.msi \
+              artifacts/ConfGTS-Setup-0.18.19-x64.exe \
+              artifacts/ConfGTS-Server-0.18.19-x64.msi \
+              artifacts/ConfGTS-Server-Setup-0.18.19-x64.exe \
+              artifacts/ConfGTS-Server-0.18.19-Source.zip \
+              artifacts/SHA256SUMS.txt \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$TESTED_SHA" \
+              --title 'ConfGTS 0.18.19' \
+              --notes-file RELEASE-NOTES.md
+          fi
+      - name: Check public release asset listing
+        shell: bash
+        run: |
+          gh release view v0.18.19 --repo "$GITHUB_REPOSITORY" \
+            --json url,assets --jq '{url:.url,assets:[.assets[].name]}'
