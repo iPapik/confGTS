@@ -67,6 +67,10 @@ public sealed class MainWindow : Window
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _dashboardTimer;
     private readonly Grid _mainContentHost = new();
     private readonly CameraStagePreview _cameraStage = new();
+    private readonly bool _safeStartup = Environment.GetCommandLineArgs()
+        .Any(x => string.Equals(x, "--safe-startup", StringComparison.OrdinalIgnoreCase));
+    private bool _cameraPreviewRequested;
+    private bool _windowHiddenInTray;
     private readonly Grid _settingsSidebarHost = new() { Visibility = Visibility.Collapsed };
     private ScrollViewer? _dashboardSidebarScroll;
     private readonly ColumnDefinition _dashboardSidebarColumn = new() { Width = new GridLength(210) };
@@ -88,14 +92,31 @@ public sealed class MainWindow : Window
         ExtendsContentIntoTitleBar = false;
         SetWindowSize(1400, 900);
 
+        _cameraStage.StartRequested += async (_, _) =>
+        {
+            _cameraPreviewRequested = true;
+            if (_isAuthenticated && _conferenceHost is null && !_windowHiddenInTray)
+                await _cameraStage.StartAsync();
+        };
+        _cameraStage.StopRequested += async (_, _) =>
+        {
+            _cameraPreviewRequested = false;
+            await _cameraStage.StopAsync();
+            _cameraStage.ShowPaused();
+        };
+
         Content = BuildRoot();
-        var hasRememberedCredentials = LoadRememberedCredentials();
+        _cameraStage.ShowPaused();
+        var hasRememberedCredentials = !_safeStartup && LoadRememberedCredentials();
+        StartupDiagnostics.Log(
+            $"Startup mode: safe={_safeStartup}; rememberedLogin={hasRememberedCredentials}; cameraCapture=OFF.");
         if (hasRememberedCredentials)
         {
             // Do not flash the authorization form when "Запомнить меня" is enabled.
             // The first activated frame is already the main shell while credentials
             // are validated against the server in the background.
             _autoLoginPending = true;
+            StartupDiagnostics.Log("Remembered credentials: silent auto-login scheduled (no camera until login and explicit preview).");
             _loginView.Visibility = Visibility.Collapsed;
             _dashboardView.Visibility = Visibility.Visible;
             RenderLoadingDashboard();
@@ -1836,8 +1857,10 @@ public sealed class MainWindow : Window
         {
             _mainContentHost.Children.Remove(host);
             _cameraStage.Visibility = Visibility.Visible;
-            if (_isAuthenticated)
+            if (_isAuthenticated && _cameraPreviewRequested && !_windowHiddenInTray)
                 await _cameraStage.StartAsync();
+            else
+                _cameraStage.ShowPaused();
         }
 
         SetConferenceLayout(false);
@@ -1976,7 +1999,16 @@ public sealed class MainWindow : Window
             _dashboardView.Visibility = Visibility.Visible;
             RenderLoadingDashboard();
 
-            await _cameraStage.StartAsync();
+            // Important: a saved login is authenticated before the user sees
+            // the authorization screen. Starting MediaCapture here used to
+            // seize USB camera resources and stall video/audio in other apps.
+            _cameraPreviewRequested = !_safeStartup && MediaDeviceSettings.Load().AutoPreviewOnLogin;
+            if (_cameraPreviewRequested && !_windowHiddenInTray)
+                await _cameraStage.StartAsync();
+            else
+                _cameraStage.ShowPaused();
+            StartupDiagnostics.Log(
+                $"Login completed; previewAutoStart={_cameraPreviewRequested}; microphoneCapture=OFF.");
             await RefreshDashboardAsync();
             StartDashboardTimer();
         }
@@ -2084,6 +2116,8 @@ public sealed class MainWindow : Window
     private async Task LogoutAsync()
     {
         StopDashboardTimer();
+        _isAuthenticated = false; // Do not reacquire camera while leaving conference.
+        _cameraPreviewRequested = false;
         await CloseInlineSettingsAsync();
         await LeaveConferenceAsync(false);
         await _api.LogoutAsync();
@@ -2239,8 +2273,11 @@ public sealed class MainWindow : Window
             return;
         }
 
-        if (_isAuthenticated && _conferenceHost is null)
+        if (_isAuthenticated && _conferenceHost is null &&
+            _cameraPreviewRequested && !_windowHiddenInTray)
             await _cameraStage.StartAsync();
+        else
+            _cameraStage.ShowPaused();
     }
 
     private async void SettingsButton_Click(object sender, RoutedEventArgs e) =>
@@ -2697,14 +2734,19 @@ public sealed class MainWindow : Window
         }
     }
 
-    private void AppWindow_Closing(AppWindow sender, AppWindowClosingEventArgs args)
+    private async void AppWindow_Closing(AppWindow sender, AppWindowClosingEventArgs args)
     {
         if (_allowWindowClose)
             return;
 
         args.Cancel = true;
+        _windowHiddenInTray = true;
         HideMainWindow();
-        StartupDiagnostics.Log("Main window hidden to system tray.");
+        // When no room is active the hidden client must not keep a camera
+        // stream alive. This is a frequent source of unexplained CPU load.
+        try { await _cameraStage.StopAsync(); }
+        catch (Exception ex) { StartupDiagnostics.Log("Could not suspend camera on tray hide.", ex); }
+        StartupDiagnostics.Log("Main window hidden to tray; local camera preview suspended.");
     }
 
     private void HideMainWindow()
@@ -2718,6 +2760,8 @@ public sealed class MainWindow : Window
 
     private void ShowMainWindow()
     {
+        var wasHidden = _windowHiddenInTray;
+        _windowHiddenInTray = false;
         if (_hwnd == IntPtr.Zero)
             _hwnd = WindowNative.GetWindowHandle(this);
 
@@ -2734,13 +2778,31 @@ public sealed class MainWindow : Window
 
         Activate();
         SetForegroundWindow(_hwnd);
+        if (wasHidden && _cameraPreviewRequested && _isAuthenticated &&
+            _conferenceHost is null)
+        {
+            DispatcherQueue.TryEnqueue(async () =>
+            {
+                try { await _cameraStage.StartAsync(); }
+                catch (Exception ex) { StartupDiagnostics.Log("Preview restore after tray failed.", ex); }
+            });
+        }
     }
 
     public void ActivateFromExternalLaunch() => ShowMainWindow();
 
-    private void ExitApplication()
+    private async void ExitApplication()
     {
         _allowWindowClose = true;
+        _cameraPreviewRequested = false;
+        StopDashboardTimer();
+        try
+        {
+            await _cameraStage.StopAsync();
+            if (_conferenceWebView is not null && _conferenceHost is not null)
+                await LeaveConferenceAsync(false);
+        }
+        catch (Exception ex) { StartupDiagnostics.Log("Shutdown media cleanup failed.", ex); }
         DisposeTrayIcon();
         Close();
     }
