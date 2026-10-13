@@ -205,7 +205,7 @@ jobs:
             'FormatContactName',
             'SidebarIconButton',
             'CameraStagePreview',
-            'Grid.SetColumnSpan(panel, 2)',
+            'Grid\\.SetColumnSpan\\(panel, 2\\)',
             'new GridLength\(210\)',
             'IsZoomed',
             'IsWindowVisible'
