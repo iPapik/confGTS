@@ -32,6 +32,7 @@ public sealed class MediaSettingsPanel : Grid
     private const string Bg = "#EEF7FC";
 
     private readonly ApiClient _api;
+    private readonly bool _compactSidebar;
     private readonly MediaDeviceSettings _settings = MediaDeviceSettings.Load();
 
     private readonly TextBox _serverBox = new();
@@ -81,9 +82,10 @@ public sealed class MediaSettingsPanel : Grid
 
     public event EventHandler? CloseRequested;
 
-    public MediaSettingsPanel(ApiClient api)
+    public MediaSettingsPanel(ApiClient api, bool compactSidebar = false)
     {
         _api = api;
+        _compactSidebar = compactSidebar;
         StartupDiagnostics.Log("MediaSettingsPanel 0.18.17 constructor started.");
         Background = Brush(Bg);
         Children.Add(BuildUi());
@@ -129,7 +131,7 @@ public sealed class MediaSettingsPanel : Grid
         var root = new Grid
         {
             Background = Brush(Bg),
-            Padding = new Thickness(28, 24, 28, 28)
+            Padding = _compactSidebar ? new Thickness(6, 8, 6, 8) : new Thickness(28, 24, 28, 28)
         };
 
         var scroll = new ScrollViewer
@@ -141,8 +143,8 @@ public sealed class MediaSettingsPanel : Grid
         var outer = new StackPanel
         {
             Spacing = 14,
-            MaxWidth = 1120,
-            HorizontalAlignment = HorizontalAlignment.Center
+            MaxWidth = _compactSidebar ? 390 : 1120,
+            HorizontalAlignment = _compactSidebar ? HorizontalAlignment.Stretch : HorizontalAlignment.Center
         };
 
         // UI-only diagnostic: isolate which control needs a built-in WinUI style.
@@ -157,22 +159,34 @@ public sealed class MediaSettingsPanel : Grid
 
         if (testScope is "full" or "microphone" or "speaker")
         {
-            var audioGrid = new Grid { ColumnSpacing = 14 };
-            audioGrid.ColumnDefinitions.Add(new ColumnDefinition());
-            audioGrid.ColumnDefinitions.Add(new ColumnDefinition());
-            if (testScope is "full" or "microphone")
+            if (_compactSidebar)
             {
-                var microphoneCard = BuildMicrophoneCard();
-                Grid.SetColumn(microphoneCard, 0);
-                audioGrid.Children.Add(microphoneCard);
+                var audioCards = new StackPanel { Spacing = 12 };
+                if (testScope is "full" or "microphone")
+                    audioCards.Children.Add(BuildMicrophoneCard());
+                if (testScope is "full" or "speaker")
+                    audioCards.Children.Add(BuildSpeakerCard());
+                outer.Children.Add(audioCards);
             }
-            if (testScope is "full" or "speaker")
+            else
             {
-                var speakerCard = BuildSpeakerCard();
-                Grid.SetColumn(speakerCard, testScope == "full" ? 1 : 0);
-                audioGrid.Children.Add(speakerCard);
+                var audioGrid = new Grid { ColumnSpacing = 14 };
+                audioGrid.ColumnDefinitions.Add(new ColumnDefinition());
+                audioGrid.ColumnDefinitions.Add(new ColumnDefinition());
+                if (testScope is "full" or "microphone")
+                {
+                    var microphoneCard = BuildMicrophoneCard();
+                    Grid.SetColumn(microphoneCard, 0);
+                    audioGrid.Children.Add(microphoneCard);
+                }
+                if (testScope is "full" or "speaker")
+                {
+                    var speakerCard = BuildSpeakerCard();
+                    Grid.SetColumn(speakerCard, testScope == "full" ? 1 : 0);
+                    audioGrid.Children.Add(speakerCard);
+                }
+                outer.Children.Add(audioGrid);
             }
-            outer.Children.Add(audioGrid);
         }
         if (testScope is "full" or "camera")
             outer.Children.Add(BuildCameraCard());
@@ -185,20 +199,29 @@ public sealed class MediaSettingsPanel : Grid
     private UIElement BuildHeader()
     {
         var grid = new Grid();
-        grid.ColumnDefinitions.Add(new ColumnDefinition());
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        if (_compactSidebar)
+        {
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        }
+        else
+        {
+            grid.ColumnDefinitions.Add(new ColumnDefinition());
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        }
 
         var title = new StackPanel { Spacing = 3 };
         title.Children.Add(new TextBlock
         {
             Text = "Настройки ConfGTS",
-            FontSize = 28,
+            FontSize = _compactSidebar ? 21 : 28,
             FontWeight = FontWeights.Bold,
             Foreground = Brush(Navy)
         });
         title.Children.Add(new TextBlock
         {
             Text = "Подключение, звук, микрофон и камера — в одном окне программы",
+            TextWrapping = TextWrapping.Wrap,
             FontSize = 12,
             Foreground = Brush(Muted)
         });
@@ -206,7 +229,7 @@ public sealed class MediaSettingsPanel : Grid
 
         var actions = new StackPanel
         {
-            Orientation = Orientation.Horizontal,
+            Orientation = _compactSidebar ? Orientation.Vertical : Orientation.Horizontal,
             Spacing = 8,
             VerticalAlignment = VerticalAlignment.Center
         };
@@ -228,7 +251,18 @@ public sealed class MediaSettingsPanel : Grid
         back.Click += (_, _) => CloseRequested?.Invoke(this, EventArgs.Empty);
         actions.Children.Add(back);
 
-        Grid.SetColumn(actions, 1);
+        if (_compactSidebar)
+        {
+            Grid.SetRow(actions, 1);
+            actions.HorizontalAlignment = HorizontalAlignment.Stretch;
+            actions.Margin = new Thickness(0, 12, 0, 0);
+            _refreshButton.HorizontalAlignment = HorizontalAlignment.Stretch;
+            back.HorizontalAlignment = HorizontalAlignment.Stretch;
+        }
+        else
+        {
+            Grid.SetColumn(actions, 1);
+        }
         grid.Children.Add(actions);
         return grid;
     }
